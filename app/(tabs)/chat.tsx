@@ -72,8 +72,8 @@ const MessageBubble = ({ message, isUser, onLike, showLikeButton = true }) => {
                   styles.raindrop,
                   {
                     left: Math.random() * width * 0.7,
-                    animationDelay: `${Math.random() * 2}s`,
-                    animationDuration: `${0.5 + Math.random()}s`
+                    top: Math.random() * 60,
+                    height: 5 + Math.random() * 10
                   }
                 ]} 
               />
@@ -129,19 +129,18 @@ const MagicalParticles = ({ active }) => {
     size: Math.random() * 4 + 2,
     x: Math.random() * width,
     y: Math.random() * height,
-    duration: 1000 + Math.random() * 2000,
-    delay: Math.random() * 1000,
+    opacity: Math.random() * 0.5 + 0.2
   }));
   
   if (!active) return null;
   
   return (
-    <View style={styles.particlesContainer}>
+    <View style={styles.particlesContainer} pointerEvents="none">
       {particles.map(particle => (
         <Animated.View
           key={particle.id}
-          entering={FadeIn.delay(particle.delay).duration(particle.duration)}
-          exiting={FadeOut.duration(particle.duration)}
+          entering={FadeIn.duration(300)}
+          exiting={FadeOut.duration(300)}
           style={[
             styles.particle,
             {
@@ -149,6 +148,7 @@ const MagicalParticles = ({ active }) => {
               height: particle.size,
               left: particle.x,
               top: particle.y,
+              opacity: particle.opacity
             }
           ]}
         />
@@ -161,11 +161,28 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState([
     { id: 1, text: "I'm feeling burned out. Any suggestions for recharging?", isUser: true },
     { id: 2, text: "How about a rejuvenating walk outside? It's a great way to refresh your mind and uplift your spirits.", isUser: false },
+    { id: 3, text: "What is the weather?", isUser: true },
+    { 
+      id: 4, 
+      type: 'weather',
+      temp: 22,
+      condition: 'Rain Showers',
+      location: 'San Francisco',
+      text: 'It will rain in 1 hour, I recommend taking an umbrella',
+      isUser: false 
+    },
   ]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showParticles, setShowParticles] = useState(false);
   const scrollViewRef = useRef(null);
+  
+  useEffect(() => {
+    // Scroll to bottom when component mounts
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: false });
+    }, 100);
+  }, []);
   
   // Simulate AI typing
   const simulateTyping = (text) => {
@@ -288,45 +305,73 @@ export default function ChatScreen() {
         </View>
       </LinearGradient>
       
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.messagesContainer}
-        contentContainerStyle={styles.messagesContent}
-        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+      <LinearGradient
+        colors={['#4A00E0', '#8E2DE2']}
+        style={styles.background}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        {messages.map(message => (
-          <View 
-            key={message.id} 
-            style={[
-              styles.messageRow,
-              message.isUser ? styles.userMessageRow : styles.aiMessageRow
-            ]}
-          >
-            <MessageBubble 
-              message={message} 
-              isUser={message.isUser} 
-              onLike={() => handleLike(message.id)}
-            />
-          </View>
-        ))}
-        
-        {isTyping && (
-          <View style={styles.messageRow}>
-            <Animated.View 
-              entering={FadeIn.duration(300)}
-              style={[styles.messageBubble, styles.aiMessageBubble, styles.typingBubble]}
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.messagesContainer}
+          contentContainerStyle={styles.messagesContent}
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+        >
+          {messages.map(message => (
+            <View 
+              key={message.id} 
+              style={[
+                styles.messageRow,
+                message.isUser ? styles.userMessageRow : styles.aiMessageRow
+              ]}
             >
-              <View style={styles.typingIndicator}>
-                <View style={styles.typingDot} />
-                <View style={[styles.typingDot, { animationDelay: '0.2s' }]} />
-                <View style={[styles.typingDot, { animationDelay: '0.4s' }]} />
-              </View>
-            </Animated.View>
-          </View>
-        )}
-      </ScrollView>
-      
-      <MagicalParticles active={showParticles} />
+              <MessageBubble 
+                message={message} 
+                isUser={message.isUser} 
+                onLike={() => handleLike(message.id)}
+              />
+            </View>
+          ))}
+          
+          {isTyping && (
+            <View style={styles.messageRow}>
+              <Animated.View 
+                entering={FadeIn.duration(300)}
+                style={[styles.messageBubble, styles.aiMessageBubble, styles.typingBubble]}
+              >
+                <View style={styles.typingIndicator}>
+                  <Animated.View 
+                    style={[styles.typingDot, { 
+                      transform: [{ translateY: withSequence(
+                        withTiming(-5, { duration: 300 }),
+                        withTiming(0, { duration: 300 })
+                      ) }] 
+                    }]} 
+                  />
+                  <Animated.View 
+                    style={[styles.typingDot, { 
+                      transform: [{ translateY: withSequence(
+                        withDelay(150, withTiming(-5, { duration: 300 })),
+                        withTiming(0, { duration: 300 })
+                      ) }] 
+                    }]} 
+                  />
+                  <Animated.View 
+                    style={[styles.typingDot, { 
+                      transform: [{ translateY: withSequence(
+                        withDelay(300, withTiming(-5, { duration: 300 })),
+                        withTiming(0, { duration: 300 })
+                      ) }] 
+                    }]} 
+                  />
+                </View>
+              </Animated.View>
+            </View>
+          )}
+        </ScrollView>
+        
+        <MagicalParticles active={showParticles} />
+      </LinearGradient>
       
       <View style={styles.inputContainer}>
         <TextInput
@@ -336,14 +381,20 @@ export default function ChatScreen() {
           value={inputText}
           onChangeText={setInputText}
           multiline
+          maxLength={500}
+          returnKeyType="send"
+          onSubmitEditing={handleSend}
         />
         <TouchableOpacity 
-          style={styles.sendButton} 
+          style={[
+            styles.sendButton,
+            !inputText.trim() && styles.sendButtonDisabled
+          ]} 
           onPress={handleSend}
           disabled={!inputText.trim()}
         >
           <LinearGradient
-            colors={['#4A00E0', '#8E2DE2']}
+            colors={inputText.trim() ? ['#4A00E0', '#8E2DE2'] : ['#CCCCCC', '#AAAAAA']}
             style={styles.sendButtonGradient}
           >
             <Send size={20} color="#FFF" />
@@ -363,6 +414,9 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 15,
     paddingHorizontal: 20,
+  },
+  background: {
+    flex: 1,
   },
   profileContainer: {
     flexDirection: 'row',
@@ -427,11 +481,11 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   userMessageBubble: {
-    backgroundColor: '#8A2BE2',
+    backgroundColor: '#FFFFFF',
     borderBottomRightRadius: 4,
   },
   aiMessageBubble: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderBottomLeftRadius: 4,
   },
   messageText: {
@@ -439,7 +493,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   userMessageText: {
-    color: '#FFF',
+    color: '#333',
     fontFamily: 'Inter-Regular',
   },
   aiMessageText: {
@@ -459,6 +513,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   typingBubble: {
     paddingVertical: 14,
@@ -475,9 +534,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#8A2BE2',
     opacity: 0.7,
-    animationName: 'bounce',
-    animationDuration: '0.6s',
-    animationIterationCount: 'infinite',
   },
   inputContainer: {
     flexDirection: 'row',
@@ -497,9 +553,13 @@ const styles = StyleSheet.create({
     maxHeight: 100,
     fontSize: 16,
     fontFamily: 'Inter-Regular',
+    color: '#333',
   },
   sendButton: {
     marginLeft: 12,
+  },
+  sendButtonDisabled: {
+    opacity: 0.7,
   },
   sendButtonGradient: {
     width: 44,
@@ -546,13 +606,8 @@ const styles = StyleSheet.create({
   raindrop: {
     position: 'absolute',
     width: 2,
-    height: 10,
     backgroundColor: 'rgba(255, 255, 255, 0.6)',
     borderRadius: 1,
-    animationName: 'rain',
-    animationDuration: '1s',
-    animationIterationCount: 'infinite',
-    animationTimingFunction: 'linear',
   },
   particlesContainer: {
     position: 'absolute',
@@ -560,12 +615,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    pointerEvents: 'none',
   },
   particle: {
     position: 'absolute',
-    backgroundColor: '#8A2BE2',
+    backgroundColor: '#FFFFFF',
     borderRadius: 50,
-    opacity: 0.6,
   },
 });

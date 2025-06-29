@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -9,15 +9,12 @@ import {
 } from 'react-native';
 import { Mic, Volume2, Loader, Check, AlertCircle } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import VoiceService from '@/services/VoiceService';
-import IntentParser from '@/services/IntentParser';
 
 interface VoiceInputProps {
-  onResult: (text: string, intent?: any) => void;
+  onResult: (text: string) => void;
   onError?: (error: string) => void;
   placeholder?: string;
   autoStart?: boolean;
-  showTranscript?: boolean;
 }
 
 const VoiceInput: React.FC<VoiceInputProps> = ({
@@ -25,94 +22,20 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
   onError,
   placeholder = "Tap to speak",
   autoStart = false,
-  showTranscript = true
 }) => {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [confidence, setConfidence] = useState(0);
   const [isSuccess, setIsSuccess] = useState(false);
-
-  const voiceService = useRef(new VoiceService()).current;
-  const intentParser = useRef(new IntentParser()).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const successAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useState(new Animated.Value(1))[0];
+  const successAnim = useState(new Animated.Value(0))[0];
 
   useEffect(() => {
-    // Setup voice service callbacks
-    voiceService.onStart(() => {
-      setIsListening(true);
-      setError(null);
-      setTranscript('');
-      setIsSuccess(false);
-      startPulseAnimation();
-    });
-
-    voiceService.onResult((result) => {
-      setTranscript(result.transcript);
-      setConfidence(result.confidence);
-
-      if (result.isFinal) {
-        setIsProcessing(true);
-        
-        // Parse intent
-        const intent = intentParser.parse(result.transcript);
-        
-        setTimeout(() => {
-          setIsProcessing(false);
-          setIsSuccess(true);
-          
-          // Success animation
-          Animated.sequence([
-            Animated.timing(successAnim, {
-              toValue: 1,
-              duration: 300,
-              useNativeDriver: true,
-            }),
-            Animated.delay(1000),
-            Animated.timing(successAnim, {
-              toValue: 0,
-              duration: 300,
-              useNativeDriver: true,
-            })
-          ]).start();
-
-          onResult(result.transcript, intent);
-          
-          // Clear transcript after success animation
-          setTimeout(() => {
-            setTranscript('');
-            setIsSuccess(false);
-          }, 2000);
-        }, 800);
-      }
-    });
-
-    voiceService.onError((errorMsg) => {
-      setError(errorMsg);
-      setIsListening(false);
-      setIsProcessing(false);
-      onError?.(errorMsg);
-      stopPulseAnimation();
-      
-      // Clear error after 3 seconds
-      setTimeout(() => setError(null), 3000);
-    });
-
-    voiceService.onEnd(() => {
-      setIsListening(false);
-      stopPulseAnimation();
-    });
-
     // Auto-start if requested
     if (autoStart) {
       setTimeout(() => startListening(), 1000);
     }
-
-    return () => {
-      voiceService.stopListening();
-    };
   }, []);
 
   const startPulseAnimation = () => {
@@ -143,15 +66,74 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
 
   const startListening = async () => {
     try {
-      await voiceService.startListening();
+      setIsListening(true);
+      setError(null);
+      setTranscript('');
+      setIsSuccess(false);
+      startPulseAnimation();
+      
+      // Simulate voice recognition
+      setTimeout(() => {
+        const mockTranscripts = [
+          "Yes, let's get started!",
+          "Two adults and one kid",
+          "We love tacos, pasta, and stir fry",
+          "No allergies, we eat everything",
+          "Thirty minutes max, eight dollars per serving",
+          "Skip cooking on Fridays",
+          "Feed us something quick and healthy tonight",
+          "Show me Italian recipes",
+          "What can I make with chicken?",
+          "I need vegetarian options"
+        ];
+        
+        const randomTranscript = mockTranscripts[Math.floor(Math.random() * mockTranscripts.length)];
+        setTranscript(randomTranscript);
+        
+        // Simulate processing
+        setIsProcessing(true);
+        stopPulseAnimation();
+        
+        setTimeout(() => {
+          setIsProcessing(false);
+          setIsListening(false);
+          setIsSuccess(true);
+          
+          // Success animation
+          Animated.sequence([
+            Animated.timing(successAnim, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: true,
+            }),
+            Animated.delay(1000),
+            Animated.timing(successAnim, {
+              toValue: 0,
+              duration: 300,
+              useNativeDriver: true,
+            })
+          ]).start();
+          
+          onResult(randomTranscript);
+          
+          // Clear transcript after success animation
+          setTimeout(() => {
+            setTranscript('');
+            setIsSuccess(false);
+          }, 2000);
+        }, 800);
+      }, 2000);
     } catch (err) {
       setError('Failed to start voice recognition');
+      setIsListening(false);
+      stopPulseAnimation();
       onError?.('Failed to start voice recognition');
     }
   };
 
   const stopListening = () => {
-    voiceService.stopListening();
+    setIsListening(false);
+    stopPulseAnimation();
   };
 
   const handlePress = () => {
@@ -183,7 +165,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
     if (error) return ['#DC3545', '#C82333'];
     if (isProcessing) return ['#6C757D', '#5A6268'];
     if (isListening) return ['#28A745', '#218838'];
-    return ['#FF6B35', '#F7931E'];
+    return ['#4A00E0', '#8E2DE2'];
   };
 
   return (
@@ -224,7 +206,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
       </Text>
 
       {/* Live Transcript */}
-      {showTranscript && transcript && (
+      {transcript && (
         <Animated.View 
           style={[
             styles.transcriptContainer,
@@ -232,24 +214,6 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
           ]}
         >
           <Text style={styles.transcriptText}>"{transcript}"</Text>
-          {confidence > 0 && (
-            <View style={styles.confidenceContainer}>
-              <View style={styles.confidenceBar}>
-                <Animated.View 
-                  style={[
-                    styles.confidenceFill, 
-                    { 
-                      width: `${confidence * 100}%`,
-                      backgroundColor: confidence > 0.8 ? '#28A745' : confidence > 0.6 ? '#FFC107' : '#DC3545'
-                    }
-                  ]} 
-                />
-              </View>
-              <Text style={styles.confidenceText}>
-                {Math.round(confidence * 100)}% confident
-              </Text>
-            </View>
-          )}
         </Animated.View>
       )}
 
@@ -297,7 +261,7 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     elevation: 8,
-    shadowColor: '#FF6B35',
+    shadowColor: '#4A00E0',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
@@ -313,7 +277,7 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 14,
     fontFamily: 'Inter-Regular',
-    color: '#666',
+    color: '#FFF',
     textAlign: 'center',
     maxWidth: 280,
     lineHeight: 20,
@@ -331,44 +295,23 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Bold',
   },
   transcriptContainer: {
-    backgroundColor: 'rgba(255, 107, 53, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 15,
     padding: 15,
     maxWidth: 320,
     marginTop: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 107, 53, 0.2)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   transcriptText: {
     fontSize: 16,
     fontFamily: 'Inter-SemiBold',
-    color: '#333',
+    color: '#FFF',
     textAlign: 'center',
     fontStyle: 'italic',
-    marginBottom: 10,
-  },
-  confidenceContainer: {
-    alignItems: 'center',
-    gap: 5,
-  },
-  confidenceBar: {
-    width: 120,
-    height: 4,
-    backgroundColor: '#E5E5E5',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  confidenceFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  confidenceText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: '#666',
   },
   tipsContainer: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 12,
     padding: 15,
     maxWidth: 280,
@@ -377,14 +320,14 @@ const styles = StyleSheet.create({
   tipsTitle: {
     fontSize: 14,
     fontFamily: 'Inter-Bold',
-    color: '#333',
+    color: '#FFF',
     textAlign: 'center',
     marginBottom: 8,
   },
   tipText: {
     fontSize: 12,
     fontFamily: 'Inter-Regular',
-    color: '#666',
+    color: '#FFF',
     textAlign: 'center',
     marginBottom: 4,
   },
