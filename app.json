@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Fast Food Zero-UI",
+    "slug": "fast-food-zero-ui",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF6B35"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fastfood.zeroui",
+      "infoPlist": {
+        "UIBackgroundModes": ["background-fetch", "remote-notification"],
+        "NSCameraUsageDescription": "This app uses the camera to scan grocery receipts for meal plan optimization.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone for voice commands to create meal plans.",
+        "NSLocationWhenInUseUsageDescription": "This app uses location to find nearby grocery stores and restaurants."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF6B35"
+      },
+      "package": "com.fastfood.zeroui",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-camera",
+      "expo-location",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "The app needs to access your calendar to add meal plan events."
+        }
+      ],
+      "expo-notifications"
+    ],
+    "scheme": "fast-food-zero-ui",
+    "platforms": ["ios", "android", "web"]
+  }
+}
