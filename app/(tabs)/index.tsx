@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,37 +6,14 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
-  Dimensions,
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, Zap, Brain, Lightbulb } from 'lucide-react-native';
 import { router } from 'expo-router';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withSequence,
-  withDelay,
-  FadeIn,
-  FadeInDown,
-} from 'react-native-reanimated';
-
-const { width } = Dimensions.get('window');
-
-const AnimatedCard = ({ children, delay = 0, style }) => {
-  return (
-    <Animated.View
-      entering={FadeInDown.delay(delay).springify().damping(12)}
-      style={[styles.card, style]}
-    >
-      {children}
-    </Animated.View>
-  );
-};
 
 export default function HomeScreen() {
-  const [recentChats, setRecentChats] = useState([
+  const recentChats = [
     {
       id: '1',
       name: 'Creative Assistant',
@@ -58,7 +35,7 @@ export default function HomeScreen() {
       lastMessage: 'Remember to take breaks and stay hydrated!',
       time: '3h ago',
     },
-  ]);
+  ];
 
   const handleChatPress = () => {
     router.push('/(tabs)/chat');
@@ -75,7 +52,7 @@ export default function HomeScreen() {
       </LinearGradient>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <AnimatedCard delay={100}>
+        <View style={styles.card}>
           <TouchableOpacity 
             style={styles.newChatButton}
             onPress={handleChatPress}
@@ -90,12 +67,12 @@ export default function HomeScreen() {
               <Text style={styles.newChatText}>Start New Chat</Text>
             </LinearGradient>
           </TouchableOpacity>
-        </AnimatedCard>
+        </View>
 
         <Text style={styles.sectionTitle}>Recent Chats</Text>
         
-        {recentChats.map((chat, index) => (
-          <AnimatedCard key={chat.id} delay={200 + index * 100}>
+        {recentChats.map((chat) => (
+          <View key={chat.id} style={styles.card}>
             <TouchableOpacity 
               style={styles.chatItem}
               onPress={handleChatPress}
@@ -111,13 +88,13 @@ export default function HomeScreen() {
                 </Text>
               </View>
             </TouchableOpacity>
-          </AnimatedCard>
+          </View>
         ))}
 
         <Text style={styles.sectionTitle}>Discover</Text>
         
         <View style={styles.featuresGrid}>
-          <AnimatedCard delay={500} style={styles.featureCard}>
+          <View style={styles.featureCard}>
             <LinearGradient
               colors={['#FF416C', '#FF4B2B']}
               style={styles.featureIconContainer}
@@ -128,9 +105,9 @@ export default function HomeScreen() {
             <Text style={styles.featureDescription}>
               Generate stories, poems, and creative content
             </Text>
-          </AnimatedCard>
+          </View>
           
-          <AnimatedCard delay={600} style={styles.featureCard}>
+          <View style={styles.featureCard}>
             <LinearGradient
               colors={['#11998e', '#38ef7d']}
               style={styles.featureIconContainer}
@@ -141,9 +118,9 @@ export default function HomeScreen() {
             <Text style={styles.featureDescription}>
               Get instant responses to your questions
             </Text>
-          </AnimatedCard>
+          </View>
           
-          <AnimatedCard delay={700} style={styles.featureCard}>
+          <View style={styles.featureCard}>
             <LinearGradient
               colors={['#4A00E0', '#8E2DE2']}
               style={styles.featureIconContainer}
@@ -154,9 +131,9 @@ export default function HomeScreen() {
             <Text style={styles.featureDescription}>
               Access a vast database of information
             </Text>
-          </AnimatedCard>
+          </View>
           
-          <AnimatedCard delay={800} style={styles.featureCard}>
+          <View style={styles.featureCard}>
             <LinearGradient
               colors={['#F857A6', '#FF5858']}
               style={styles.featureIconContainer}
@@ -167,7 +144,7 @@ export default function HomeScreen() {
             <Text style={styles.featureDescription}>
               Get personalized recommendations
             </Text>
-          </AnimatedCard>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -213,7 +190,6 @@ const styles = StyleSheet.create({
   newChatButton: {
     borderRadius: 12,
     overflow: 'hidden',
-    marginBottom: 8,
   },
   newChatGradient: {
     flexDirection: 'row',
@@ -276,9 +252,16 @@ const styles = StyleSheet.create({
   },
   featureCard: {
     width: '48%',
+    backgroundColor: '#FFF',
+    borderRadius: 16,
     marginBottom: 16,
-    alignItems: 'center',
     padding: 16,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
   featureIconContainer: {
     width: 50,
