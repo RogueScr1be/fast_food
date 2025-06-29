@@ -12,7 +12,7 @@ import {
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Send, Heart, Plus, Sparkles } from 'lucide-react-native';
+import { Send, Heart, Plus, Sparkles, ArrowLeft } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -20,7 +20,6 @@ import Animated, {
   withTiming,
   withSequence,
   withDelay,
-  Easing,
   FadeIn,
   FadeOut,
 } from 'react-native-reanimated';
@@ -157,6 +156,33 @@ const MagicalParticles = ({ active }) => {
   );
 };
 
+// Suggestions component
+const SuggestionChips = ({ suggestions, onPress }) => {
+  return (
+    <View style={styles.suggestionsContainer}>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.suggestionsContent}
+      >
+        {suggestions.map((suggestion, index) => (
+          <Animated.View
+            key={index}
+            entering={FadeIn.delay(index * 100).springify()}
+          >
+            <TouchableOpacity 
+              style={styles.suggestionChip}
+              onPress={() => onPress(suggestion)}
+            >
+              <Text style={styles.suggestionText}>{suggestion}</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+};
+
 export default function ChatScreen() {
   const [messages, setMessages] = useState([
     { id: 1, text: "I'm feeling burned out. Any suggestions for recharging?", isUser: true },
@@ -175,14 +201,20 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showParticles, setShowParticles] = useState(false);
+  const [suggestions, setSuggestions] = useState([
+    "How can I reduce stress?",
+    "Give me meditation tips",
+    "Healthy meal ideas",
+    "Help me sleep better"
+  ]);
   const scrollViewRef = useRef(null);
   
   useEffect(() => {
-    // Scroll to bottom when component mounts
+    // Scroll to bottom when messages change
     setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: false });
+      scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, []);
+  }, [messages]);
   
   // Simulate AI typing
   const simulateTyping = (text) => {
@@ -203,11 +235,42 @@ export default function ChatScreen() {
       };
       setMessages(prev => [...prev, newMessage]);
       
-      // Scroll to bottom
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      // Update suggestions based on the conversation
+      updateSuggestions(text);
     }, 1500);
+  };
+  
+  // Update suggestions based on conversation context
+  const updateSuggestions = (lastMessage) => {
+    if (lastMessage.toLowerCase().includes('sleep')) {
+      setSuggestions([
+        "What foods help with sleep?",
+        "How much sleep do I need?",
+        "Bedtime routine ideas",
+        "Sleep meditation techniques"
+      ]);
+    } else if (lastMessage.toLowerCase().includes('stress')) {
+      setSuggestions([
+        "Quick stress relief exercises",
+        "Stress management apps",
+        "How does stress affect health?",
+        "Stress-reducing foods"
+      ]);
+    } else if (lastMessage.toLowerCase().includes('food') || lastMessage.toLowerCase().includes('meal')) {
+      setSuggestions([
+        "Healthy breakfast ideas",
+        "Quick dinner recipes",
+        "Foods for energy",
+        "Meal prep tips"
+      ]);
+    } else {
+      setSuggestions([
+        "How can I reduce stress?",
+        "Give me meditation tips",
+        "Healthy meal ideas",
+        "Help me sleep better"
+      ]);
+    }
   };
   
   // Handle sending a message
@@ -222,11 +285,6 @@ export default function ChatScreen() {
     };
     setMessages(prev => [...prev, newMessage]);
     setInputText('');
-    
-    // Scroll to bottom
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
     
     // Process user message
     if (inputText.toLowerCase().includes('weather')) {
@@ -250,10 +308,13 @@ export default function ChatScreen() {
           };
           setMessages(prev => [...prev, weatherMessage]);
           
-          // Scroll to bottom
-          setTimeout(() => {
-            scrollViewRef.current?.scrollToEnd({ animated: true });
-          }, 100);
+          // Update suggestions
+          setSuggestions([
+            "Will it be sunny tomorrow?",
+            "Weather forecast for the weekend",
+            "Do I need a jacket?",
+            "Best time for outdoor activities"
+          ]);
         }, 1500);
       }, 500);
     } else {
@@ -266,6 +327,8 @@ export default function ChatScreen() {
         response = "Deep breathing exercises can help reduce stress. Try inhaling for 4 counts, holding for 4, and exhaling for 6.";
       } else if (inputText.toLowerCase().includes('food') || inputText.toLowerCase().includes('eat')) {
         response = "Nourishing your body with healthy foods can boost your energy. Try incorporating more fruits, vegetables, and whole grains into your diet.";
+      } else if (inputText.toLowerCase().includes('burned out') || inputText.toLowerCase().includes('recharging')) {
+        response = "How about a rejuvenating walk outside? It's a great way to refresh your mind and uplift your spirits.";
       }
       
       setTimeout(() => {
@@ -280,6 +343,11 @@ export default function ChatScreen() {
     console.log('Liked message:', messageId);
   };
   
+  // Handle suggestion press
+  const handleSuggestion = (suggestion) => {
+    setInputText(suggestion);
+  };
+  
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -291,6 +359,9 @@ export default function ChatScreen() {
         style={styles.header}
       >
         <View style={styles.profileContainer}>
+          <TouchableOpacity style={styles.backButton}>
+            <ArrowLeft size={24} color="#FFF" />
+          </TouchableOpacity>
           <View style={styles.profileImageContainer}>
             <Image
               source={{ uri: 'https://images.pexels.com/photos/1629236/pexels-photo-1629236.jpeg?auto=compress&cs=tinysrgb&w=100&h=100&dpr=1' }}
@@ -315,7 +386,6 @@ export default function ChatScreen() {
           ref={scrollViewRef}
           style={styles.messagesContainer}
           contentContainerStyle={styles.messagesContent}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
         >
           {messages.map(message => (
             <View 
@@ -371,6 +441,11 @@ export default function ChatScreen() {
         </ScrollView>
         
         <MagicalParticles active={showParticles} />
+        
+        <SuggestionChips 
+          suggestions={suggestions} 
+          onPress={handleSuggestion}
+        />
       </LinearGradient>
       
       <View style={styles.inputContainer}>
@@ -382,8 +457,6 @@ export default function ChatScreen() {
           onChangeText={setInputText}
           multiline
           maxLength={500}
-          returnKeyType="send"
-          onSubmitEditing={handleSend}
         />
         <TouchableOpacity 
           style={[
@@ -422,6 +495,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   profileImageContainer: {
     position: 'relative',
     marginRight: 12,
@@ -430,6 +512,8 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   statusIndicator: {
     position: 'absolute',
@@ -540,13 +624,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderTopWidth: 1,
-    borderTopColor: '#E5E5E5',
+    borderTopColor: 'rgba(229, 229, 229, 0.5)',
   },
   input: {
     flex: 1,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -620,5 +704,30 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
+  },
+  suggestionsContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  suggestionsContent: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  suggestionChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  suggestionText: {
+    fontSize: 14,
+    fontFamily: 'Inter-SemiBold',
+    color: '#8A2BE2',
   },
 });
