@@ -21,7 +21,7 @@ interface Suggestion {
 
 interface SmartSuggestionsProps {
   suggestions?: Suggestion[];
-  onSuggestionPress: (suggestion: Suggestion) => void;
+  onSuggestionPress: (suggestion: any) => void;
   visible?: boolean;
 }
 
@@ -42,7 +42,7 @@ const SmartSuggestions: React.FC<SmartSuggestionsProps> = ({
       case 'quick': return '#28A745';
       case 'budget': return '#FFC107';
       case 'family': return '#17A2B8';
-      case 'special': return '#FF6B35';
+      case 'special': return '#8A2BE2';
       default: return '#6C757D';
     }
   };
@@ -54,7 +54,7 @@ const SmartSuggestions: React.FC<SmartSuggestionsProps> = ({
       style={styles.container}
     >
       <View style={styles.header}>
-        <Sparkles size={16} color="#FF6B35" />
+        <Sparkles size={16} color="#8A2BE2" />
         <Text style={styles.title}>Smart Suggestions</Text>
       </View>
       
@@ -94,7 +94,6 @@ const SmartSuggestions: React.FC<SmartSuggestionsProps> = ({
 export const generateSmartSuggestions = (context?: {
   timeOfDay?: 'morning' | 'afternoon' | 'evening';
   userProfile?: any;
-  recentActivity?: string[];
 }): Suggestion[] => {
   const baseSuggestions: Suggestion[] = [
     {
@@ -118,7 +117,7 @@ export const generateSmartSuggestions = (context?: {
     {
       id: 'healthy-options',
       text: 'Healthy meal options',
-      icon: <Sparkles size={16} color="#FF6B35" />,
+      icon: <Sparkles size={16} color="#8A2BE2" />,
       category: 'special',
     },
   ];
@@ -128,7 +127,7 @@ export const generateSmartSuggestions = (context?: {
     baseSuggestions.unshift({
       id: 'tonight-dinner',
       text: 'What should I cook tonight?',
-      icon: <Clock size={16} color="#FF6B35" />,
+      icon: <Clock size={16} color="#8A2BE2" />,
       category: 'special',
     });
   }
@@ -141,7 +140,7 @@ export const generateSmartSuggestions = (context?: {
       baseSuggestions.push({
         id: 'favorite-cuisine',
         text: `${favorite} recipes you'll love`,
-        icon: <Sparkles size={16} color="#FF6B35" />,
+        icon: <Sparkles size={16} color="#8A2BE2" />,
         category: 'special',
       });
     }
@@ -152,7 +151,7 @@ export const generateSmartSuggestions = (context?: {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 15,
     padding: 15,
     marginVertical: 10,
