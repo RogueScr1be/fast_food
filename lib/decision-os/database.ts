@@ -264,7 +264,7 @@ class InMemoryClient implements DatabaseClient {
     
     // ==== RECEIPT IMPORTS QUERIES ====
     
-    // INSERT receipt_imports
+    // INSERT receipt_imports (with dedupe columns)
     if (sqlLower.includes('insert into decision_os.receipt_imports')) {
       const receipt: ReceiptImportRow = {
         id: params?.[0] as string,
@@ -276,6 +276,9 @@ class InMemoryClient implements DatabaseClient {
         ocr_raw_text: params?.[6] as string | null,
         status: params?.[7] as 'received' | 'parsed' | 'failed',
         error_message: params?.[8] as string | null,
+        content_hash: params?.[9] as string ?? '',
+        is_duplicate: params?.[10] as boolean ?? false,
+        duplicate_of_receipt_import_id: params?.[11] as string | null ?? null,
         created_at: new Date().toISOString(),
       };
       this.receiptImports.push(receipt);
@@ -305,8 +308,33 @@ class InMemoryClient implements DatabaseClient {
         if (sqlLower.includes('error_message') && !sqlLower.includes('insert')) {
           receipt.error_message = params?.[paramIdx++] as string | null;
         }
+        // Dedupe fields
+        if (sqlLower.includes('content_hash') && !sqlLower.includes('insert')) {
+          receipt.content_hash = params?.[paramIdx++] as string;
+        }
+        if (sqlLower.includes('is_duplicate') && !sqlLower.includes('insert')) {
+          receipt.is_duplicate = params?.[paramIdx++] as boolean;
+        }
+        if (sqlLower.includes('duplicate_of_receipt_import_id') && !sqlLower.includes('insert')) {
+          receipt.duplicate_of_receipt_import_id = params?.[paramIdx++] as string | null;
+        }
       }
       return { rows: [] };
+    }
+    
+    // SELECT canonical receipt by household_key + content_hash + is_duplicate=false
+    if (sqlLower.includes('from decision_os.receipt_imports') && 
+        sqlLower.includes('where household_key') && 
+        sqlLower.includes('content_hash') && 
+        sqlLower.includes('is_duplicate = false')) {
+      const householdKey = params?.[0] as string;
+      const contentHash = params?.[1] as string;
+      const found = this.receiptImports.find(r => 
+        r.household_key === householdKey && 
+        r.content_hash === contentHash && 
+        r.is_duplicate === false
+      );
+      return { rows: found ? [found] as unknown as T[] : [] };
     }
     
     // SELECT receipt_imports by ID
@@ -1016,6 +1044,10 @@ export interface ReceiptImportRow {
   status: 'received' | 'parsed' | 'failed';
   error_message: string | null;
   created_at: string;
+  // Dedupe fields (Phase 3)
+  content_hash: string;
+  is_duplicate: boolean;
+  duplicate_of_receipt_import_id: string | null;
 }
 
 /**
@@ -1048,8 +1080,9 @@ export async function insertReceiptImport(
   
   await db.query(
     `INSERT INTO decision_os.receipt_imports 
-     (id, household_key, source, vendor_name, purchased_at, ocr_provider, ocr_raw_text, status, error_message)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+     (id, household_key, source, vendor_name, purchased_at, ocr_provider, ocr_raw_text, status, error_message,
+      content_hash, is_duplicate, duplicate_of_receipt_import_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       receipt.id,
       receipt.household_key,
@@ -1060,6 +1093,9 @@ export async function insertReceiptImport(
       receipt.ocr_raw_text,
       receipt.status,
       receipt.error_message,
+      receipt.content_hash,
+      receipt.is_duplicate,
+      receipt.duplicate_of_receipt_import_id,
     ]
   );
   
@@ -1083,6 +1119,10 @@ export async function updateReceiptImportStatus(
     vendor_name?: string | null;
     purchased_at?: string | null;
     error_message?: string | null;
+    // Dedupe fields
+    content_hash?: string;
+    is_duplicate?: boolean;
+    duplicate_of_receipt_import_id?: string | null;
   },
   client?: DatabaseClient
 ): Promise<void> {
@@ -1122,10 +1162,51 @@ export async function updateReceiptImportStatus(
     paramIndex++;
   }
   
+  // Dedupe fields
+  if (updates.content_hash !== undefined) {
+    setClauses.push(`content_hash = $${paramIndex}`);
+    params.push(updates.content_hash);
+    paramIndex++;
+  }
+  
+  if (updates.is_duplicate !== undefined) {
+    setClauses.push(`is_duplicate = $${paramIndex}`);
+    params.push(updates.is_duplicate);
+    paramIndex++;
+  }
+  
+  if (updates.duplicate_of_receipt_import_id !== undefined) {
+    setClauses.push(`duplicate_of_receipt_import_id = $${paramIndex}`);
+    params.push(updates.duplicate_of_receipt_import_id);
+    paramIndex++;
+  }
+  
   await db.query(
     `UPDATE decision_os.receipt_imports SET ${setClauses.join(', ')} WHERE id = $1`,
     params
   );
+}
+
+/**
+ * Find canonical (non-duplicate) receipt import by household and content hash.
+ * Returns null if no canonical import exists with this hash.
+ * 
+ * SQL: SELECT * FROM decision_os.receipt_imports 
+ *      WHERE household_key = $1 AND content_hash = $2 AND is_duplicate = false
+ */
+export async function findCanonicalReceiptByHash(
+  householdKey: string,
+  contentHash: string,
+  client?: DatabaseClient
+): Promise<ReceiptImportRow | null> {
+  const db = client ?? await getClient();
+  const result = await db.query<ReceiptImportRow>(
+    `SELECT * FROM decision_os.receipt_imports 
+     WHERE household_key = $1 AND content_hash = $2 AND is_duplicate = false
+     LIMIT 1`,
+    [householdKey, contentHash]
+  );
+  return result.rows[0] ?? null;
 }
 
 /**
