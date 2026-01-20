@@ -24,6 +24,11 @@ import type {
   DrmReason,
 } from '@/types/decision-os/decision';
 import { assertNoArraysDeep, validateSingleAction } from './invariants';
+import { 
+  estimateRemainingQty, 
+  decayConfidence,
+  type InventoryItemWithDecay 
+} from './inventory-model';
 
 // =============================================================================
 // SAFE CORE MEALS (fallback when inventory is empty/unknown)
@@ -182,35 +187,35 @@ export interface MealWithScore {
 }
 
 /**
- * Score a meal based on inventory confidence
- * Higher score = more ingredients likely available
+ * Score a meal based on inventory availability.
+ * Higher score = more ingredients likely available.
  * 
- * SCORING RULES:
+ * SCORING RULES (Updated for Phase 3):
  * - Pantry staples: always 1.0 (assumed available)
- * - Inventory match with confidence >= 0.60: use inventory confidence
- * - Inventory match with confidence < 0.60: treated as missing (0)
+ * - Inventory match with decayed confidence >= 0.60:
+ *   - If remainingQty is known and > 0: use decayed confidence
+ *   - If remainingQty is known and <= 0: score 0 (used up)
+ *   - If remainingQty is unknown: use decayed confidence
+ * - Inventory match with decayed confidence < 0.60: treated as missing (0)
  * - No inventory match: 0 (ingredient unavailable)
  * 
  * @param meal - The meal to score
  * @param ingredients - All ingredients from database
- * @param inventory - Inventory items (will be filtered by confidence)
+ * @param inventory - Inventory items (will be filtered by confidence after decay)
+ * @param nowIso - Current time for decay calculation (optional)
  * @returns Score between 0 and 1
  */
 export function scoreMealByInventory(
   meal: MealRow,
   ingredients: MealIngredientRow[],
-  inventory: InventoryItemRow[]
+  inventory: InventoryItemRow[],
+  nowIso?: string
 ): number {
   const mealIngredients = ingredients.filter(i => i.meal_id === meal.id);
   
   if (mealIngredients.length === 0) {
     return 0.5; // No ingredients listed, neutral score
   }
-  
-  // INVARIANT: Only count inventory items with confidence >= threshold
-  const highConfidenceInventory = inventory.filter(
-    inv => inv.confidence >= INVENTORY_CONFIDENCE_THRESHOLD
-  );
   
   let totalScore = 0;
   let scoredCount = 0;
@@ -224,18 +229,44 @@ export function scoreMealByInventory(
     }
     
     // Find matching inventory item (case-insensitive contains match)
-    // ONLY from high-confidence inventory
     const ingredientLower = ingredient.ingredient_name.toLowerCase();
-    const matchingItem = highConfidenceInventory.find(inv => {
+    const matchingItem = inventory.find(inv => {
       const invLower = inv.item_name.toLowerCase();
       return invLower.includes(ingredientLower) || ingredientLower.includes(invLower);
     });
     
     if (matchingItem) {
-      // Use the inventory item's confidence (already >= threshold)
-      totalScore += matchingItem.confidence;
+      // Cast to extended type for decay calculations
+      const itemWithDecay = matchingItem as unknown as InventoryItemWithDecay;
+      
+      // Calculate decayed confidence
+      const decayedConf = decayConfidence(itemWithDecay, nowIso);
+      
+      // INVARIANT: Only count items with decayed confidence >= threshold
+      if (decayedConf < INVENTORY_CONFIDENCE_THRESHOLD) {
+        totalScore += 0;
+        scoredCount++;
+        continue;
+      }
+      
+      // Check remaining quantity if available
+      const remaining = estimateRemainingQty(itemWithDecay, nowIso);
+      
+      if (remaining !== null) {
+        // We have quantity info - check if any remains
+        if (remaining <= 0) {
+          // Item is used up - score 0
+          totalScore += 0;
+        } else {
+          // Item has remaining quantity - use decayed confidence
+          totalScore += decayedConf;
+        }
+      } else {
+        // No quantity info - just use decayed confidence
+        totalScore += decayedConf;
+      }
     } else {
-      // Not in inventory (or below threshold) - score 0
+      // Not in inventory - score 0
       // This penalizes meals requiring ingredients not in inventory
       totalScore += 0;
     }
@@ -248,13 +279,21 @@ export function scoreMealByInventory(
 /**
  * Select a single meal using rotation and inventory heuristics
  * NEVER returns multiple meals - always exactly one or null
+ * 
+ * @param activeMeals - Active meals to choose from
+ * @param ingredients - All ingredients from database
+ * @param inventory - Inventory items
+ * @param recentMealIds - Recent meal IDs for rotation
+ * @param useSafeCoreOnly - Whether to restrict to safe core meals
+ * @param nowIso - Current time for decay calculations (optional)
  */
 export function selectMeal(
   activeMeals: MealRow[],
   ingredients: MealIngredientRow[],
   inventory: InventoryItemRow[],
   recentMealIds: string[],
-  useSafeCoreOnly: boolean
+  useSafeCoreOnly: boolean,
+  nowIso?: string
 ): MealRow | null {
   if (activeMeals.length === 0) {
     return null;
@@ -278,10 +317,10 @@ export function selectMeal(
   // If all meals were recently used, reset rotation
   const mealsToScore = availableMeals.length > 0 ? availableMeals : candidateMeals;
   
-  // Score remaining meals by inventory
+  // Score remaining meals by inventory (with decay)
   const scored: MealWithScore[] = mealsToScore.map(meal => ({
     meal,
-    inventoryScore: scoreMealByInventory(meal, ingredients, inventory),
+    inventoryScore: scoreMealByInventory(meal, ingredients, inventory, nowIso),
   }));
   
   // Sort by score descending
@@ -392,13 +431,14 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
   // Get inventory item names for context hash
   const inventoryItemNames = inventory.map(i => i.item_name);
   
-  // Select a meal
+  // Select a meal (pass nowIso for decay calculations)
   const selectedMeal = selectMeal(
     activeMeals,
     ingredients,
     inventory,
     recentMealIds,
-    useSafeCoreOnly
+    useSafeCoreOnly,
+    request.nowIso
   );
   
   // Generate event ID

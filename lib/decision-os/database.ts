@@ -155,11 +155,24 @@ class InMemoryClient implements DatabaseClient {
       return { rows: this.meals as unknown as T[] };
     }
     
+    // SELECT meal_ingredients by meal_id (specific - must be before general)
+    if (sqlLower.includes('from decision_os.meal_ingredients') && sqlLower.includes('where meal_id')) {
+      const mealId = params?.[0] as string;
+      const filtered = this.ingredients.filter(i => i.meal_id === mealId);
+      return { rows: filtered as unknown as T[] };
+    }
+    
     if (sqlLower.includes('from decision_os.meal_ingredients')) {
       return { rows: this.ingredients as unknown as T[] };
     }
     
-    if (sqlLower.includes('from decision_os.inventory_items')) {
+    // Note: Specific inventory_items queries (LIKE, item_name, ORDER BY) are handled later
+    // This general handler only matches simple "SELECT * FROM inventory_items WHERE household_key = $1"
+    if (sqlLower.includes('from decision_os.inventory_items') && 
+        sqlLower.includes('where household_key') &&
+        !sqlLower.includes('like') &&
+        !sqlLower.includes('and item_name') &&
+        !sqlLower.includes('order by')) {
       const householdKey = params?.[0] as string ?? 'default';
       const filtered = this.inventory.filter(i => i.household_key === householdKey);
       return { rows: filtered as unknown as T[] };
@@ -420,17 +433,53 @@ class InMemoryClient implements DatabaseClient {
           household_key: householdKey,
           item_name: itemName,
           qty_estimated: qtyEstimated,
+          qty_used_estimated: 0,
           unit,
           confidence,
           source: 'receipt',
           last_seen_at: lastSeenAt,
+          last_used_at: null,
           expires_at: null,
+          decay_rate_per_day: 0.05,
           created_at: new Date().toISOString(),
         };
         this.inventory.push(newItem);
       }
       return { rows: [] };
     }
+    
+    // UPDATE inventory_items for consumption (qty_used_estimated + last_used_at)
+    if (sqlLower.includes('update decision_os.inventory_items') && sqlLower.includes('qty_used_estimated')) {
+      const qtyUsedIncrement = params?.[0] as number;
+      const lastUsedAt = params?.[1] as string;
+      const id = params?.[2] as string;
+      const item = this.inventory.find(i => i.id === id);
+      if (item) {
+        item.qty_used_estimated = (item.qty_used_estimated ?? 0) + qtyUsedIncrement;
+        item.last_used_at = lastUsedAt;
+      }
+      return { rows: [] };
+    }
+    
+    // SELECT inventory by ingredient name (LIKE match with LOWER for case-insensitive)
+    // Query pattern: WHERE household_key = $1 AND (LOWER(item_name) LIKE $2 OR $3 LIKE '%' || LOWER(item_name) || '%')
+    if (sqlLower.includes('from decision_os.inventory_items') && 
+        sqlLower.includes('lower(item_name)') && 
+        sqlLower.includes('like')) {
+      const householdKey = params?.[0] as string;
+      const pattern = params?.[1] as string;
+      const ingredientLower = params?.[2] as string;
+      const searchTerm = pattern.replace(/%/g, '').toLowerCase();
+      
+      const matched = this.inventory.filter(i => {
+        if (i.household_key !== householdKey) return false;
+        const itemLower = i.item_name.toLowerCase();
+        // Contains match in either direction
+        return itemLower.includes(searchTerm) || ingredientLower.includes(itemLower);
+      });
+      return { rows: matched as unknown as T[] };
+    }
+    
     
     // COUNT inventory_items
     if (sqlLower.includes('select count') && sqlLower.includes('inventory_items')) {

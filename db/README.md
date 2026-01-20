@@ -39,11 +39,15 @@ export DATABASE_URL="postgresql://user:password@localhost:5432/fastfood_dev"
 # Run ALL migrations (in order)
 psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
 psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.up.sql
+psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
+psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
 
 # Run SINGLE migration
 psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
 
 # Run DOWN migrations (rollback - reverse order)
+psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
+psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
 psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
 psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
 ```
@@ -237,6 +241,70 @@ psql $DATABASE_URL -c "SELECT table_name FROM information_schema.tables WHERE ta
 psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
 ```
 
+## Receipt Deduplication (Phase 3, Migration 003)
+
+Migration 003 adds content hashing for receipt deduplication to prevent duplicate imports from inflating inventory.
+
+### Columns Added to `receipt_imports`
+
+- `content_hash` (TEXT) - SHA256 hash of normalized OCR text + vendor + date
+- `is_duplicate` (BOOLEAN) - True if this is a duplicate of another canonical import
+- `duplicate_of_receipt_import_id` (UUID, FK) - Points to the canonical import
+
+### Indexes
+
+- Partial unique index: `(household_key, content_hash) WHERE is_duplicate = false`
+- General index: `(household_key, content_hash)` for lookups
+
+### Running Migration 003
+
+```bash
+psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
+
+# Verify
+psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='decision_os' AND table_name='receipt_imports' AND column_name LIKE '%hash%' OR column_name LIKE '%duplicate%';"
+# Expected: content_hash, is_duplicate, duplicate_of_receipt_import_id
+
+# Rollback (if needed)
+psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
+```
+
+## Inventory Decay + Consumption (Phase 3, Migration 004)
+
+Migration 004 adds consumption tracking and time-based decay to the inventory model.
+
+### Columns Added to `inventory_items`
+
+- `qty_used_estimated` (NUMERIC) - Cumulative consumption from approved cook decisions
+- `last_used_at` (TIMESTAMPTZ) - When item was last consumed
+- `decay_rate_per_day` (NUMERIC) - Daily decay rate (default 0.05 = 5% per day)
+
+### Model
+
+```
+estimated_remaining = qty_estimated - qty_used_estimated - time_decay
+time_decay = days_since(last_seen_at) * decay_rate_per_day
+```
+
+### Invariants
+
+1. **Advisory only**: Decay affects scoring but NEVER blocks decisions
+2. **Separate tracking**: `qty_used_estimated` is tracked separately from `qty_estimated` for audit
+3. **Best-effort**: Consumption updates are best-effort; failures don't break feedback flow
+
+### Running Migration 004
+
+```bash
+psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
+
+# Verify
+psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='decision_os' AND table_name='inventory_items' AND column_name IN ('qty_used_estimated', 'last_used_at', 'decay_rate_per_day');"
+# Expected: qty_used_estimated, last_used_at, decay_rate_per_day
+
+# Rollback (if needed)
+psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
+```
+
 ## Production Considerations
 
 1. **Backups**: Take backup before running migrations
@@ -244,3 +312,4 @@ psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
 3. **Connection pooling**: Use PgBouncer for connection management
 4. **Indexes**: Additional indexes may be needed based on query patterns
 5. **Receipt OCR storage**: `ocr_raw_text` can be large; consider archiving old imports
+6. **Decay tuning**: Adjust `decay_rate_per_day` per item type (perishables decay faster)

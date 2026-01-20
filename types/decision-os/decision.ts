@@ -104,7 +104,16 @@ export interface InventoryItemRow {
   id: string;
   household_key: string;
   item_name: string;
+  qty_estimated: number | null;
+  qty_used_estimated: number | null;
+  unit: string | null;
   confidence: number;
+  source: string;
+  last_seen_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  decay_rate_per_day: number | null;
+  created_at: string;
 }
 
 export interface MealIngredientRow {
