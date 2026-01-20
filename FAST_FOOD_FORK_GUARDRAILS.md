@@ -557,6 +557,7 @@ jobs:
 | 003_add_receipt_dedupe | (columns on receipt_imports) | Receipt deduplication (Phase 3) |
 | 004_add_inventory_decay | (columns on inventory_items) | Inventory decay + consumption (Phase 3) |
 | 005_create_taste_graph | taste_signals, taste_meal_scores | Behavioral taste learning (Phase 4) |
+| 006_add_taste_signals_weight_check | (constraint on taste_signals) | Weight CHECK constraint (-2.0 to 2.0) |
 
 **Running Migrations**:
 ```bash

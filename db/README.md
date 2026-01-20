@@ -46,11 +46,13 @@ psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.up.sql
 psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
 psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
 psql $DATABASE_URL -f db/migrations/005_create_taste_graph.up.sql
+psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.up.sql
 
 # Run SINGLE migration
 psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
 
 # Run DOWN migrations (rollback - reverse order)
+psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.down.sql
 psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
 psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
 psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
@@ -328,7 +330,7 @@ Migration 005 adds behavioral taste learning tables.
 - `user_action` (TEXT) - 'approved', 'rejected', 'drm_triggered', 'expired'
 - `context_hash` (TEXT) - Context hash from decision
 - `features` (JSONB) - Internal learning features (NEVER sent to client)
-- `weight` (NUMERIC) - Signal weight (+1.0 approved, -0.5 rejected, etc.)
+- `weight` (NUMERIC) - Signal weight: approved +1.0, rejected -1.0, drm_triggered -0.5, expired -0.2
 - `created_at` (TIMESTAMPTZ) - Record creation time
 
 **taste_meal_scores** (DERIVED CACHE - MUTABLE)
@@ -378,6 +380,38 @@ psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.triggers WHERE tr
 
 # Rollback (if needed)
 psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
+```
+
+## Weight CHECK Constraint (Migration 006)
+
+Migration 006 adds the missing CHECK constraint for `weight` on `taste_signals`.
+
+### Constraint Added
+
+```sql
+CHECK (weight >= -2.0 AND weight <= 2.0)
+```
+
+### Weight Values
+
+| User Action | Weight |
+|-------------|--------|
+| approved | +1.0 |
+| rejected | -1.0 |
+| drm_triggered | -0.5 |
+| expired | -0.2 |
+
+### Running Migration 006
+
+```bash
+psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.up.sql
+
+# Verify
+psql $DATABASE_URL -c "SELECT constraint_name FROM information_schema.check_constraints WHERE constraint_schema='decision_os' AND constraint_name LIKE '%weight%';"
+# Expected: taste_signals_weight_range
+
+# Rollback (if needed)
+psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.down.sql
 ```
 
 ## Production Considerations
