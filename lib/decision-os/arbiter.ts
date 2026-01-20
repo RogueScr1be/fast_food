@@ -29,6 +29,7 @@ import {
   decayConfidence,
   type InventoryItemWithDecay 
 } from './inventory-model';
+import { matchInventoryItem } from './matching/matcher';
 
 // =============================================================================
 // SAFE CORE MEALS (fallback when inventory is empty/unknown)
@@ -442,12 +443,11 @@ export function scoreMealByInventory(
       continue;
     }
     
-    // Find matching inventory item (case-insensitive contains match)
-    const ingredientLower = ingredient.ingredient_name.toLowerCase();
-    const matchingItem = inventory.find(inv => {
-      const invLower = inv.item_name.toLowerCase();
-      return invLower.includes(ingredientLower) || ingredientLower.includes(invLower);
-    });
+    // Find matching inventory item using token-based matcher (v2)
+    const { matched: matchingItem } = matchInventoryItem(
+      ingredient.ingredient_name,
+      inventory
+    );
     
     if (matchingItem) {
       // Cast to extended type for decay calculations
