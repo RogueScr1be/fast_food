@@ -130,6 +130,8 @@ class InMemoryClient implements DatabaseClient {
   private drmEvents: DrmEventRow[] = [];
   private receiptImports: ReceiptImportRow[] = [];
   private receiptLineItems: ReceiptLineItemRow[] = [];
+  private tasteSignals: TasteSignalRow[] = [];
+  private tasteMealScores: TasteMealScoreRow[] = [];
   private initialized: boolean = false;
   
   private initialize(): void {
@@ -149,6 +151,13 @@ class InMemoryClient implements DatabaseClient {
     
     if (sqlLower.includes('from decision_os.meals') && sqlLower.includes('where is_active')) {
       return { rows: this.meals.filter(m => m.is_active) as unknown as T[] };
+    }
+    
+    // SELECT meal by ID (for taste feature extraction)
+    if (sqlLower.includes('from decision_os.meals') && sqlLower.includes('where id')) {
+      const id = params?.[0] as string;
+      const found = this.meals.find(m => m.id === id);
+      return { rows: found ? [found] as unknown as T[] : [] };
     }
     
     if (sqlLower.includes('from decision_os.meals')) {
@@ -507,6 +516,109 @@ class InMemoryClient implements DatabaseClient {
       return { rows: filtered as unknown as T[] };
     }
     
+    // ==== TASTE SIGNALS QUERIES ====
+    
+    // INSERT taste_signals
+    if (sqlLower.includes('insert into decision_os.taste_signals')) {
+      const signal: TasteSignalRow = {
+        id: params?.[0] as string,
+        household_key: params?.[1] as string,
+        decided_at: params?.[2] as string,
+        actioned_at: params?.[3] as string | null,
+        decision_event_id: params?.[4] as string,
+        meal_id: params?.[5] as string | null,
+        decision_type: params?.[6] as 'cook' | 'order' | 'zero_cook',
+        user_action: params?.[7] as 'approved' | 'rejected' | 'drm_triggered' | 'expired',
+        context_hash: params?.[8] as string,
+        features: typeof params?.[9] === 'string' 
+          ? JSON.parse(params[9] as string) 
+          : (params?.[9] as Record<string, unknown>) ?? {},
+        weight: params?.[10] as number,
+        created_at: new Date().toISOString(),
+      };
+      
+      // Check for duplicate decision_event_id (UNIQUE constraint)
+      const existingSignal = this.tasteSignals.find(s => s.decision_event_id === signal.decision_event_id);
+      if (existingSignal) {
+        throw new Error(`UNIQUE constraint violation: taste_signal with decision_event_id ${signal.decision_event_id} already exists`);
+      }
+      
+      this.tasteSignals.push(signal);
+      return { rows: [signal] as unknown as T[] };
+    }
+    
+    // SELECT taste_signals by decision_event_id
+    if (sqlLower.includes('from decision_os.taste_signals') && sqlLower.includes('where decision_event_id')) {
+      const decisionEventId = params?.[0] as string;
+      const found = this.tasteSignals.find(s => s.decision_event_id === decisionEventId);
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    // SELECT taste_signals by household_key
+    if (sqlLower.includes('from decision_os.taste_signals') && sqlLower.includes('where household_key')) {
+      const householdKey = params?.[0] as string;
+      const filtered = this.tasteSignals.filter(s => s.household_key === householdKey);
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    // ==== TASTE MEAL SCORES QUERIES ====
+    
+    // INSERT/UPSERT taste_meal_scores
+    if (sqlLower.includes('insert into decision_os.taste_meal_scores') && sqlLower.includes('on conflict')) {
+      const householdKey = params?.[0] as string;
+      const mealId = params?.[1] as string;
+      const scoreDelta = params?.[2] as number;
+      const approvalsDelta = params?.[3] as number;
+      const rejectionsDelta = params?.[4] as number;
+      const lastSeenAt = params?.[5] as string;
+      
+      // Find existing
+      const existing = this.tasteMealScores.find(
+        s => s.household_key === householdKey && s.meal_id === mealId
+      );
+      
+      if (existing) {
+        // UPDATE
+        existing.score = existing.score + scoreDelta;
+        existing.approvals = existing.approvals + approvalsDelta;
+        existing.rejections = existing.rejections + rejectionsDelta;
+        existing.last_seen_at = lastSeenAt;
+        existing.updated_at = new Date().toISOString();
+      } else {
+        // INSERT
+        const newScore: TasteMealScoreRow = {
+          household_key: householdKey,
+          meal_id: mealId,
+          score: scoreDelta,
+          approvals: approvalsDelta,
+          rejections: rejectionsDelta,
+          last_seen_at: lastSeenAt,
+          updated_at: new Date().toISOString(),
+        };
+        this.tasteMealScores.push(newScore);
+      }
+      return { rows: [] };
+    }
+    
+    // SELECT taste_meal_scores by household_key and meal_id
+    if (sqlLower.includes('from decision_os.taste_meal_scores') && 
+        sqlLower.includes('where household_key') && 
+        sqlLower.includes('and meal_id')) {
+      const householdKey = params?.[0] as string;
+      const mealId = params?.[1] as string;
+      const found = this.tasteMealScores.find(
+        s => s.household_key === householdKey && s.meal_id === mealId
+      );
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    // SELECT taste_meal_scores by household_key
+    if (sqlLower.includes('from decision_os.taste_meal_scores') && sqlLower.includes('where household_key')) {
+      const householdKey = params?.[0] as string;
+      const filtered = this.tasteMealScores.filter(s => s.household_key === householdKey);
+      return { rows: filtered as unknown as T[] };
+    }
+    
     return { rows: [] };
   }
   
@@ -537,6 +649,10 @@ class InMemoryClient implements DatabaseClient {
     this.inventory = [];
     this.decisionEvents = [];
     this.drmEvents = [];
+    this.receiptImports = [];
+    this.receiptLineItems = [];
+    this.tasteSignals = [];
+    this.tasteMealScores = [];
     this.initialized = false;
   }
   
@@ -544,7 +660,20 @@ class InMemoryClient implements DatabaseClient {
     this.inventory = [];
     this.decisionEvents = [];
     this.drmEvents = [];
+    this.receiptImports = [];
+    this.receiptLineItems = [];
+    this.tasteSignals = [];
+    this.tasteMealScores = [];
     this.initialize();
+  }
+  
+  // Taste graph test helpers
+  _getTasteSignals(): TasteSignalRow[] {
+    return this.tasteSignals;
+  }
+  
+  _getTasteMealScores(): TasteMealScoreRow[] {
+    return this.tasteMealScores;
   }
 }
 
@@ -1114,6 +1243,39 @@ export interface ReceiptLineItemRow {
   normalized_qty_estimated: number | null;
   confidence: number;
   created_at: string;
+}
+
+/**
+ * Taste signal row type (APPEND-ONLY)
+ * Phase 4 - Behavioral learning
+ */
+export interface TasteSignalRow {
+  id: string;
+  household_key: string;
+  decided_at: string;
+  actioned_at: string | null;
+  decision_event_id: string;
+  meal_id: string | null;
+  decision_type: 'cook' | 'order' | 'zero_cook';
+  user_action: 'approved' | 'rejected' | 'drm_triggered' | 'expired';
+  context_hash: string;
+  features: Record<string, unknown>; // INTERNAL ONLY - never sent to client
+  weight: number;
+  created_at: string;
+}
+
+/**
+ * Taste meal score row type (MUTABLE CACHE)
+ * Phase 4 - Aggregated scores per meal
+ */
+export interface TasteMealScoreRow {
+  household_key: string;
+  meal_id: string;
+  score: number;
+  approvals: number;
+  rejections: number;
+  last_seen_at: string | null;
+  updated_at: string;
 }
 
 /**

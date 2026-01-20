@@ -18,6 +18,7 @@ import {
   insertDecisionEventFeedbackCopy,
 } from '@/lib/decision-os/database';
 import { consumeInventoryForMeal } from '@/lib/decision-os/consumption';
+import { updateTasteGraph } from '@/lib/decision-os/taste/updater';
 
 // =============================================================================
 // REQUEST/RESPONSE TYPES
@@ -124,12 +125,15 @@ export async function POST(request: Request): Promise<Response> {
     // APPEND-ONLY: Insert new row with feedback, don't update original
     const newEventId = randomUUID();
     
-    await insertDecisionEventFeedbackCopy(
+    const feedbackEvent = await insertDecisionEventFeedbackCopy(
       originalEvent,
       newEventId,
       feedbackRequest.userAction,
       feedbackRequest.nowIso
     );
+    
+    // Get database client for hooks (shared across hooks)
+    const client = await getClient();
     
     // CONSUMPTION HOOK: When a cook decision is approved, update inventory
     // Only fires when: userAction='approved' AND decision_type='cook' AND meal_id present
@@ -139,9 +143,6 @@ export async function POST(request: Request): Promise<Response> {
       originalEvent.meal_id
     ) {
       try {
-        // Get database client for consumption operations
-        const client = await getClient();
-        
         // Best-effort consumption - failures don't block the feedback response
         await consumeInventoryForMeal(
           feedbackRequest.householdKey,
@@ -153,6 +154,15 @@ export async function POST(request: Request): Promise<Response> {
         // Log but don't fail - consumption is best-effort
         console.warn('Consumption hook error (non-blocking):', consumptionError);
       }
+    }
+    
+    // TASTE GRAPH HOOK: Update taste signals and meal scores
+    // Always fires (for approved/rejected/drm_triggered) - uses feedback copy row
+    try {
+      await updateTasteGraph(feedbackEvent, client);
+    } catch (tasteError) {
+      // Log but don't fail - taste learning is best-effort
+      console.warn('Taste graph hook error (non-blocking):', tasteError);
     }
     
     // Return success response
