@@ -14,6 +14,22 @@ import type { DatabaseClient } from './database';
 import type { MealIngredientRow, InventoryItemRow } from '@/types/decision-os/decision';
 import { parseSimpleQty } from './inventory-model';
 import { matchInventoryItem } from './matching/matcher';
+import { tokenize } from './matching/tokenizer';
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+/**
+ * Maximum number of tokens to use for candidate pre-filtering.
+ * Longer tokens are preferred as they're more specific.
+ */
+const MAX_CANDIDATE_TOKENS = 3;
+
+/**
+ * Default limit for inventory candidates query.
+ */
+const INVENTORY_CANDIDATES_LIMIT = 50;
 
 // =============================================================================
 // TYPES
@@ -44,35 +60,78 @@ export async function getMealIngredientsForMeal(
 }
 
 /**
- * Get all inventory items for a household.
- * Used by the tokenized matcher for local matching.
+ * Get inventory candidates using token-based ILIKE pre-filtering.
+ * 
+ * This is more efficient than loading all items when inventory grows.
+ * Uses longest tokens (up to 3) to narrow down candidates via ILIKE patterns.
+ * 
+ * @param householdKey - Household identifier
+ * @param tokens - Tokens from ingredient name (longest will be selected)
+ * @param client - Database client
+ * @returns Candidate inventory items
  */
-export async function getInventoryForHousehold(
+async function getInventoryCandidates(
   householdKey: string,
+  tokens: string[],
   client: DatabaseClient
 ): Promise<InventoryItemRow[]> {
+  if (tokens.length === 0) {
+    return [];
+  }
+  
+  // Sort by length descending and take up to MAX_CANDIDATE_TOKENS
+  const sortedTokens = [...tokens].sort((a, b) => b.length - a.length);
+  const selectedTokens = sortedTokens.slice(0, MAX_CANDIDATE_TOKENS);
+  
+  // Build ILIKE patterns: %token%
+  const patterns = selectedTokens.map(t => `%${t}%`);
+  
   const result = await client.query<InventoryItemRow>(
-    `SELECT * FROM decision_os.inventory_items WHERE household_key = $1`,
-    [householdKey]
+    `SELECT * FROM decision_os.inventory_items 
+     WHERE household_key = $1 AND item_name ILIKE ANY($2)
+     ORDER BY confidence DESC, last_seen_at DESC
+     LIMIT $3`,
+    [householdKey, patterns, INVENTORY_CANDIDATES_LIMIT]
   );
+  
   return result.rows;
 }
 
 /**
  * Find best matching inventory item using token-based matching (v2).
  * 
- * @deprecated Use matchInventoryItem from matching/matcher.ts directly
+ * Uses a two-step approach for efficiency:
+ * 1. Pre-filter candidates using ILIKE patterns (DB-side)
+ * 2. Run full token matcher on candidates only
+ * 
+ * @param householdKey - Household identifier
+ * @param ingredientName - Ingredient to find
+ * @param client - Database client
+ * @returns Matching inventory items (0 or 1 item)
  */
 export async function findInventoryByIngredientName(
   householdKey: string,
   ingredientName: string,
   client: DatabaseClient
 ): Promise<InventoryItemRow[]> {
-  // Load all inventory items for the household
-  const inventory = await getInventoryForHousehold(householdKey, client);
+  // Tokenize ingredient name
+  const tokens = tokenize(ingredientName);
   
-  // Use token-based matcher
-  const { matched } = matchInventoryItem(ingredientName, inventory);
+  // If no tokens after processing, skip silently
+  if (tokens.length === 0) {
+    return [];
+  }
+  
+  // Get candidates using ILIKE pre-filter
+  const candidates = await getInventoryCandidates(householdKey, tokens, client);
+  
+  // If no candidates, skip silently
+  if (candidates.length === 0) {
+    return [];
+  }
+  
+  // Run full token matcher on candidates only
+  const { matched } = matchInventoryItem(ingredientName, candidates);
   
   // Return as array for backward compatibility
   return matched ? [matched] : [];
