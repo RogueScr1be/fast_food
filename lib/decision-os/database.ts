@@ -497,8 +497,49 @@ class InMemoryClient implements DatabaseClient {
       return { rows: [{ count: count.toString() }] as unknown as T[] };
     }
     
-    // SELECT inventory_items by household_key and item_name
-    if (sqlLower.includes('from decision_os.inventory_items') && sqlLower.includes('where household_key') && sqlLower.includes('and item_name')) {
+    // SELECT inventory_items with ILIKE ANY pattern matching (candidate pre-filter)
+    // MUST be before other item_name handlers to avoid false matches
+    if (sqlLower.includes('from decision_os.inventory_items') && 
+        sqlLower.includes('ilike any') && 
+        sqlLower.includes('order by confidence')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const patterns = params?.[1] as string[] ?? [];
+      const limit = params?.[2] as number ?? 50;
+      
+      // Empty patterns = no matches
+      if (patterns.length === 0) {
+        return { rows: [] as unknown as T[] };
+      }
+      
+      // Filter items that match any pattern (case-insensitive contains)
+      const filtered = this.inventory.filter(item => {
+        if (item.household_key !== householdKey) return false;
+        const itemLower = item.item_name.toLowerCase();
+        // Patterns are like %token% - check if item_name contains token
+        return patterns.some(pattern => {
+          const token = pattern.replace(/%/g, '').toLowerCase();
+          return itemLower.includes(token);
+        });
+      });
+      
+      // Sort by confidence DESC, last_seen_at DESC
+      filtered.sort((a, b) => {
+        const confDiff = (b.confidence ?? 0) - (a.confidence ?? 0);
+        if (Math.abs(confDiff) > 0.001) return confDiff;
+        const aTime = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0;
+        const bTime = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0;
+        return bTime - aTime;
+      });
+      
+      // Apply limit
+      return { rows: filtered.slice(0, limit) as unknown as T[] };
+    }
+    
+    // SELECT inventory_items by household_key and item_name (exact match)
+    if (sqlLower.includes('from decision_os.inventory_items') && 
+        sqlLower.includes('where household_key') && 
+        sqlLower.includes('and item_name') &&
+        !sqlLower.includes('ilike')) {
       const householdKey = params?.[0] as string;
       const itemName = params?.[1] as string;
       const found = this.inventory.find(
@@ -973,6 +1014,61 @@ export async function getInventoryItems(
   const result = await db.query<InventoryItemRow>(
     'SELECT * FROM decision_os.inventory_items WHERE household_key = $1',
     [householdKey]
+  );
+  return result.rows;
+}
+
+/**
+ * Default limit for inventory candidate queries
+ */
+export const INVENTORY_CANDIDATES_LIMIT = 50;
+
+/**
+ * Maximum tokens to use for ILIKE pattern matching
+ */
+export const MAX_CANDIDATE_TOKENS = 3;
+
+/**
+ * Get inventory candidates matching token patterns.
+ * 
+ * Used for pre-filtering before running the full token matcher.
+ * Builds %token% patterns for up to 3 tokens and queries with ILIKE ANY.
+ * 
+ * SQL: SELECT * FROM decision_os.inventory_items 
+ *      WHERE household_key = $1 AND item_name ILIKE ANY($2)
+ *      ORDER BY confidence DESC, last_seen_at DESC
+ *      LIMIT $3
+ * 
+ * @param householdKey - Household identifier
+ * @param tokens - Tokens to build patterns from (will use longest 3)
+ * @param limit - Maximum candidates to return (default 50)
+ * @param client - Database client
+ * @returns Matching inventory items, ordered by confidence and recency
+ */
+export async function getInventoryCandidates(
+  householdKey: string,
+  tokens: string[],
+  limit: number = INVENTORY_CANDIDATES_LIMIT,
+  client?: DatabaseClient
+): Promise<InventoryItemRow[]> {
+  if (tokens.length === 0) {
+    return [];
+  }
+  
+  // Sort by length descending and take up to MAX_CANDIDATE_TOKENS
+  const sortedTokens = [...tokens].sort((a, b) => b.length - a.length);
+  const selectedTokens = sortedTokens.slice(0, MAX_CANDIDATE_TOKENS);
+  
+  // Build ILIKE patterns: %token%
+  const patterns = selectedTokens.map(t => `%${t}%`);
+  
+  const db = client ?? await getClient();
+  const result = await db.query<InventoryItemRow>(
+    `SELECT * FROM decision_os.inventory_items 
+     WHERE household_key = $1 AND item_name ILIKE ANY($2)
+     ORDER BY confidence DESC, last_seen_at DESC
+     LIMIT $3`,
+    [householdKey, patterns, limit]
   );
   return result.rows;
 }
