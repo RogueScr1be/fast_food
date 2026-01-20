@@ -73,6 +73,8 @@ export type DrmReason =
 export interface DecisionSuccessResponse {
   decision: SingleAction;
   drmRecommended: false;
+  /** Whether autopilot auto-approved this decision (Earned Autonomy v1) */
+  autopilot?: boolean;
 }
 
 // Response when DRM is recommended (no decision)

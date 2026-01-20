@@ -209,7 +209,7 @@ describe('Taste Preferences in Selection', () => {
       ['meal-b', -3.0], // sigmoid(-3/5) ≈ 0.35
     ]);
     
-    const selected = selectMeal(
+    const result = selectMeal(
       [mealA, mealB],
       ingredients,
       inventory,
@@ -220,7 +220,7 @@ describe('Taste Preferences in Selection', () => {
       'test-context'
     );
     
-    expect(selected?.id).toBe('meal-a');
+    expect(result.meal?.id).toBe('meal-a');
   });
 
   it('after 3 approvals and 3 rejections, prefers the approved meal', async () => {
@@ -269,7 +269,7 @@ describe('Taste Preferences in Selection', () => {
       createIngredient('meal-rejected', 'salt', true),
     ];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       [mealA, mealB],
       ingredients,
       [],
@@ -280,7 +280,7 @@ describe('Taste Preferences in Selection', () => {
       'test-context'
     );
     
-    expect(selected?.id).toBe('meal-approved');
+    expect(result.meal?.id).toBe('meal-approved');
   });
 });
 
@@ -314,7 +314,7 @@ describe('Inventory Still Matters', () => {
     // Meal A: 0.60 * 0 + 0.35 * 0.88 = 0.308
     // Meal B: 0.60 * 1.0 + 0.35 * 0.27 = 0.695
     
-    const selected = selectMeal(
+    const result = selectMeal(
       [mealA, mealB],
       ingredients,
       inventory,
@@ -326,7 +326,7 @@ describe('Inventory Still Matters', () => {
     );
     
     // Meal B wins because inventory * 0.60 > taste * 0.35
-    expect(selected?.id).toBe('meal-b');
+    expect(result.meal?.id).toBe('meal-b');
   });
 
   it('inventory score of 0 cannot be overcome by perfect taste score', () => {
@@ -351,7 +351,7 @@ describe('Inventory Still Matters', () => {
     // no-ingredients: 0.60 * 0 + 0.35 * 1.0 = 0.35
     // with-ingredients: 0.60 * 0.9 + 0.35 * 0.0 = 0.54
     
-    const selected = selectMeal(
+    const result = selectMeal(
       [mealNoIngredients, mealWithIngredients],
       ingredients,
       inventory,
@@ -362,7 +362,7 @@ describe('Inventory Still Matters', () => {
       'test-context'
     );
     
-    expect(selected?.id).toBe('with-ingredients');
+    expect(result.meal?.id).toBe('with-ingredients');
   });
 });
 
@@ -393,7 +393,7 @@ describe('Rotation Penalty', () => {
     // Without rotation: both would have ~0.475 (0.60*0.5 + 0.35*0.5)
     // With rotation: recent gets -0.2, so 0.275 vs 0.475
     
-    const selected = selectMeal(
+    const result = selectMeal(
       [mealRecent, mealFresh],
       ingredients,
       [],
@@ -404,7 +404,7 @@ describe('Rotation Penalty', () => {
       'test-context'
     );
     
-    expect(selected?.id).toBe('fresh');
+    expect(result.meal?.id).toBe('fresh');
   });
 
   it('respects ROTATION_WINDOW limit', () => {
@@ -429,7 +429,7 @@ describe('Rotation Penalty', () => {
     const tasteScores = new Map<string, number>();
     
     // Don't pass contextHash to disable exploration noise for deterministic tie-breaking
-    const selected = selectMeal(
+    const result = selectMeal(
       meals,
       ingredients,
       [],
@@ -442,7 +442,7 @@ describe('Rotation Penalty', () => {
     
     // meal-old should NOT have penalty since it's outside window
     // meal-old wins alphabetically if no penalty (aaa < zzz)
-    expect(selected?.id).toBe('meal-old');
+    expect(result.meal?.id).toBe('meal-old');
   });
 });
 
@@ -463,13 +463,13 @@ describe('Stable Ordering and Tie-Breaking', () => {
     const tasteScores = new Map<string, number>(); // All zero
     
     // Without exploration (no contextHash), should always pick aaa-meal (first alphabetically)
-    const selected1 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
-    const selected2 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
-    const selected3 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
+    const result1 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
+    const result2 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
+    const result3 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, undefined);
     
-    expect(selected1?.canonical_key).toBe('aaa-meal');
-    expect(selected2?.canonical_key).toBe('aaa-meal');
-    expect(selected3?.canonical_key).toBe('aaa-meal');
+    expect(result1.meal?.canonical_key).toBe('aaa-meal');
+    expect(result2.meal?.canonical_key).toBe('aaa-meal');
+    expect(result3.meal?.canonical_key).toBe('aaa-meal');
   });
 
   it('produces consistent results regardless of input order', () => {
@@ -489,10 +489,10 @@ describe('Stable Ordering and Tie-Breaking', () => {
     // Shuffle order
     const shuffled = [meals[2], meals[0], meals[1]];
     
-    const selected1 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, 'ctx');
-    const selected2 = selectMeal(shuffled, ingredients, [], [], false, undefined, tasteScores, 'ctx');
+    const result1 = selectMeal(meals, ingredients, [], [], false, undefined, tasteScores, 'ctx');
+    const result2 = selectMeal(shuffled, ingredients, [], [], false, undefined, tasteScores, 'ctx');
     
-    expect(selected1?.id).toBe(selected2?.id);
+    expect(result1.meal?.id).toBe(result2.meal?.id);
   });
 });
 

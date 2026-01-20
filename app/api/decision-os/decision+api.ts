@@ -19,6 +19,7 @@ import {
   isValidDecisionRequest,
   type DecisionRequest,
   type DecisionResponse,
+  type DecisionEventRow,
 } from '@/types/decision-os/decision';
 import {
   makeDecision,
@@ -34,6 +35,13 @@ import {
   insertDecisionEvent,
   getTasteScoresForMeals,
 } from '@/lib/decision-os/database';
+import {
+  evaluateAutopilotEligibility,
+  wasMealUsedRecently,
+  type AutopilotContext,
+} from '@/lib/decision-os/autopilot/policy';
+import { consumeInventoryForMeal } from '@/lib/decision-os/consumption';
+import { updateTasteGraph } from '@/lib/decision-os/taste/updater';
 
 /**
  * POST /api/decision-os/decision
@@ -99,7 +107,7 @@ export async function POST(request: Request): Promise<Response> {
     );
     
     // Make decision with taste-aware scoring
-    const response: DecisionResponse = await makeDecision({
+    const arbiterResult = await makeDecision({
       request: decisionRequest,
       activeMeals,
       ingredients,
@@ -109,6 +117,87 @@ export async function POST(request: Request): Promise<Response> {
       persistDecisionEvent: insertDecisionEvent,
       tasteScores,
     });
+    
+    let response: DecisionResponse = arbiterResult.response;
+    
+    // Evaluate autopilot eligibility for cook decisions
+    if (
+      response.drmRecommended === false &&
+      response.decision?.decisionType === 'cook' &&
+      arbiterResult.internalContext
+    ) {
+      const { internalContext } = arbiterResult;
+      
+      // Check if meal was used in last 3 local days (computed from recent events)
+      const usedInLast3Days = internalContext.selectedMealId
+        ? wasMealUsedRecently(internalContext.selectedMealId, recentDecisions, decisionRequest.nowIso)
+        : false;
+      
+      // Build autopilot context
+      const autopilotContext: AutopilotContext = {
+        nowIso: decisionRequest.nowIso,
+        signal: decisionRequest.signal,
+        mealId: internalContext.selectedMealId!,
+        inventoryScore: internalContext.inventoryScore,
+        tasteScore: internalContext.tasteScore,
+        usedInLast3Days,
+        recentEvents: recentDecisions,
+      };
+      
+      const autopilotResult = evaluateAutopilotEligibility(autopilotContext);
+      
+      if (autopilotResult.eligible) {
+        // AUTOPILOT ELIGIBLE: Insert feedback copy row with user_action='approved'
+        const feedbackEventId = randomUUID();
+        const feedbackEvent: DecisionEventRow = {
+          id: feedbackEventId,
+          household_key: decisionRequest.householdKey,
+          decided_at: decisionRequest.nowIso,
+          decision_type: 'cook',
+          meal_id: internalContext.selectedMealId,
+          external_vendor_key: null,
+          context_hash: internalContext.contextHash,
+          decision_payload: internalContext.decisionPayload,
+          user_action: 'approved',
+          actioned_at: decisionRequest.nowIso,
+        };
+        
+        try {
+          await insertDecisionEvent(feedbackEvent);
+          
+          // Trigger consumption hook (best-effort)
+          if (internalContext.selectedMealId) {
+            try {
+              const client = await import('@/lib/decision-os/database').then(m => m.getClient());
+              await consumeInventoryForMeal(
+                decisionRequest.householdKey,
+                internalContext.selectedMealId,
+                decisionRequest.nowIso,
+                client
+              );
+            } catch {
+              // Best-effort - don't fail the request
+            }
+            
+            // Trigger taste graph update (best-effort)
+            try {
+              const client = await import('@/lib/decision-os/database').then(m => m.getClient());
+              await updateTasteGraph(feedbackEvent, client);
+            } catch {
+              // Best-effort - don't fail the request
+            }
+          }
+          
+          // Add autopilot flag to response
+          response = {
+            ...response,
+            autopilot: true,
+          };
+        } catch {
+          // If feedback insert fails, just return normal response (no autopilot)
+        }
+      }
+    }
     
     // INVARIANT CHECK: Deep validation - no arrays anywhere in response
     validateDecisionResponse(response);
