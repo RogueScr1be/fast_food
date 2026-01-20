@@ -127,15 +127,21 @@ export async function POST(request: Request): Promise<Response> {
     // Step 3: Parse receipt text into line items
     const parseResult = parseReceiptText(ocrResult.rawText);
     
-    // Extract vendor name if not provided
+    // PRECEDENCE: Request-provided values take precedence over parser-derived values
+    // If request includes vendorName/purchasedAtIso, those are stored as-is
+    // Parser extraction only fills in when request fields are absent
+    
+    // Vendor name: request > parser > null
     let vendorName = req.vendorName ?? null;
-    if (!vendorName) {
+    if (vendorName === null) {
+      // Only attempt parser extraction if request didn't provide a value
       vendorName = extractVendorName(ocrResult.rawText);
     }
     
-    // Extract purchase date if not provided
+    // Purchase date: request > parser > null
     let purchasedAt = req.purchasedAtIso ?? null;
-    if (!purchasedAt) {
+    if (purchasedAt === null) {
+      // Only attempt parser extraction if request didn't provide a value
       const extractedDate = extractPurchaseDate(ocrResult.rawText);
       if (extractedDate) {
         purchasedAt = extractedDate.toISOString();

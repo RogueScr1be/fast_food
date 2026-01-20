@@ -19,6 +19,13 @@ import {
   resetOcrProvider,
   ocrExtractTextFromImageBase64,
   createMockOcrProviderWithResponse,
+  MOCK_KEY_EMPTY,
+  MOCK_KEY_MINIMAL,
+  MOCK_KEY_FULL,
+  MOCK_KEY_CHICKEN,
+  DEFAULT_RECEIPT,
+  MINIMAL_RECEIPT,
+  CHICKEN_RECEIPT,
 } from '../lib/decision-os/ocr';
 import {
   getTestClient,
@@ -243,14 +250,48 @@ describe('OCR Adapter', () => {
     resetOcrProvider();
   });
   
-  test('mock provider returns deterministic output', async () => {
-    // Use a longer input to trigger the full mock receipt
-    const longBase64 = 'a'.repeat(200);
-    const result = await ocrExtractTextFromImageBase64(longBase64);
+  describe('deterministic keying strategy', () => {
+    test('MOCK_KEY_FULL returns full receipt', async () => {
+      const result = await ocrExtractTextFromImageBase64(MOCK_KEY_FULL);
+      
+      expect(result.provider).toBe('mock');
+      expect(result.rawText).toBe(DEFAULT_RECEIPT);
+      expect(result.rawText).toContain('SAFEWAY');
+    });
     
-    expect(result.provider).toBe('mock');
-    expect(result.rawText).toBeTruthy();
-    expect(result.rawText).toContain('SAFEWAY'); // Full mock receipt for long inputs
+    test('MOCK_KEY_MINIMAL returns minimal receipt', async () => {
+      const result = await ocrExtractTextFromImageBase64(MOCK_KEY_MINIMAL);
+      
+      expect(result.provider).toBe('mock');
+      expect(result.rawText).toBe(MINIMAL_RECEIPT);
+      expect(result.rawText).toContain('GROCERY STORE');
+    });
+    
+    test('MOCK_KEY_CHICKEN returns chicken receipt', async () => {
+      const result = await ocrExtractTextFromImageBase64(MOCK_KEY_CHICKEN);
+      
+      expect(result.provider).toBe('mock');
+      expect(result.rawText).toBe(CHICKEN_RECEIPT);
+      expect(result.rawText).toContain('CHK BRST BNLS');
+    });
+    
+    test('MOCK_KEY_EMPTY returns empty text (failure simulation)', async () => {
+      const result = await ocrExtractTextFromImageBase64(MOCK_KEY_EMPTY);
+      
+      expect(result.provider).toBe('mock');
+      expect(result.rawText).toBe('');
+    });
+    
+    test('unknown input returns default receipt (not based on length)', async () => {
+      // Any input without a known key should return the same default
+      const result1 = await ocrExtractTextFromImageBase64('short');
+      const result2 = await ocrExtractTextFromImageBase64('a'.repeat(1000));
+      const result3 = await ocrExtractTextFromImageBase64('random-image-data-xyz');
+      
+      expect(result1.rawText).toBe(DEFAULT_RECEIPT);
+      expect(result2.rawText).toBe(DEFAULT_RECEIPT);
+      expect(result3.rawText).toBe(DEFAULT_RECEIPT);
+    });
   });
   
   test('provider is injectable', async () => {
