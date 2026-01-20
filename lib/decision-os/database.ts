@@ -600,7 +600,21 @@ class InMemoryClient implements DatabaseClient {
       return { rows: [] };
     }
     
-    // SELECT taste_meal_scores by household_key and meal_id
+    // SELECT taste_meal_scores by household_key and meal_id IN (list)
+    // Query: SELECT meal_id, score FROM ... WHERE household_key = $1 AND meal_id = ANY($2)
+    // NOTE: Must come BEFORE "and meal_id" handler since query contains both patterns
+    if (sqlLower.includes('from decision_os.taste_meal_scores') && 
+        sqlLower.includes('where household_key') && 
+        sqlLower.includes('any')) {
+      const householdKey = params?.[0] as string;
+      const mealIds = params?.[1] as string[];
+      const filtered = this.tasteMealScores.filter(
+        s => s.household_key === householdKey && mealIds.includes(s.meal_id)
+      );
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    // SELECT taste_meal_scores by household_key and meal_id (single)
     if (sqlLower.includes('from decision_os.taste_meal_scores') && 
         sqlLower.includes('where household_key') && 
         sqlLower.includes('and meal_id')) {
@@ -1608,4 +1622,43 @@ export async function getInventoryItemCount(
     [householdKey]
   );
   return parseInt(result.rows[0]?.count ?? '0', 10);
+}
+
+// =============================================================================
+// TASTE GRAPH QUERIES (Phase 4)
+// =============================================================================
+
+/**
+ * Get taste meal scores for a list of meal IDs.
+ * Returns a Map<meal_id, score> for efficient lookup.
+ * 
+ * @param householdKey - Household key
+ * @param mealIds - List of meal IDs to get scores for
+ * @param client - Database client
+ * @returns Map of meal_id to score (missing meals default to 0)
+ */
+export async function getTasteScoresForMeals(
+  householdKey: string,
+  mealIds: string[],
+  client?: DatabaseClient
+): Promise<Map<string, number>> {
+  const db = client ?? await getClient();
+  
+  if (mealIds.length === 0) {
+    return new Map();
+  }
+  
+  const result = await db.query<{ meal_id: string; score: number }>(
+    `SELECT meal_id, score 
+     FROM decision_os.taste_meal_scores 
+     WHERE household_key = $1 AND meal_id = ANY($2)`,
+    [householdKey, mealIds]
+  );
+  
+  const scoreMap = new Map<string, number>();
+  for (const row of result.rows) {
+    scoreMap.set(row.meal_id, row.score);
+  }
+  
+  return scoreMap;
 }

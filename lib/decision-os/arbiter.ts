@@ -301,9 +301,103 @@ export function evaluateDrmTrigger(
  */
 export const INVENTORY_CONFIDENCE_THRESHOLD = 0.60;
 
+// =============================================================================
+// TASTE-AWARE SCORING CONSTANTS (Phase 4)
+// =============================================================================
+
+/**
+ * Weight for inventory score in final calculation (60%)
+ * Inventory availability is the primary factor
+ */
+export const WEIGHT_INVENTORY = 0.60;
+
+/**
+ * Weight for taste score in final calculation (35%)
+ * User preferences matter but don't override availability
+ */
+export const WEIGHT_TASTE = 0.35;
+
+/**
+ * Rotation penalty applied to recently used meals (-0.2)
+ * Prevents repetition even if a meal is highly preferred
+ */
+export const ROTATION_PENALTY = -0.20;
+
+/**
+ * Number of recent decisions to consider for rotation
+ */
+export const ROTATION_WINDOW = 7;
+
+/**
+ * Maximum exploration noise (5%)
+ * Small deterministic perturbation to allow discovery
+ */
+export const MAX_EXPLORATION_NOISE = 0.05;
+
+/**
+ * Divisor for sigmoid normalization of taste scores
+ * Score of 5 maps to ~0.73, score of -5 maps to ~0.27
+ */
+export const TASTE_SIGMOID_DIVISOR = 5;
+
+// =============================================================================
+// TASTE SCORING HELPERS
+// =============================================================================
+
+/**
+ * Sigmoid function to normalize raw taste scores to [0, 1]
+ * 
+ * Formula: 1 / (1 + exp(-x / divisor))
+ * 
+ * @param rawScore - Raw taste score (can be negative)
+ * @param divisor - Sigmoid divisor (default: 5)
+ * @returns Normalized score between 0 and 1
+ */
+export function sigmoidNormalize(rawScore: number, divisor: number = TASTE_SIGMOID_DIVISOR): number {
+  return 1 / (1 + Math.exp(-rawScore / divisor));
+}
+
+/**
+ * Compute deterministic tiny noise for exploration.
+ * 
+ * Uses a hash-to-float trick:
+ * 1. Concatenate contextHash + mealId
+ * 2. Hash the result
+ * 3. Convert first 8 hex chars to a number
+ * 4. Map to [0, MAX_EXPLORATION_NOISE]
+ * 
+ * DETERMINISTIC: Same inputs always produce same output.
+ * NOT random - just spreads meals in a stable way.
+ * 
+ * @param contextHash - The decision context hash
+ * @param mealId - The meal ID
+ * @returns Noise value in [0, MAX_EXPLORATION_NOISE]
+ */
+export function deterministicTinyNoise(contextHash: string, mealId: string): number {
+  const combined = `${contextHash}:${mealId}`;
+  const hash = createHash('sha256').update(combined).digest('hex');
+  
+  // Take first 8 hex characters and convert to number
+  const hexValue = hash.substring(0, 8);
+  const numValue = parseInt(hexValue, 16);
+  
+  // Normalize to [0, 1] then scale to [0, MAX_EXPLORATION_NOISE]
+  const normalized = numValue / 0xFFFFFFFF;
+  return normalized * MAX_EXPLORATION_NOISE;
+}
+
 export interface MealWithScore {
   meal: MealRow;
   inventoryScore: number;
+}
+
+export interface MealWithFinalScore {
+  meal: MealRow;
+  inventoryScore: number;
+  tasteScore: number;
+  rotationPenalty: number;
+  exploration: number;
+  finalScore: number;
 }
 
 /**
@@ -397,15 +491,26 @@ export function scoreMealByInventory(
 }
 
 /**
- * Select a single meal using rotation and inventory heuristics
- * NEVER returns multiple meals - always exactly one or null
+ * Select a single meal using inventory, taste preferences, rotation, and exploration.
+ * NEVER returns multiple meals - always exactly one or null.
+ * 
+ * SCORING FORMULA (Phase 4):
+ *   finalScore = (0.60 * inventoryScore) + (0.35 * tasteScore) + exploration + rotationPenalty
+ * 
+ * Where:
+ *   - inventoryScore: 0..1 from scoreMealByInventory()
+ *   - tasteScore: sigmoid(rawTasteScore / 5) in 0..1
+ *   - rotationPenalty: -0.2 if meal in last 7 decisions, else 0
+ *   - exploration: deterministic tiny noise in [0, 0.05]
  * 
  * @param activeMeals - Active meals to choose from
  * @param ingredients - All ingredients from database
  * @param inventory - Inventory items
- * @param recentMealIds - Recent meal IDs for rotation
+ * @param recentMealIds - Recent meal IDs for rotation (last 7)
  * @param useSafeCoreOnly - Whether to restrict to safe core meals
- * @param nowIso - Current time for decay calculations (optional)
+ * @param nowIso - Current time for decay calculations
+ * @param tasteScores - Map of meal_id to raw taste score (optional)
+ * @param contextHash - Context hash for deterministic exploration (optional)
  */
 export function selectMeal(
   activeMeals: MealRow[],
@@ -413,7 +518,9 @@ export function selectMeal(
   inventory: InventoryItemRow[],
   recentMealIds: string[],
   useSafeCoreOnly: boolean,
-  nowIso?: string
+  nowIso?: string,
+  tasteScores?: Map<string, number>,
+  contextHash?: string
 ): MealRow | null {
   if (activeMeals.length === 0) {
     return null;
@@ -431,20 +538,57 @@ export function selectMeal(
     }
   }
   
-  // Exclude recently used meals (rotation)
-  const availableMeals = candidateMeals.filter(m => !recentMealIds.includes(m.id));
+  // STABLE ORDERING: Sort candidates by canonical_key for deterministic processing
+  candidateMeals = [...candidateMeals].sort((a, b) => 
+    a.canonical_key.localeCompare(b.canonical_key)
+  );
   
-  // If all meals were recently used, reset rotation
-  const mealsToScore = availableMeals.length > 0 ? availableMeals : candidateMeals;
+  // Recent meal IDs for rotation penalty (use last ROTATION_WINDOW)
+  const recentSet = new Set(recentMealIds.slice(0, ROTATION_WINDOW));
   
-  // Score remaining meals by inventory (with decay)
-  const scored: MealWithScore[] = mealsToScore.map(meal => ({
-    meal,
-    inventoryScore: scoreMealByInventory(meal, ingredients, inventory, nowIso),
-  }));
+  // Score all candidate meals using the full formula
+  const scored: MealWithFinalScore[] = candidateMeals.map(meal => {
+    // 1. Base inventory score (0..1)
+    const inventoryScore = scoreMealByInventory(meal, ingredients, inventory, nowIso);
+    
+    // 2. Taste score: sigmoid normalize raw score (default 0 if missing)
+    const rawTaste = tasteScores?.get(meal.id) ?? 0;
+    const tasteScore = sigmoidNormalize(rawTaste);
+    
+    // 3. Rotation penalty: -0.2 if in recent decisions
+    const rotationPenalty = recentSet.has(meal.id) ? ROTATION_PENALTY : 0;
+    
+    // 4. Exploration: deterministic tiny noise for discovery
+    const exploration = contextHash 
+      ? deterministicTinyNoise(contextHash, meal.id)
+      : 0;
+    
+    // Final score = weighted sum
+    const finalScore = 
+      (WEIGHT_INVENTORY * inventoryScore) +
+      (WEIGHT_TASTE * tasteScore) +
+      exploration +
+      rotationPenalty;
+    
+    return {
+      meal,
+      inventoryScore,
+      tasteScore,
+      rotationPenalty,
+      exploration,
+      finalScore,
+    };
+  });
   
-  // Sort by score descending
-  scored.sort((a, b) => b.inventoryScore - a.inventoryScore);
+  // Sort by finalScore descending, then by canonical_key for deterministic tie-breaking
+  scored.sort((a, b) => {
+    const scoreDiff = b.finalScore - a.finalScore;
+    if (Math.abs(scoreDiff) > 0.0001) {
+      return scoreDiff;
+    }
+    // Tie-break by canonical_key (lexicographic)
+    return a.meal.canonical_key.localeCompare(b.meal.canonical_key);
+  });
   
   // Return the top scoring meal (SINGLE meal, never a list)
   return scored[0]?.meal ?? null;
@@ -504,6 +648,8 @@ export interface ArbiterInput {
   recentDecisions: DecisionEventRow[];
   generateEventId: () => string;
   persistDecisionEvent: (event: Omit<DecisionEventRow, 'id'> & { id: string }) => Promise<void>;
+  /** Optional: Taste scores map (meal_id -> raw score). If not provided, taste scoring uses 0 for all. */
+  tasteScores?: Map<string, number>;
 }
 
 /**
@@ -521,6 +667,7 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     recentDecisions,
     generateEventId,
     persistDecisionEvent,
+    tasteScores,
   } = input;
   
   // Evaluate DRM triggers using full event history
@@ -536,7 +683,7 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     };
   }
   
-  // Get recent meal IDs for rotation
+  // Get recent meal IDs for rotation (from most recent decisions)
   const recentMealIds = recentDecisions
     .filter(d => d.meal_id !== null)
     .map(d => d.meal_id as string);
@@ -547,20 +694,31 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
   // Get inventory item names for context hash
   const inventoryItemNames = inventory.map(i => i.item_name);
   
-  // Select a meal (pass nowIso for decay calculations)
+  // Compute pre-selection context hash (without meal key) for exploration noise
+  // This ensures exploration is deterministic but doesn't depend on meal selection
+  const preSelectionContextHash = computeContextHash({
+    nowIso: request.nowIso,
+    signal: request.signal,
+    inventoryItemNames,
+    selectedMealKey: null, // No meal selected yet - used for exploration
+  });
+  
+  // Select a meal with taste-aware scoring (Phase 4)
   const selectedMeal = selectMeal(
     activeMeals,
     ingredients,
     inventory,
     recentMealIds,
     useSafeCoreOnly,
-    request.nowIso
+    request.nowIso,
+    tasteScores,
+    preSelectionContextHash
   );
   
   // Generate event ID
   const decisionEventId = generateEventId();
   
-  // Compute context hash
+  // Compute final context hash (includes selected meal for audit/dedup)
   const contextHash = computeContextHash({
     nowIso: request.nowIso,
     signal: request.signal,
