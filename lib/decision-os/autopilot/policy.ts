@@ -18,22 +18,32 @@ export const DEFAULT_AUTOPILOT_CONFIG: AutopilotConfig = {
 };
 
 /**
+ * Regex to validate ISO date format at start of string.
+ * Matches: YYYY-MM-DD (with optional time portion after)
+ */
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}/;
+
+/**
  * Parses an ISO timestamp string and extracts the local date portion (YYYY-MM-DD).
- * This handles timestamps with timezone offsets correctly.
  * 
- * @param isoString - ISO 8601 timestamp string
+ * Uses deterministic substring parsing - NO Date() conversion.
+ * This ensures timezone-independent behavior: the literal date in the string is used.
+ * 
+ * Examples:
+ * - "2026-01-20T23:30:00-06:00" -> "2026-01-20"
+ * - "2026-01-21T04:30:00Z" -> "2026-01-21"
+ * - "2026-01-20" -> "2026-01-20"
+ * 
+ * @param isoString - ISO 8601 timestamp string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss...)
  * @returns Local date string in YYYY-MM-DD format
+ * @throws Error if string does not start with valid YYYY-MM-DD format
  */
 export function parseLocalDate(isoString: string): string {
-  // Parse the ISO string into a Date object
-  const date = new Date(isoString);
+  if (!ISO_DATE_REGEX.test(isoString)) {
+    throw new Error(`Invalid ISO date format: "${isoString}". Expected YYYY-MM-DD at start.`);
+  }
   
-  // Extract local date components
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  
-  return `${year}-${month}-${day}`;
+  return isoString.substring(0, 10);
 }
 
 /**

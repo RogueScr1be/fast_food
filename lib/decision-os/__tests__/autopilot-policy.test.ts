@@ -9,20 +9,53 @@ import {
 import type { DecisionEvent } from '../../../types/decision-os';
 
 describe('parseLocalDate', () => {
-  it('extracts YYYY-MM-DD from ISO string', () => {
-    expect(parseLocalDate('2026-01-20T15:30:00.000Z')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it('extracts YYYY-MM-DD from ISO string with Z timezone', () => {
+    expect(parseLocalDate('2026-01-20T15:30:00.000Z')).toBe('2026-01-20');
+  });
+
+  it('extracts YYYY-MM-DD from ISO string with offset timezone', () => {
+    // This would fail with Date() conversion in some timezones
+    expect(parseLocalDate('2026-01-20T23:30:00-06:00')).toBe('2026-01-20');
+  });
+
+  it('extracts literal date from UTC string (no timezone conversion)', () => {
+    // "2026-01-21T04:30:00Z" is 4:30 AM UTC on Jan 21
+    // With Date() conversion in US timezones, this would become Jan 20
+    // But we want the literal date from the string: Jan 21
+    expect(parseLocalDate('2026-01-21T04:30:00Z')).toBe('2026-01-21');
+  });
+
+  it('handles date-only strings', () => {
+    expect(parseLocalDate('2026-01-20')).toBe('2026-01-20');
   });
 
   it('handles midnight UTC correctly', () => {
-    // A timestamp at midnight UTC on Jan 20 should parse to local date
-    const result = parseLocalDate('2026-01-20T00:00:00.000Z');
-    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(parseLocalDate('2026-01-20T00:00:00.000Z')).toBe('2026-01-20');
   });
 
   it('handles late night timestamps near midnight', () => {
-    // 11:59 PM local time should still be the same date
-    const result = parseLocalDate('2026-01-20T23:59:59.000Z');
-    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(parseLocalDate('2026-01-20T23:59:59.000Z')).toBe('2026-01-20');
+  });
+
+  it('handles timestamps with positive offset', () => {
+    // Late night in +05:30 timezone - literal date is still Jan 20
+    expect(parseLocalDate('2026-01-20T23:30:00+05:30')).toBe('2026-01-20');
+  });
+
+  it('throws for invalid format - missing dashes', () => {
+    expect(() => parseLocalDate('20260120')).toThrow('Invalid ISO date format');
+  });
+
+  it('throws for invalid format - wrong order', () => {
+    expect(() => parseLocalDate('20-01-2026')).toThrow('Invalid ISO date format');
+  });
+
+  it('throws for empty string', () => {
+    expect(() => parseLocalDate('')).toThrow('Invalid ISO date format');
+  });
+
+  it('throws for non-date string', () => {
+    expect(() => parseLocalDate('not-a-date')).toThrow('Invalid ISO date format');
   });
 });
 
