@@ -23,6 +23,7 @@ import type {
   DecisionEventRow,
   DrmReason,
 } from '@/types/decision-os/decision';
+import { assertNoArraysDeep, validateSingleAction } from './invariants';
 
 // =============================================================================
 // SAFE CORE MEALS (fallback when inventory is empty/unknown)
@@ -42,11 +43,34 @@ export const SAFE_CORE_MEAL_KEYS: readonly string[] = [
 ] as const;
 
 // =============================================================================
-// DINNER WINDOW THRESHOLDS
+// TIME THRESHOLDS
+// Exported for documentation and testing purposes
 // =============================================================================
-const DINNER_START_HOUR = 17; // 5:00 PM
-const DINNER_END_HOUR = 21;   // 9:00 PM
-const LATE_THRESHOLD_HOUR = 20; // 8:00 PM - after this, recommend DRM
+
+/**
+ * Dinner window start hour (5:00 PM / 17:00)
+ * Decisions before this are considered too early for dinner
+ */
+export const DINNER_START_HOUR = 17;
+
+/**
+ * Dinner window end hour (9:00 PM / 21:00)
+ * Decisions after this are considered too late
+ */
+export const DINNER_END_HOUR = 21;
+
+/**
+ * Late threshold hour (8:00 PM / 20:00)
+ * After this hour, DRM is recommended instead of normal decision
+ * Rationale: Limited cooking time remaining, user should order or go simple
+ */
+export const LATE_THRESHOLD_HOUR = 20;
+
+/**
+ * Rejection count threshold for DRM trigger
+ * If user rejects this many decisions, trigger DRM
+ */
+export const DRM_REJECTION_THRESHOLD = 2;
 
 // =============================================================================
 // CONTEXT HASH COMPUTATION
@@ -128,7 +152,7 @@ export function evaluateDrmTrigger(
   }
   
   // 3. Two or more rejections in recent history
-  if (recentRejectionCount >= 2) {
+  if (recentRejectionCount >= DRM_REJECTION_THRESHOLD) {
     return { shouldTrigger: true, reason: 'two_rejections' };
   }
   
@@ -185,8 +209,9 @@ export function scoreMealByInventory(
     if (matchingItem) {
       totalScore += matchingItem.confidence;
     } else {
-      // Not in inventory - pessimistic score
-      totalScore += 0.3;
+      // Not in inventory - score 0 (ingredient unavailable)
+      // This penalizes meals requiring ingredients not in inventory
+      totalScore += 0;
     }
     scoredCount++;
   }
@@ -371,11 +396,20 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     action = createZeroCookFallback(decisionEventId, contextHash);
   }
   
+  // INVARIANT CHECK: Validate single action before persistence
+  validateSingleAction(action);
+  
   // Persist decision event
   // Note: For v1, we only generate 'cook' or 'zero_cook' actions
   // 'order' type support is defined but not yet implemented
   const mealId = action.decisionType === 'cook' ? (action as CookAction).mealId : null;
   const vendorKey = null; // order type not implemented in v1
+  
+  // Create decision_payload (the action object for storage)
+  const decisionPayload = action as unknown as Record<string, unknown>;
+  
+  // INVARIANT CHECK: Ensure no arrays in decision_payload before DB insert
+  assertNoArraysDeep(decisionPayload, 'decision_payload');
   
   await persistDecisionEvent({
     id: decisionEventId,
@@ -385,7 +419,7 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     meal_id: mealId,
     external_vendor_key: vendorKey,
     context_hash: contextHash,
-    decision_payload: action as unknown as Record<string, unknown>,
+    decision_payload: decisionPayload,
     user_action: 'pending',
   });
   

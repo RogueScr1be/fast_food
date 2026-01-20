@@ -393,6 +393,12 @@ jobs:
 
 ## 3. CONTRACT-FIRST INTERFACES
 
+> **Note on Route Paths**: Expo Router API routes use file-based routing.
+> The file `app/api/decision-os/decision+api.ts` is accessible at HTTP path:
+> `POST /api/decision-os/decision`
+> 
+> The `/api` prefix is automatically applied by Expo Router to files in `app/api/`.
+
 ### 3.1 POST /api/decision-os/decision
 
 **Purpose**: Request tonight's dinner decision. Returns exactly ONE action.
