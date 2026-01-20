@@ -206,9 +206,12 @@ export async function updateTasteGraph(
     
     return result;
   } catch (error) {
-    // Best-effort: log error but don't throw
+    // Best-effort: capture error but don't throw
     result.error = error instanceof Error ? error.message : 'Unknown error';
-    console.warn('Taste graph update failed (non-blocking):', result.error);
+    // Only log in development to avoid noise in production
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[taste] update failed:', result.error);
+    }
     return result;
   }
 }

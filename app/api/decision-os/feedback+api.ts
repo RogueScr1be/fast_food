@@ -34,8 +34,7 @@ export interface FeedbackRequest {
 }
 
 export interface FeedbackResponse {
-  recorded: boolean;
-  feedbackEventId?: string;
+  recorded: true;
 }
 
 // =============================================================================
@@ -71,10 +70,7 @@ function isValidFeedbackRequest(body: unknown): body is FeedbackRequest {
  * }
  * 
  * Response:
- * {
- *   "recorded": true,
- *   "feedbackEventId": "<new-event-id>"
- * }
+ * { "recorded": true }
  * 
  * APPEND-ONLY BEHAVIOR:
  * - Finds original decision_event by eventId + householdKey
@@ -150,9 +146,11 @@ export async function POST(request: Request): Promise<Response> {
           feedbackRequest.nowIso,
           client
         );
-      } catch (consumptionError) {
-        // Log but don't fail - consumption is best-effort
-        console.warn('Consumption hook error (non-blocking):', consumptionError);
+      } catch {
+        // Best-effort: consumption failures are non-blocking
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[feedback] consumption hook failed');
+        }
       }
     }
     
@@ -160,15 +158,16 @@ export async function POST(request: Request): Promise<Response> {
     // Always fires (for approved/rejected/drm_triggered) - uses feedback copy row
     try {
       await updateTasteGraph(feedbackEvent, client);
-    } catch (tasteError) {
-      // Log but don't fail - taste learning is best-effort
-      console.warn('Taste graph hook error (non-blocking):', tasteError);
+    } catch {
+      // Best-effort: taste learning failures are non-blocking
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[feedback] taste graph hook failed');
+      }
     }
     
-    // Return success response
+    // Return success response - EXACTLY { recorded: true }
     const response: FeedbackResponse = {
       recorded: true,
-      feedbackEventId: newEventId,
     };
     
     return new Response(
