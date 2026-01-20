@@ -56,6 +56,16 @@ const IS_DEV_MODE =
 // Export for testing
 export { IS_DEV_MODE };
 
+// =============================================================================
+// INACTIVITY RE-CHECK CONSTANTS
+// =============================================================================
+
+/**
+ * Inactivity timeout in milliseconds (90 seconds)
+ * If user takes no action within this time, re-check decision endpoint once
+ */
+export const INACTIVITY_RECHECK_MS = 90 * 1000;
+
 // Local types for DRM response (matches drm+api.ts)
 interface SingleRescue {
   rescueType: 'order' | 'zero_cook';
@@ -424,6 +434,12 @@ export default function DecisionOsScreen() {
   const hasRejectedOnceRef = useRef(false);
   const reDecisionCalledRef = useRef(false);
   
+  // INACTIVITY RE-CHECK: Guards to prevent loops
+  // inactivityRecheckCalledRef prevents re-check from running more than once
+  // inactivityTimeoutRef stores the timer ID for cleanup
+  const inactivityRecheckCalledRef = useRef(false);
+  const inactivityTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   // DEV-ONLY: Receipt upload hook
   const { uploadReceipt, isUploading, toast, hideToast } = useDevReceiptUpload(API_BASE);
 
@@ -539,10 +555,22 @@ export default function DecisionOsScreen() {
   };
 
   /**
+   * Clear inactivity timeout on any user action
+   * Called at the start of each action handler
+   */
+  const clearInactivityTimeout = () => {
+    if (inactivityTimeoutRef.current) {
+      clearTimeout(inactivityTimeoutRef.current);
+      inactivityTimeoutRef.current = null;
+    }
+  };
+
+  /**
    * Handle Approve action
    */
   const handleApprove = async () => {
     if (!currentCard) return;
+    clearInactivityTimeout(); // User took action
     setIsProcessing(true);
     
     // For order type, try deep link first
@@ -579,6 +607,7 @@ export default function DecisionOsScreen() {
    * Re-calls decision ONCE only
    */
   const handleReject = async () => {
+    clearInactivityTimeout(); // User took action
     setIsProcessing(true);
     
     // Send rejection feedback
@@ -635,6 +664,7 @@ export default function DecisionOsScreen() {
    * Handle explicit DRM trigger
    */
   const handleTriggerDrm = async () => {
+    clearInactivityTimeout(); // User took action
     await sendFeedback('drm_triggered');
     await triggerDrm('handle_it');
   };
@@ -643,6 +673,82 @@ export default function DecisionOsScreen() {
   useEffect(() => {
     fetchDecision();
   }, [fetchDecision]);
+
+  /**
+   * INACTIVITY RE-CHECK: 
+   * If user takes no action for 90 seconds, call decision endpoint exactly once.
+   * If drmRecommended true in response, auto-call DRM.
+   * 
+   * GUARDS:
+   * - inactivityRecheckCalledRef ensures this runs at most once per screen open
+   * - Timeout is cleared on any user action or unmount
+   */
+  useEffect(() => {
+    // Don't start timer if already loading or no card to act on
+    if (isLoading || !currentCard) {
+      return;
+    }
+    
+    // Guard: Only run once per component mount
+    if (inactivityRecheckCalledRef.current) {
+      return;
+    }
+    
+    // Clear any existing timeout
+    if (inactivityTimeoutRef.current) {
+      clearTimeout(inactivityTimeoutRef.current);
+    }
+    
+    // Set inactivity timer
+    inactivityTimeoutRef.current = setTimeout(async () => {
+      // Double-check guard before executing
+      if (inactivityRecheckCalledRef.current) {
+        return;
+      }
+      
+      // Mark as called - cannot be undone without component remount
+      inactivityRecheckCalledRef.current = true;
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/decision-os/decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            householdKey: 'default',
+            nowIso: getNowIso(),
+            signal: {
+              timeWindow: 'dinner',
+              energy: 'unknown',
+              calendarConflict: false
+            }
+          })
+        });
+        
+        if (!response.ok) {
+          return; // Silent failure - don't disrupt current state
+        }
+        
+        const data: DecisionResponse = await response.json();
+        
+        // Only act if DRM is now recommended
+        if (data.drmRecommended) {
+          // Auto-trigger DRM with the reason from backend
+          await triggerDrm(data.reason || 'late_no_action');
+        }
+        // If decision returned, don't replace current card - user already has one
+      } catch {
+        // Silent failure - inactivity re-check is best-effort
+      }
+    }, INACTIVITY_RECHECK_MS);
+    
+    // Cleanup on unmount or when dependencies change
+    return () => {
+      if (inactivityTimeoutRef.current) {
+        clearTimeout(inactivityTimeoutRef.current);
+        inactivityTimeoutRef.current = null;
+      }
+    };
+  }, [isLoading, currentCard]);
 
   // Loading state
   if (isLoading) {
