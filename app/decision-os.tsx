@@ -6,6 +6,12 @@
  * - Three actions only: Approve, Reject, Trigger DRM
  * - No lists, no browsing, no history
  * - No arrays of decisions in component state
+ * 
+ * DEV-ONLY FEATURE:
+ * - Hidden receipt upload trigger (long-press on header title)
+ * - Gated by __DEV__ and process.env.NODE_ENV !== 'production'
+ * - Shows single toast on success/failure
+ * - No receipt browsing, no line item display
  */
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
@@ -17,9 +23,13 @@ import {
   Platform,
   Linking,
   ActivityIndicator,
+  Animated,
+  Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Check, X, Zap, Clock, ChefHat, ShoppingBag, ExternalLink } from 'lucide-react-native';
+import { Check, X, Zap, Clock, ChefHat, ShoppingBag, ExternalLink, Camera } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import type {
   SingleAction,
   CookAction,
@@ -27,6 +37,24 @@ import type {
   ZeroCookAction,
   DecisionResponse,
 } from '@/types/decision-os/decision';
+
+// =============================================================================
+// DEV-ONLY GATE
+// =============================================================================
+
+/**
+ * DEV-ONLY GATE: Both conditions must be true for dev features to be enabled
+ * - __DEV__: React Native runtime flag (false in production builds)
+ * - process.env.NODE_ENV !== 'production': Build-time check
+ * 
+ * If EITHER indicates production, dev features are disabled
+ */
+const IS_DEV_MODE = 
+  typeof __DEV__ !== 'undefined' && __DEV__ === true && 
+  process.env.NODE_ENV !== 'production';
+
+// Export for testing
+export { IS_DEV_MODE };
 
 // Local types for DRM response (matches drm+api.ts)
 interface SingleRescue {
@@ -111,6 +139,163 @@ interface DecisionCardProps {
   onTriggerDrm: () => void;
   isProcessing: boolean;
 }
+
+// =============================================================================
+// DEV-ONLY TOAST COMPONENT
+// =============================================================================
+
+interface ToastProps {
+  message: string;
+  type: 'success' | 'error';
+  visible: boolean;
+  onHide: () => void;
+}
+
+/**
+ * Simple toast notification - shows a single message
+ * NO LISTS, NO ARRAYS - just one message
+ */
+const Toast: React.FC<ToastProps> = ({ message, type, visible, onHide }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
+  
+  useEffect(() => {
+    if (visible) {
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.delay(2000),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start(() => onHide());
+    }
+  }, [visible, opacity, onHide]);
+  
+  if (!visible) return null;
+  
+  return (
+    <Animated.View
+      style={[
+        styles.toast,
+        type === 'success' ? styles.toastSuccess : styles.toastError,
+        { opacity },
+      ]}
+      testID="receipt-toast"
+    >
+      <Text style={styles.toastText}>{message}</Text>
+    </Animated.View>
+  );
+};
+
+// =============================================================================
+// DEV-ONLY RECEIPT UPLOAD HOOK
+// =============================================================================
+
+/**
+ * Hook for dev-only receipt upload functionality
+ * Returns null operations when not in dev mode (safe for production)
+ */
+function useDevReceiptUpload(apiBase: string) {
+  const [isUploading, setIsUploading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
+  const hideToast = useCallback(() => {
+    setToast(null);
+  }, []);
+  
+  const uploadReceipt = useCallback(async () => {
+    // GUARD: Do not execute in production
+    if (!IS_DEV_MODE) {
+      console.warn('Receipt upload attempted in production mode - blocked');
+      return;
+    }
+    
+    if (isUploading) return;
+    
+    try {
+      setIsUploading(true);
+      
+      // Request permission and pick image
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (!permissionResult.granted) {
+        setToast({ message: 'Receipt failed.', type: 'error' });
+        return;
+      }
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.8,
+        base64: true, // Request base64 directly
+      });
+      
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        // User cancelled - no toast needed
+        return;
+      }
+      
+      const asset = result.assets[0];
+      
+      // Get base64 - either from direct result or read from file
+      let base64Data: string;
+      if (asset.base64) {
+        base64Data = asset.base64;
+      } else if (asset.uri) {
+        // Fallback: read file and convert to base64
+        const fileContent = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        base64Data = fileContent;
+      } else {
+        setToast({ message: 'Receipt failed.', type: 'error' });
+        return;
+      }
+      
+      // Call receipt import endpoint ONCE
+      const response = await fetch(`${apiBase}/api/decision-os/receipt/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          householdKey: 'default',
+          source: 'image_upload',
+          // vendorName and purchasedAtIso are optional - let parser extract
+          receiptImageBase64: base64Data,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      // Show single toast - NO receiptImportId, NO extracted items
+      if (response.ok && data.status === 'parsed') {
+        setToast({ message: 'Receipt captured.', type: 'success' });
+      } else {
+        setToast({ message: 'Receipt failed.', type: 'error' });
+      }
+    } catch (error) {
+      console.error('Receipt upload error:', error);
+      setToast({ message: 'Receipt failed.', type: 'error' });
+    } finally {
+      setIsUploading(false);
+    }
+  }, [apiBase, isUploading]);
+  
+  return {
+    uploadReceipt,
+    isUploading,
+    toast,
+    hideToast,
+  };
+}
+
+// =============================================================================
+// DECISION CARD COMPONENT
+// =============================================================================
 
 const DecisionCard: React.FC<DecisionCardProps> = ({
   decision,
@@ -238,6 +423,9 @@ export default function DecisionOsScreen() {
   // Track rejection to enforce single re-decision
   const hasRejectedOnceRef = useRef(false);
   const reDecisionCalledRef = useRef(false);
+  
+  // DEV-ONLY: Receipt upload hook
+  const { uploadReceipt, isUploading, toast, hideToast } = useDevReceiptUpload(API_BASE);
 
   const getNowIso = () => new Date().toISOString();
 
@@ -527,7 +715,25 @@ export default function DecisionOsScreen() {
         style={styles.background}
       >
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Decision OS</Text>
+          {/* DEV-ONLY: Long-press on title triggers receipt upload */}
+          {IS_DEV_MODE ? (
+            <Pressable
+              onLongPress={uploadReceipt}
+              delayLongPress={2000} // 2 second long-press
+              disabled={isUploading}
+              testID="dev-receipt-trigger"
+            >
+              <View style={styles.headerTitleContainer}>
+                <Text style={styles.headerTitle}>Decision OS</Text>
+                {/* Tiny dev indicator - only in dev mode */}
+                <View style={styles.devIndicator} testID="dev-indicator">
+                  <Camera size={12} color="rgba(255,255,255,0.4)" />
+                </View>
+              </View>
+            </Pressable>
+          ) : (
+            <Text style={styles.headerTitle}>Decision OS</Text>
+          )}
         </View>
         
         {/* SINGLE card - enforced by state being a single object, not array */}
@@ -545,6 +751,24 @@ export default function DecisionOsScreen() {
           <View style={styles.processingOverlay}>
             <ActivityIndicator size="small" color="#FFF" />
           </View>
+        )}
+        
+        {/* DEV-ONLY: Upload indicator */}
+        {IS_DEV_MODE && isUploading && (
+          <View style={styles.uploadingOverlay} testID="uploading-indicator">
+            <ActivityIndicator size="small" color="#FFF" />
+            <Text style={styles.uploadingText}>Uploading receipt...</Text>
+          </View>
+        )}
+        
+        {/* DEV-ONLY: Toast notification - single message only */}
+        {IS_DEV_MODE && toast && (
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            visible={true}
+            onHide={hideToast}
+          />
         )}
       </LinearGradient>
     </View>
@@ -774,5 +998,57 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 40,
     alignSelf: 'center',
+  },
+  // DEV-ONLY STYLES
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  devIndicator: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadingOverlay: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 100 : 80,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    gap: 8,
+  },
+  uploadingText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Regular',
+    color: '#FFF',
+  },
+  toast: {
+    position: 'absolute',
+    bottom: 100,
+    alignSelf: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  toastSuccess: {
+    backgroundColor: '#28A745',
+  },
+  toastError: {
+    backgroundColor: '#DC3545',
+  },
+  toastText: {
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
+    color: '#FFF',
   },
 });
