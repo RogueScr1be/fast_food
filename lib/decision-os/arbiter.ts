@@ -29,7 +29,8 @@ import {
   decayConfidence,
   type InventoryItemWithDecay 
 } from './inventory-model';
-import { matchInventoryItem } from './matching/matcher';
+import { matchInventoryItem, MATCH_THRESHOLD } from './matching/matcher';
+import { resetMetrics, recordMatchAttempt, logMetrics } from './matching/metrics';
 
 // =============================================================================
 // SAFE CORE MEALS (fallback when inventory is empty/unknown)
@@ -77,6 +78,24 @@ export const LATE_THRESHOLD_HOUR = 20;
  * If dinner window started and no approved decision yet, recommend DRM
  */
 export const LATE_NO_ACTION_THRESHOLD_HOUR = 18;
+
+// =============================================================================
+// MATCH SCORE SAFEGUARDS
+// =============================================================================
+
+/**
+ * Minimum match score required for full contribution.
+ * Below this, contribution is capped to prevent weak matches from
+ * overly influencing decisions.
+ */
+export const STRONG_MATCH_THRESHOLD = 0.80;
+
+/**
+ * Maximum contribution for weak matches (score < STRONG_MATCH_THRESHOLD).
+ * Even with perfect inventory confidence, a weak match cannot contribute
+ * more than this value.
+ */
+export const WEAK_MATCH_CAP = 0.50;
 
 /**
  * Two rejections time window in milliseconds (30 minutes)
@@ -444,10 +463,15 @@ export function scoreMealByInventory(
     }
     
     // Find matching inventory item using token-based matcher (v2)
-    const { matched: matchingItem } = matchInventoryItem(
+    const { matched: matchingItem, score: matchScore } = matchInventoryItem(
       ingredient.ingredient_name,
       inventory
     );
+    
+    // Record match attempt for metrics
+    const matchSuccess = matchingItem !== null;
+    const rejectedLowScore = matchingItem !== null && matchScore < STRONG_MATCH_THRESHOLD;
+    recordMatchAttempt(matchSuccess, rejectedLowScore);
     
     if (matchingItem) {
       // Cast to extended type for decay calculations
@@ -466,19 +490,23 @@ export function scoreMealByInventory(
       // Check remaining quantity if available
       const remaining = estimateRemainingQty(itemWithDecay, nowIso);
       
-      if (remaining !== null) {
-        // We have quantity info - check if any remains
-        if (remaining <= 0) {
-          // Item is used up - score 0
-          totalScore += 0;
-        } else {
-          // Item has remaining quantity - use decayed confidence
-          totalScore += decayedConf;
-        }
-      } else {
-        // No quantity info - just use decayed confidence
-        totalScore += decayedConf;
+      if (remaining !== null && remaining <= 0) {
+        // Item is used up - score 0
+        totalScore += 0;
+        scoredCount++;
+        continue;
       }
+      
+      // SAFEGUARD: Incorporate match score into contribution
+      // effectiveContribution = decayedConf * matchScore
+      // If matchScore < 0.80, cap at 0.50 max
+      let effectiveContribution = decayedConf * matchScore;
+      
+      if (matchScore < STRONG_MATCH_THRESHOLD) {
+        effectiveContribution = Math.min(effectiveContribution, WEAK_MATCH_CAP);
+      }
+      
+      totalScore += effectiveContribution;
     } else {
       // Not in inventory - score 0
       // This penalizes meals requiring ingredients not in inventory
@@ -659,6 +687,9 @@ export interface ArbiterInput {
  * INVARIANT: Response never contains arrays
  */
 export async function makeDecision(input: ArbiterInput): Promise<DecisionResponse> {
+  // Reset metrics for this request
+  resetMetrics();
+  
   const {
     request,
     activeMeals,
@@ -675,6 +706,9 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
   const drmEval = evaluateDrmTrigger(request, recentDecisions);
   
   if (drmEval.shouldTrigger && drmEval.reason) {
+    // Log metrics (dev-only)
+    logMetrics();
+    
     // Return DRM recommendation - no decision made
     return {
       decision: null,
@@ -762,6 +796,9 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     decision_payload: decisionPayload,
     user_action: 'pending',
   });
+  
+  // Log metrics (dev-only)
+  logMetrics();
   
   // Return single decision
   return {

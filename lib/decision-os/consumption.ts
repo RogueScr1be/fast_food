@@ -31,6 +31,13 @@ const MAX_CANDIDATE_TOKENS = 3;
  */
 const INVENTORY_CANDIDATES_LIMIT = 50;
 
+/**
+ * Minimum match score required for consumption.
+ * Prevents consuming wrong inventory items due to weak matches.
+ * E.g., prevents "consuming shampoo because ham matched shampoo"
+ */
+export const CONSUMPTION_MATCH_THRESHOLD = 0.80;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -39,6 +46,11 @@ export interface ConsumeInventoryResult {
   success: boolean;
   itemsUpdated: number;
   errors: string[];
+}
+
+export interface InventoryMatchResult {
+  item: InventoryItemRow | null;
+  score: number;
 }
 
 // =============================================================================
@@ -107,19 +119,19 @@ async function getInventoryCandidates(
  * @param householdKey - Household identifier
  * @param ingredientName - Ingredient to find
  * @param client - Database client
- * @returns Matching inventory items (0 or 1 item)
+ * @returns Match result with item and score
  */
-export async function findInventoryByIngredientName(
+export async function findInventoryMatch(
   householdKey: string,
   ingredientName: string,
   client: DatabaseClient
-): Promise<InventoryItemRow[]> {
+): Promise<InventoryMatchResult> {
   // Tokenize ingredient name
   const tokens = tokenize(ingredientName);
   
   // If no tokens after processing, skip silently
   if (tokens.length === 0) {
-    return [];
+    return { item: null, score: 0 };
   }
   
   // Get candidates using ILIKE pre-filter
@@ -127,14 +139,31 @@ export async function findInventoryByIngredientName(
   
   // If no candidates, skip silently
   if (candidates.length === 0) {
-    return [];
+    return { item: null, score: 0 };
   }
   
   // Run full token matcher on candidates only
-  const { matched } = matchInventoryItem(ingredientName, candidates);
+  const { matched, score } = matchInventoryItem(ingredientName, candidates);
   
-  // Return as array for backward compatibility
-  return matched ? [matched] : [];
+  return { item: matched, score };
+}
+
+/**
+ * Find best matching inventory item using token-based matching (v2).
+ * 
+ * @deprecated Use findInventoryMatch for access to match score
+ * @param householdKey - Household identifier
+ * @param ingredientName - Ingredient to find
+ * @param client - Database client
+ * @returns Matching inventory items (0 or 1 item)
+ */
+export async function findInventoryByIngredientName(
+  householdKey: string,
+  ingredientName: string,
+  client: DatabaseClient
+): Promise<InventoryItemRow[]> {
+  const { item } = await findInventoryMatch(householdKey, ingredientName, client);
+  return item ? [item] : [];
 }
 
 /**
@@ -209,15 +238,22 @@ export async function consumeInventoryForMeal(
       }
       
       try {
-        // Find matching inventory items
-        const matches = await findInventoryByIngredientName(
+        // Find matching inventory item with score
+        const { item: matchedItem, score: matchScore } = await findInventoryMatch(
           householdKey,
           ingredient.ingredient_name,
           client
         );
         
-        if (matches.length === 0) {
+        if (!matchedItem) {
           // No match found - silently continue (not an error per invariant)
+          continue;
+        }
+        
+        // SAFEGUARD: Only consume if match score is strong enough
+        // Prevents "consuming shampoo because ham matched shampoo" bugs
+        if (matchScore < CONSUMPTION_MATCH_THRESHOLD) {
+          // Weak match - skip consumption for this ingredient (best-effort)
           continue;
         }
         
@@ -225,10 +261,6 @@ export async function consumeInventoryForMeal(
         // MealIngredientRow has qty_text field
         const ingredientWithQty = ingredient as MealIngredientRow & { qty_text?: string };
         const qtyToConsume = parseSimpleQty(ingredientWithQty.qty_text);
-        
-        // Update the first matching inventory item
-        // (Could be refined later to pick "best" match)
-        const matchedItem = matches[0];
         
         await incrementInventoryUsage(
           matchedItem.id,
