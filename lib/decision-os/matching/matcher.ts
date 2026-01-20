@@ -8,12 +8,14 @@
  * - Deterministic: same inputs always produce same output
  * - Whole-token matching only (no substring matching)
  * - Score in [0, 1]
- * - Threshold-based matching (>= 0.66 required)
+ * - Threshold-based matching (>= 0.66 required AFTER penalties)
+ * - Category mismatch penalty reduces "wrong aisle" matches
  * - Advisory: never blocks dinner decisions
  */
 
 import type { InventoryItemRow } from '@/types/decision-os/decision';
 import { tokenize, getTokenSet } from './tokenizer';
+import { inferCategoryFromTokens, areCategoriesCompatible, type ItemCategory } from './category';
 
 // =============================================================================
 // CONSTANTS
@@ -46,6 +48,13 @@ export const MAX_PREFIX_EXTRA_CHARS = 3;
  */
 export const MIN_PREFIX_LENGTH_RATIO = 0.70;
 
+/**
+ * Penalty applied when ingredient and item have different known categories.
+ * E.g., "milk" (dairy) vs "milk chocolate" (pantry) gets -0.25 penalty.
+ * Penalty only applies when BOTH categories are known (not 'other').
+ */
+export const CATEGORY_MISMATCH_PENALTY = 0.25;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -60,6 +69,10 @@ export interface MatchResult {
 export interface ScoredItem {
   item: InventoryItemRow;
   score: number;
+  /** Raw score before category penalty */
+  rawScore?: number;
+  /** Inferred item category */
+  itemCategory?: ItemCategory;
 }
 
 // =============================================================================
@@ -165,6 +178,32 @@ export function scoreInventoryItem(
   return computeOverlapScore(ingredientTokens, itemTokens);
 }
 
+/**
+ * Compute full match score including category penalty.
+ * 
+ * @param ingredientTokens - Tokens from ingredient name
+ * @param itemTokens - Tokens from inventory item name
+ * @returns Object with raw score, final score (after penalty), and categories
+ */
+export function computeFullScore(
+  ingredientTokens: string[],
+  itemTokens: string[]
+): { rawScore: number; score: number; ingredientCategory: ItemCategory; itemCategory: ItemCategory } {
+  const rawScore = computeOverlapScore(ingredientTokens, itemTokens);
+  
+  // Infer categories
+  const ingredientCategory = inferCategoryFromTokens(ingredientTokens);
+  const itemCategory = inferCategoryFromTokens(itemTokens);
+  
+  // Apply category mismatch penalty if both categories are known and different
+  let score = rawScore;
+  if (!areCategoriesCompatible(ingredientCategory, itemCategory)) {
+    score = Math.max(0, rawScore - CATEGORY_MISMATCH_PENALTY);
+  }
+  
+  return { rawScore, score, ingredientCategory, itemCategory };
+}
+
 // =============================================================================
 // MAIN MATCHER
 // =============================================================================
@@ -174,12 +213,14 @@ export function scoreInventoryItem(
  * 
  * Algorithm:
  * 1. Tokenize ingredient name
- * 2. For each inventory item:
+ * 2. Infer ingredient category
+ * 3. For each inventory item:
  *    - Tokenize item_name
  *    - Compute overlap score (whole-token matching only)
- *    - Add prefix bonuses
- * 3. Select best scoring item that meets threshold
- * 4. Deterministic tiebreaker by item_name (lexicographic)
+ *    - Infer item category
+ *    - Apply category mismatch penalty (-0.25) if both known & different
+ * 4. Select best scoring item that meets threshold (AFTER penalty)
+ * 5. Deterministic tiebreaker by item_name (lexicographic)
  * 
  * @param ingredientName - The ingredient name to match
  * @param inventoryItems - Available inventory items
@@ -200,11 +241,17 @@ export function matchInventoryItem(
     return { matched: null, score: 0 };
   }
   
-  // Score all items
-  const scored: ScoredItem[] = inventoryItems.map(item => ({
-    item,
-    score: computeOverlapScore(ingredientTokens, tokenize(item.item_name)),
-  }));
+  // Score all items with category penalty
+  const scored: ScoredItem[] = inventoryItems.map(item => {
+    const itemTokens = tokenize(item.item_name);
+    const { rawScore, score, itemCategory } = computeFullScore(ingredientTokens, itemTokens);
+    return {
+      item,
+      score,
+      rawScore,
+      itemCategory,
+    };
+  });
   
   // Sort by score (descending), then by item_name (ascending) for deterministic tiebreaker
   scored.sort((a, b) => {
@@ -220,7 +267,7 @@ export function matchInventoryItem(
   const best = scored[0];
   
   if (!best || best.score < MATCH_THRESHOLD) {
-    // No match meets threshold
+    // No match meets threshold (after penalty)
     return { matched: null, score: best?.score ?? 0 };
   }
   
@@ -252,13 +299,19 @@ export function findAllMatches(
     return [];
   }
   
-  // Score all items
-  const scored: ScoredItem[] = inventoryItems.map(item => ({
-    item,
-    score: computeOverlapScore(ingredientTokens, tokenize(item.item_name)),
-  }));
+  // Score all items with category penalty
+  const scored: ScoredItem[] = inventoryItems.map(item => {
+    const itemTokens = tokenize(item.item_name);
+    const { rawScore, score, itemCategory } = computeFullScore(ingredientTokens, itemTokens);
+    return {
+      item,
+      score,
+      rawScore,
+      itemCategory,
+    };
+  });
   
-  // Filter by threshold and sort
+  // Filter by threshold (after penalty) and sort
   const matches = scored
     .filter(s => s.score >= MATCH_THRESHOLD)
     .sort((a, b) => {
