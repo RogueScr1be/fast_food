@@ -5,16 +5,18 @@
  * Returns EXACTLY ONE dinner action or null with drmRecommended flag.
  * 
  * INVARIANTS (enforced):
- * - Response NEVER contains arrays
+ * - Response NEVER contains arrays (deep check)
  * - Single decision object or null
  * - No "suggestions", "options", "alternatives"
  * - Missing inventory does NOT block decisions
+ * 
+ * Route path: POST /api/decision-os/decision
+ * (Expo Router prefixes with /api automatically)
  */
 
 import { randomUUID } from 'crypto';
 import {
   isValidDecisionRequest,
-  assertNoArraysInResponse,
   type DecisionRequest,
   type DecisionResponse,
 } from '@/types/decision-os/decision';
@@ -22,24 +24,15 @@ import {
   makeDecision,
 } from '@/lib/decision-os/arbiter';
 import {
+  validateDecisionResponse,
+} from '@/lib/decision-os/invariants';
+import {
   getActiveMeals,
   getMealIngredients,
   getInventoryItems,
   getRecentDecisionEvents,
   insertDecisionEvent,
-  loadTestSeedData,
 } from '@/lib/decision-os/database';
-
-// Initialize mock data on module load (development only)
-// In production, this would be removed and real DB used
-let initialized = false;
-
-function ensureInitialized(): void {
-  if (!initialized) {
-    loadTestSeedData();
-    initialized = true;
-  }
-}
 
 /**
  * POST /api/decision-os/decision
@@ -70,9 +63,6 @@ function ensureInitialized(): void {
  */
 export async function POST(request: Request): Promise<Response> {
   try {
-    // Ensure mock data is initialized (development)
-    ensureInitialized();
-    
     // Parse request body
     const body = await request.json();
     
@@ -111,8 +101,8 @@ export async function POST(request: Request): Promise<Response> {
       persistDecisionEvent: insertDecisionEvent,
     });
     
-    // INVARIANT CHECK: Ensure no arrays in response
-    assertNoArraysInResponse(response);
+    // INVARIANT CHECK: Deep validation - no arrays anywhere in response
+    validateDecisionResponse(response);
     
     // Return response
     return new Response(
@@ -125,14 +115,18 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     console.error('Decision API error:', error);
     
+    // Check if it's an invariant violation
+    const isInvariantError = error instanceof Error && 
+      error.message.includes('INVARIANT VIOLATION');
+    
     // Return error response
     return new Response(
       JSON.stringify({
-        error: 'Internal server error',
+        error: isInvariantError ? 'Invariant violation' : 'Internal server error',
         message: error instanceof Error ? error.message : 'Unknown error',
       }),
       {
-        status: 500,
+        status: isInvariantError ? 500 : 500,
         headers: { 'Content-Type': 'application/json' },
       }
     );

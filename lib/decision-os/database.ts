@@ -1,11 +1,13 @@
 /**
- * FAST FOOD: Decision OS Database Layer
+ * FAST FOOD: Decision OS Database Adapter
  * 
- * Database operations for decision-os.
- * This module abstracts database access for the arbiter.
+ * Production database operations for decision-os.
+ * Connects to Postgres decision_os schema.
  * 
- * In production, replace with actual Postgres queries.
- * For Expo API routes, we use a simple in-memory mock or direct SQL.
+ * INVARIANTS:
+ * - Never returns arrays of meals to client (internal use only)
+ * - decision_events is append-only
+ * - inventory confidence must be 0..1
  */
 
 import type {
@@ -16,138 +18,219 @@ import type {
 } from '@/types/decision-os/decision';
 
 // =============================================================================
-// DATABASE CONNECTION
+// DATABASE CONNECTION CONFIGURATION
 // =============================================================================
 
-// In production, this would be a real database connection
-// For now, we define the interface and provide a mock implementation
+/**
+ * Database connection configuration
+ * In production, use environment variables
+ */
+export interface DatabaseConfig {
+  connectionString?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  password?: string;
+}
 
+/**
+ * Get database configuration from environment
+ */
+export function getDatabaseConfig(): DatabaseConfig {
+  return {
+    connectionString: process.env.DATABASE_URL,
+    host: process.env.DB_HOST ?? 'localhost',
+    port: parseInt(process.env.DB_PORT ?? '5432', 10),
+    database: process.env.DB_NAME ?? 'fastfood_dev',
+    user: process.env.DB_USER ?? 'postgres',
+    password: process.env.DB_PASSWORD,
+  };
+}
+
+// =============================================================================
+// DATABASE CLIENT INTERFACE
+// =============================================================================
+
+/**
+ * Database client interface
+ * Implementations: PostgresClient (production), MockClient (testing)
+ */
 export interface DatabaseClient {
   query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
-}
-
-// Mock data store for development/testing
-let mockMeals: MealRow[] = [];
-let mockIngredients: MealIngredientRow[] = [];
-let mockInventory: InventoryItemRow[] = [];
-let mockDecisionEvents: DecisionEventRow[] = [];
-
-// =============================================================================
-// MOCK DATABASE OPERATIONS
-// =============================================================================
-
-/**
- * Initialize mock database with seed data
- * In production, this reads from Postgres
- */
-export function initializeMockData(data: {
-  meals: MealRow[];
-  ingredients: MealIngredientRow[];
-  inventory?: InventoryItemRow[];
-  decisionEvents?: DecisionEventRow[];
-}): void {
-  mockMeals = data.meals;
-  mockIngredients = data.ingredients;
-  mockInventory = data.inventory ?? [];
-  mockDecisionEvents = data.decisionEvents ?? [];
-}
-
-/**
- * Clear mock data (for testing)
- */
-export function clearMockData(): void {
-  mockMeals = [];
-  mockIngredients = [];
-  mockInventory = [];
-  mockDecisionEvents = [];
+  close(): Promise<void>;
 }
 
 // =============================================================================
-// QUERY FUNCTIONS
+// POSTGRES CLIENT (PRODUCTION)
 // =============================================================================
 
 /**
- * Get all active meals
- * In production: SELECT * FROM decision_os.meals WHERE is_active = true
+ * PostgreSQL database client
+ * Uses pg library when available, falls back to mock for development
  */
-export async function getActiveMeals(): Promise<MealRow[]> {
-  // In production, this would be a database query
-  return mockMeals.filter(m => m.is_active);
-}
-
-/**
- * Get all meal ingredients
- * In production: SELECT * FROM decision_os.meal_ingredients
- */
-export async function getMealIngredients(): Promise<MealIngredientRow[]> {
-  return mockIngredients;
-}
-
-/**
- * Get inventory items for a household
- * In production: SELECT * FROM decision_os.inventory_items WHERE household_key = $1
- */
-export async function getInventoryItems(householdKey: string): Promise<InventoryItemRow[]> {
-  return mockInventory.filter(i => i.household_key === householdKey);
-}
-
-/**
- * Get recent decision events for rotation
- * In production: SELECT * FROM decision_os.decision_events 
- *                WHERE household_key = $1 
- *                ORDER BY decided_at DESC LIMIT 7
- */
-export async function getRecentDecisionEvents(
-  householdKey: string,
-  limit: number = 7
-): Promise<DecisionEventRow[]> {
-  return mockDecisionEvents
-    .filter(d => d.household_key === householdKey)
-    .sort((a, b) => new Date(b.decided_at).getTime() - new Date(a.decided_at).getTime())
-    .slice(0, limit);
-}
-
-/**
- * Insert a decision event
- * In production: INSERT INTO decision_os.decision_events (...)
- * 
- * Note: Append-only - no updates or deletes allowed
- */
-export async function insertDecisionEvent(
-  event: DecisionEventRow
-): Promise<void> {
-  // Validate no duplicate IDs
-  if (mockDecisionEvents.some(e => e.id === event.id)) {
-    throw new Error(`Decision event ${event.id} already exists`);
+class PostgresClient implements DatabaseClient {
+  private connected: boolean = false;
+  private pool: any = null;
+  
+  constructor(private config: DatabaseConfig) {}
+  
+  private async ensureConnection(): Promise<void> {
+    if (this.connected) return;
+    
+    try {
+      // Dynamic import to avoid bundling pg in client
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Pool } = require('pg') as { Pool: new (config: DatabaseConfig & { max: number; idleTimeoutMillis: number }) => unknown };
+      this.pool = new Pool({
+        connectionString: this.config.connectionString,
+        host: this.config.host,
+        port: this.config.port,
+        database: this.config.database,
+        user: this.config.user,
+        password: this.config.password,
+        max: 10,
+        idleTimeoutMillis: 30000,
+      });
+      this.connected = true;
+    } catch (error) {
+      // pg not available - will use fallback
+      console.warn('PostgreSQL client not available, using in-memory fallback');
+      throw error;
+    }
   }
   
-  // Append-only insert
-  mockDecisionEvents.push({
-    ...event,
-    user_action: event.user_action ?? 'pending',
-  });
-}
-
-/**
- * Get decision event by ID
- * In production: SELECT * FROM decision_os.decision_events WHERE id = $1
- */
-export async function getDecisionEventById(
-  id: string
-): Promise<DecisionEventRow | null> {
-  return mockDecisionEvents.find(e => e.id === id) ?? null;
+  async query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> {
+    await this.ensureConnection();
+    return this.pool.query(sql, params);
+  }
+  
+  async close(): Promise<void> {
+    if (this.pool) {
+      await this.pool.end();
+      this.connected = false;
+    }
+  }
 }
 
 // =============================================================================
-// SEED DATA FOR TESTING
+// IN-MEMORY FALLBACK CLIENT (DEVELOPMENT)
 // =============================================================================
 
 /**
- * Load minimal seed data for testing
- * This mirrors a subset of the 50 meals from the seed file
+ * In-memory fallback client for development when Postgres is not available
+ * Loads seed data on initialization
  */
-export function loadTestSeedData(): void {
-  const testMeals: MealRow[] = [
+class InMemoryClient implements DatabaseClient {
+  private meals: MealRow[] = [];
+  private ingredients: MealIngredientRow[] = [];
+  private inventory: InventoryItemRow[] = [];
+  private decisionEvents: DecisionEventRow[] = [];
+  private initialized: boolean = false;
+  
+  private initialize(): void {
+    if (this.initialized) return;
+    
+    // Load seed data
+    this.meals = getDefaultMeals();
+    this.ingredients = getDefaultIngredients();
+    this.initialized = true;
+  }
+  
+  async query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> {
+    this.initialize();
+    
+    // Parse SQL and return appropriate data
+    const sqlLower = sql.toLowerCase();
+    
+    if (sqlLower.includes('from decision_os.meals') && sqlLower.includes('where is_active')) {
+      return { rows: this.meals.filter(m => m.is_active) as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('from decision_os.meals')) {
+      return { rows: this.meals as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('from decision_os.meal_ingredients')) {
+      return { rows: this.ingredients as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('from decision_os.inventory_items')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const filtered = this.inventory.filter(i => i.household_key === householdKey);
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('from decision_os.decision_events')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const limit = params?.[1] as number ?? 7;
+      const filtered = this.decisionEvents
+        .filter(d => d.household_key === householdKey)
+        .sort((a, b) => new Date(b.decided_at).getTime() - new Date(a.decided_at).getTime())
+        .slice(0, limit);
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('insert into decision_os.decision_events')) {
+      // Parse INSERT values from params
+      const event: DecisionEventRow = {
+        id: params?.[0] as string,
+        household_key: params?.[1] as string,
+        decided_at: params?.[2] as string,
+        decision_type: params?.[3] as 'cook' | 'order' | 'zero_cook',
+        meal_id: params?.[4] as string | null,
+        external_vendor_key: params?.[5] as string | null,
+        context_hash: params?.[6] as string,
+        decision_payload: params?.[7] as Record<string, unknown>,
+        user_action: (params?.[8] as string ?? 'pending') as DecisionEventRow['user_action'],
+      };
+      this.decisionEvents.push(event);
+      return { rows: [event] as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('select') && sqlLower.includes('decision_events') && sqlLower.includes('where id')) {
+      const id = params?.[0] as string;
+      const found = this.decisionEvents.find(e => e.id === id);
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    return { rows: [] };
+  }
+  
+  async close(): Promise<void> {
+    // No-op for in-memory
+  }
+  
+  // Test helpers (only used in tests)
+  _addInventory(items: InventoryItemRow[]): void {
+    this.inventory.push(...items);
+  }
+  
+  _addDecisionEvent(event: DecisionEventRow): void {
+    this.decisionEvents.push(event);
+  }
+  
+  _clearAll(): void {
+    this.meals = [];
+    this.ingredients = [];
+    this.inventory = [];
+    this.decisionEvents = [];
+    this.initialized = false;
+  }
+  
+  _reset(): void {
+    this.inventory = [];
+    this.decisionEvents = [];
+    this.initialize();
+  }
+}
+
+// =============================================================================
+// DEFAULT SEED DATA
+// =============================================================================
+
+function getDefaultMeals(): MealRow[] {
+  return [
     {
       id: 'meal-001',
       name: 'Spaghetti Aglio e Olio',
@@ -172,7 +255,7 @@ export function loadTestSeedData(): void {
       id: 'meal-003',
       name: 'Quick Grilled Cheese',
       canonical_key: 'quick-grilled-cheese',
-      instructions_short: 'Butter bread, add cheese slices, grill in pan until golden on both sides. Serve with tomato soup if desired.',
+      instructions_short: 'Butter bread, add cheese slices, grill in pan until golden on both sides.',
       est_minutes: 10,
       est_cost_band: '$',
       tags_internal: ['american', 'vegetarian', 'easy', 'comfort', 'pantry_friendly'],
@@ -222,7 +305,7 @@ export function loadTestSeedData(): void {
       id: 'meal-008',
       name: 'Upgraded Instant Ramen',
       canonical_key: 'instant-ramen-upgrade',
-      instructions_short: 'Cook ramen, add soft-boiled egg, green onions, and a drizzle of sesame oil. Optional: add leftover protein.',
+      instructions_short: 'Cook ramen, add soft-boiled egg, green onions, and a drizzle of sesame oil.',
       est_minutes: 10,
       est_cost_band: '$',
       tags_internal: ['asian', 'easy', 'pantry_friendly', 'comfort'],
@@ -269,8 +352,10 @@ export function loadTestSeedData(): void {
       is_active: true,
     },
   ];
-  
-  const testIngredients: MealIngredientRow[] = [
+}
+
+function getDefaultIngredients(): MealIngredientRow[] {
+  return [
     // Spaghetti Aglio e Olio
     { meal_id: 'meal-001', ingredient_name: 'spaghetti', is_pantry_staple: true },
     { meal_id: 'meal-001', ingredient_name: 'garlic', is_pantry_staple: false },
@@ -338,23 +423,159 @@ export function loadTestSeedData(): void {
     { meal_id: 'meal-012', ingredient_name: 'garlic', is_pantry_staple: false },
     { meal_id: 'meal-012', ingredient_name: 'rice', is_pantry_staple: true },
   ];
+}
+
+// =============================================================================
+// SINGLETON CLIENT
+// =============================================================================
+
+let dbClient: DatabaseClient | null = null;
+
+/**
+ * Get database client (singleton)
+ * Uses PostgreSQL if available, falls back to in-memory
+ */
+export async function getClient(): Promise<DatabaseClient> {
+  if (dbClient) return dbClient;
   
-  initializeMockData({
-    meals: testMeals,
-    ingredients: testIngredients,
-    inventory: [],
-    decisionEvents: [],
-  });
+  const config = getDatabaseConfig();
+  
+  // Try PostgreSQL first
+  if (config.connectionString || config.host) {
+    try {
+      const client = new PostgresClient(config);
+      // Test connection
+      await client.query('SELECT 1');
+      dbClient = client;
+      console.log('Connected to PostgreSQL');
+      return dbClient;
+    } catch (error) {
+      console.warn('PostgreSQL connection failed, using in-memory fallback');
+    }
+  }
+  
+  // Fall back to in-memory
+  dbClient = new InMemoryClient();
+  console.log('Using in-memory database (development mode)');
+  return dbClient;
+}
+
+/**
+ * Get client for testing (always returns new InMemoryClient)
+ */
+export function getTestClient(): InMemoryClient {
+  return new InMemoryClient();
 }
 
 // =============================================================================
-// ADD TEST INVENTORY
+// QUERY FUNCTIONS
 // =============================================================================
 
-export function addTestInventory(items: InventoryItemRow[]): void {
-  mockInventory = [...mockInventory, ...items];
+/**
+ * Get all active meals
+ * SQL: SELECT * FROM decision_os.meals WHERE is_active = true
+ */
+export async function getActiveMeals(client?: DatabaseClient): Promise<MealRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<MealRow>(
+    'SELECT * FROM decision_os.meals WHERE is_active = true'
+  );
+  return result.rows;
 }
 
-export function addTestDecisionEvent(event: DecisionEventRow): void {
-  mockDecisionEvents.push(event);
+/**
+ * Get all meal ingredients
+ * SQL: SELECT * FROM decision_os.meal_ingredients
+ */
+export async function getMealIngredients(client?: DatabaseClient): Promise<MealIngredientRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<MealIngredientRow>(
+    'SELECT * FROM decision_os.meal_ingredients'
+  );
+  return result.rows;
+}
+
+/**
+ * Get inventory items for a household
+ * SQL: SELECT * FROM decision_os.inventory_items WHERE household_key = $1
+ */
+export async function getInventoryItems(
+  householdKey: string,
+  client?: DatabaseClient
+): Promise<InventoryItemRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<InventoryItemRow>(
+    'SELECT * FROM decision_os.inventory_items WHERE household_key = $1',
+    [householdKey]
+  );
+  return result.rows;
+}
+
+/**
+ * Get recent decision events for rotation
+ * SQL: SELECT * FROM decision_os.decision_events 
+ *      WHERE household_key = $1 
+ *      ORDER BY decided_at DESC LIMIT $2
+ */
+export async function getRecentDecisionEvents(
+  householdKey: string,
+  limit: number = 7,
+  client?: DatabaseClient
+): Promise<DecisionEventRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<DecisionEventRow>(
+    `SELECT * FROM decision_os.decision_events 
+     WHERE household_key = $1 
+     ORDER BY decided_at DESC 
+     LIMIT $2`,
+    [householdKey, limit]
+  );
+  return result.rows;
+}
+
+/**
+ * Insert a decision event
+ * SQL: INSERT INTO decision_os.decision_events (...)
+ * 
+ * Note: Append-only - no updates or deletes allowed
+ */
+export async function insertDecisionEvent(
+  event: DecisionEventRow,
+  client?: DatabaseClient
+): Promise<void> {
+  const db = client ?? await getClient();
+  
+  await db.query(
+    `INSERT INTO decision_os.decision_events 
+     (id, household_key, decided_at, decision_type, meal_id, external_vendor_key, 
+      context_hash, decision_payload, user_action)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      event.id,
+      event.household_key,
+      event.decided_at,
+      event.decision_type,
+      event.meal_id,
+      event.external_vendor_key,
+      event.context_hash,
+      JSON.stringify(event.decision_payload),
+      event.user_action ?? 'pending',
+    ]
+  );
+}
+
+/**
+ * Get decision event by ID
+ * SQL: SELECT * FROM decision_os.decision_events WHERE id = $1
+ */
+export async function getDecisionEventById(
+  id: string,
+  client?: DatabaseClient
+): Promise<DecisionEventRow | null> {
+  const db = client ?? await getClient();
+  const result = await db.query<DecisionEventRow>(
+    'SELECT * FROM decision_os.decision_events WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] ?? null;
 }

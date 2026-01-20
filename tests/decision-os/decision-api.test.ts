@@ -18,6 +18,10 @@ import {
   selectMeal,
   scoreMealByInventory,
   SAFE_CORE_MEAL_KEYS,
+  DINNER_START_HOUR,
+  DINNER_END_HOUR,
+  LATE_THRESHOLD_HOUR,
+  DRM_REJECTION_THRESHOLD,
 } from '@/lib/decision-os/arbiter';
 import {
   initializeMockData,
@@ -31,7 +35,13 @@ import {
   getInventoryItems,
   getRecentDecisionEvents,
   insertDecisionEvent,
-} from '@/lib/decision-os/database';
+} from '@/lib/decision-os/database.mock';
+import {
+  assertNoArraysDeep,
+  findArraysDeep,
+  validateDecisionResponse,
+  InvariantViolationError,
+} from '@/lib/decision-os/invariants';
 import type {
   DecisionRequest,
   DecisionResponse,
@@ -437,7 +447,7 @@ describe('Inventory scoring', () => {
     // This is a heuristic test - we verify the system doesn't crash
   });
   
-  test('pantry staples are assumed available', async () => {
+  test('pantry staples are assumed available (score 1.0)', async () => {
     const meals = await getActiveMeals();
     const ingredients = await getMealIngredients();
     
@@ -448,8 +458,9 @@ describe('Inventory scoring', () => {
       // Score with empty inventory
       const score = scoreMealByInventory(meal, ingredients, []);
       
-      // Should have decent score because most ingredients are pantry staples
-      expect(score).toBeGreaterThan(0.3);
+      // Spaghetti Aglio e Olio: 3 pantry staples (1.0) + 1 non-pantry garlic (0)
+      // Score = (1.0 + 1.0 + 1.0 + 0) / 4 = 0.75
+      expect(score).toBe(0.75);
     }
   });
 });
@@ -587,5 +598,214 @@ describe('Edge cases', () => {
     // Should still return a decision (rotation resets)
     expect(response.decision).not.toBeNull();
     expect(response.drmRecommended).toBe(false);
+  });
+});
+
+// =============================================================================
+// TEST: Deep array checks (assertNoArraysDeep)
+// =============================================================================
+
+describe('Deep array checks (assertNoArraysDeep)', () => {
+  test('passes for simple object without arrays', () => {
+    const obj = {
+      decisionType: 'cook',
+      decisionEventId: 'test-123',
+      mealId: 'meal-001',
+      title: 'Test Meal',
+    };
+    
+    expect(() => assertNoArraysDeep(obj, 'test')).not.toThrow();
+  });
+  
+  test('fails for top-level array', () => {
+    const arr = [{ mealId: 'meal-001' }, { mealId: 'meal-002' }];
+    
+    expect(() => assertNoArraysDeep(arr, 'test')).toThrow(InvariantViolationError);
+    expect(() => assertNoArraysDeep(arr, 'test')).toThrow('INVARIANT VIOLATION');
+  });
+  
+  test('fails for nested array in object', () => {
+    const obj = {
+      decision: {
+        decisionType: 'cook',
+        alternativeMeals: ['meal-001', 'meal-002'], // Hidden list!
+      },
+    };
+    
+    expect(() => assertNoArraysDeep(obj, 'test')).toThrow(InvariantViolationError);
+  });
+  
+  test('fails for deeply nested array', () => {
+    const obj = {
+      level1: {
+        level2: {
+          level3: {
+            hiddenList: [1, 2, 3],
+          },
+        },
+      },
+    };
+    
+    expect(() => assertNoArraysDeep(obj, 'test')).toThrow(InvariantViolationError);
+  });
+  
+  test('findArraysDeep returns correct paths', () => {
+    const obj = {
+      topArray: [1, 2],
+      nested: {
+        innerArray: ['a', 'b'],
+      },
+    };
+    
+    const paths = findArraysDeep(obj);
+    
+    expect(paths).toContain('topArray');
+    expect(paths).toContain('nested.innerArray');
+  });
+  
+  test('passes for null values', () => {
+    const obj = { decision: null, drmRecommended: true };
+    expect(() => assertNoArraysDeep(obj, 'test')).not.toThrow();
+  });
+  
+  test('passes for undefined values', () => {
+    const obj = { decision: undefined, drmRecommended: true };
+    expect(() => assertNoArraysDeep(obj, 'test')).not.toThrow();
+  });
+  
+  test('validateDecisionResponse catches arrays in decision', () => {
+    const badResponse = {
+      decision: ['meal1', 'meal2'], // Array instead of object!
+      drmRecommended: false,
+    };
+    
+    expect(() => validateDecisionResponse(badResponse)).toThrow(InvariantViolationError);
+  });
+  
+  test('validateDecisionResponse passes for valid DRM response', () => {
+    const response = {
+      decision: null,
+      drmRecommended: true,
+      reason: 'low_energy',
+    };
+    
+    expect(() => validateDecisionResponse(response)).not.toThrow();
+  });
+  
+  test('validateDecisionResponse passes for valid decision response', () => {
+    const response = {
+      decision: {
+        decisionType: 'cook',
+        decisionEventId: 'test-123',
+        mealId: 'meal-001',
+        title: 'Test Meal',
+        stepsShort: 'Steps here',
+        estMinutes: 15,
+        contextHash: 'hash123',
+      },
+      drmRecommended: false,
+    };
+    
+    expect(() => validateDecisionResponse(response)).not.toThrow();
+  });
+});
+
+// =============================================================================
+// TEST: Updated inventory scoring (missing = 0, pantry = 1.0)
+// =============================================================================
+
+describe('Updated inventory scoring', () => {
+  test('missing ingredient scores 0, not 0.3', async () => {
+    const meals = await getActiveMeals();
+    const ingredients = await getMealIngredients();
+    
+    // Find a meal that requires fresh ingredients (not pantry staples)
+    const chickenTacos = meals.find(m => m.canonical_key === 'quick-chicken-tacos');
+    expect(chickenTacos).toBeDefined();
+    
+    if (chickenTacos) {
+      // Score with empty inventory - chicken is not a pantry staple
+      const score = scoreMealByInventory(chickenTacos, ingredients, []);
+      
+      // Score should be very low because many non-pantry ingredients are missing
+      // With 5 ingredients (chicken, taco shells, lettuce, tomato, cheese) all missing
+      // Score should be 0
+      expect(score).toBe(0);
+    }
+  });
+  
+  test('pantry staples score 1.0 even with empty inventory', async () => {
+    const meals = await getActiveMeals();
+    const ingredients = await getMealIngredients();
+    
+    // Spaghetti Aglio e Olio has mostly pantry staples
+    const meal = meals.find(m => m.canonical_key === 'spaghetti-aglio-olio');
+    expect(meal).toBeDefined();
+    
+    if (meal) {
+      const mealIngredients = ingredients.filter(i => i.meal_id === meal.id);
+      const pantryCount = mealIngredients.filter(i => i.is_pantry_staple).length;
+      
+      // Score with empty inventory
+      const score = scoreMealByInventory(meal, ingredients, []);
+      
+      // Expected: pantry staples = 1.0, non-pantry (garlic) = 0
+      // (3 * 1.0 + 1 * 0) / 4 = 0.75
+      const expectedScore = pantryCount / mealIngredients.length;
+      expect(score).toBeCloseTo(expectedScore, 2);
+    }
+  });
+  
+  test('available inventory ingredient uses its confidence', async () => {
+    const meals = await getActiveMeals();
+    const ingredients = await getMealIngredients();
+    
+    const meal = meals.find(m => m.canonical_key === 'egg-fried-rice');
+    expect(meal).toBeDefined();
+    
+    if (meal) {
+      // Add eggs to inventory with 0.9 confidence
+      const inventory: InventoryItemRow[] = [
+        {
+          id: 'inv-eggs',
+          household_key: 'test-household',
+          item_name: 'eggs',
+          confidence: 0.9,
+        },
+      ];
+      
+      const scoreWithEggs = scoreMealByInventory(meal, ingredients, inventory);
+      const scoreWithoutEggs = scoreMealByInventory(meal, ingredients, []);
+      
+      // Score should be higher with eggs in inventory
+      expect(scoreWithEggs).toBeGreaterThan(scoreWithoutEggs);
+    }
+  });
+});
+
+// =============================================================================
+// TEST: Time threshold constants
+// =============================================================================
+
+describe('Time threshold constants', () => {
+  test('DINNER_START_HOUR is 17 (5 PM)', () => {
+    expect(DINNER_START_HOUR).toBe(17);
+  });
+  
+  test('DINNER_END_HOUR is 21 (9 PM)', () => {
+    expect(DINNER_END_HOUR).toBe(21);
+  });
+  
+  test('LATE_THRESHOLD_HOUR is 20 (8 PM)', () => {
+    expect(LATE_THRESHOLD_HOUR).toBe(20);
+  });
+  
+  test('DRM_REJECTION_THRESHOLD is 2', () => {
+    expect(DRM_REJECTION_THRESHOLD).toBe(2);
+  });
+  
+  test('late threshold is between start and end', () => {
+    expect(LATE_THRESHOLD_HOUR).toBeGreaterThan(DINNER_START_HOUR);
+    expect(LATE_THRESHOLD_HOUR).toBeLessThanOrEqual(DINNER_END_HOUR);
   });
 });
