@@ -15,12 +15,16 @@ This directory contains migrations and seeds for the `/decision-os` bounded cont
 - `household_constraints` - Safety-critical allergy constraints
 - `receipt_imports` - Receipt OCR ingestion events (Phase 2)
 - `receipt_line_items` - Parsed line items from receipts (Phase 2)
+- `taste_signals` - Append-only behavioral taste signals (Phase 4)
+- `taste_meal_scores` - Derived cache of meal scores per household (Phase 4)
 
 ## Invariants Enforced
 
-1. **Append-only events**: `decision_events` and `drm_events` have triggers that prevent UPDATE and DELETE
+1. **Append-only events**: `decision_events`, `drm_events`, and `taste_signals` have triggers that prevent UPDATE and DELETE
 2. **Confidence range**: `inventory_items.confidence` must be between 0 and 1
 3. **No browsing data**: No category/tag tables exposed to UI; `tags_internal` is arbiter-only
+4. **Taste Graph is behavioral-only**: No user preference UI, no toggles, no questionnaires
+5. **Taste features are internal-only**: Never sent to client
 
 ## Prerequisites
 
@@ -41,11 +45,13 @@ psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
 psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.up.sql
 psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
 psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
+psql $DATABASE_URL -f db/migrations/005_create_taste_graph.up.sql
 
 # Run SINGLE migration
 psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
 
 # Run DOWN migrations (rollback - reverse order)
+psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
 psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
 psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
 psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
@@ -303,6 +309,75 @@ psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE 
 
 # Rollback (if needed)
 psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
+```
+
+## Taste Graph v1 (Phase 4, Migration 005)
+
+Migration 005 adds behavioral taste learning tables.
+
+### Tables
+
+**taste_signals** (APPEND-ONLY)
+- `id` (UUID PK) - Unique signal identifier
+- `household_key` (TEXT) - Household identifier
+- `decided_at` (TIMESTAMPTZ) - When decision was presented
+- `actioned_at` (TIMESTAMPTZ) - When user acted (null if expired)
+- `decision_event_id` (UUID FK) - References feedback copy in decision_events
+- `meal_id` (UUID FK) - References meals table
+- `decision_type` (TEXT) - 'cook', 'order', 'zero_cook'
+- `user_action` (TEXT) - 'approved', 'rejected', 'drm_triggered', 'expired'
+- `context_hash` (TEXT) - Context hash from decision
+- `features` (JSONB) - Internal learning features (NEVER sent to client)
+- `weight` (NUMERIC) - Signal weight (+1.0 approved, -0.5 rejected, etc.)
+- `created_at` (TIMESTAMPTZ) - Record creation time
+
+**taste_meal_scores** (DERIVED CACHE - MUTABLE)
+- `household_key` (TEXT) - Household identifier
+- `meal_id` (UUID FK) - References meals table
+- `score` (NUMERIC) - Aggregated score from taste_signals
+- `approvals` (INT) - Count of approvals
+- `rejections` (INT) - Count of rejections
+- `last_seen_at` (TIMESTAMPTZ) - Last time meal was shown
+- `updated_at` (TIMESTAMPTZ) - Last update time
+- PRIMARY KEY: (household_key, meal_id)
+
+### Design Decision: decision_event_id Reference
+
+The `decision_event_id` in `taste_signals` references the **FEEDBACK COPY** row in `decision_events`, not the original pending row.
+
+**Rationale:**
+1. Feedback copy has the actual `user_action` ('approved'/'rejected'/'drm_triggered')
+2. Feedback copy has `actioned_at` timestamp
+3. Represents the complete decision-feedback cycle
+
+### Indexes
+
+- `idx_taste_signals_household_created` - (household_key, created_at DESC)
+- `idx_taste_signals_household_meal_created` - (household_key, meal_id, created_at DESC) WHERE meal_id IS NOT NULL
+- `idx_taste_signals_decision_event` - UNIQUE (decision_event_id) for deduplication
+- `idx_taste_meal_scores_household_score` - (household_key, score DESC)
+
+### Invariants
+
+1. **Behavioral-only**: No user preference UI, no toggles, no questionnaires
+2. **Append-only signals**: taste_signals has triggers preventing UPDATE/DELETE
+3. **Features internal-only**: features JSONB never sent to client
+4. **Learning from events**: Only learns from approve/reject/drm_triggered events
+
+### Running Migration 005
+
+```bash
+psql $DATABASE_URL -f db/migrations/005_create_taste_graph.up.sql
+
+# Verify
+psql $DATABASE_URL -c "SELECT table_name FROM information_schema.tables WHERE table_schema='decision_os' AND table_name LIKE 'taste%';"
+# Expected: taste_signals, taste_meal_scores
+
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema='decision_os' AND event_object_table='taste_signals';"
+# Expected: 2 (no_update, no_delete)
+
+# Rollback (if needed)
+psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
 ```
 
 ## Production Considerations
