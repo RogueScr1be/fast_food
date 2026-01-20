@@ -9,15 +9,16 @@
  * - Single receiptImportId + status returned
  * - Failures do not throw 500 (return status='failed' with valid response)
  * - assertNoArraysDeep on response payload
+ * - Dedupe: duplicate imports are marked but still return success (idempotent)
+ * - Dedupe is safe: false positives skip inventory upsert, never delete data
  * 
  * LIFECYCLE:
- * 1. Insert receipt_imports with status='received'
+ * 1. Insert receipt_imports with status='received' and preliminary hash
  * 2. OCR extract text
- * 3. Parse into line items
- * 4. Normalize items
- * 5. Insert receipt_line_items
- * 6. Upsert inventory_items (confidence >= 0.60 only)
- * 7. Update receipt_imports to status='parsed' or 'failed'
+ * 3. Recompute hash with OCR text, check for duplicates
+ * 4. If duplicate: mark as duplicate, skip inventory upsert, return success
+ * 5. If not duplicate: parse, normalize, insert line items, upsert inventory
+ * 6. Update receipt_imports to status='parsed' or 'failed'
  */
 
 import { randomUUID } from 'crypto';
@@ -30,11 +31,13 @@ import { ocrExtractTextFromImageBase64 } from '@/lib/decision-os/ocr';
 import { parseReceiptText, extractVendorName, extractPurchaseDate } from '@/lib/decision-os/receipt-parser';
 import { normalizeItemName, normalizeUnitAndQty } from '@/lib/decision-os/normalizer';
 import { assertNoArraysDeep } from '@/lib/decision-os/invariants';
+import { computeContentHash, computePreliminaryHash } from '@/lib/decision-os/content-hash';
 import {
   insertReceiptImport,
   updateReceiptImportStatus,
   insertReceiptLineItem,
   upsertInventoryItemFromReceipt,
+  findCanonicalReceiptByHash,
 } from '@/lib/decision-os/database';
 
 // Confidence threshold for inventory upsert
@@ -82,7 +85,13 @@ export async function POST(request: Request): Promise<Response> {
     const req: ReceiptImportRequest = body;
     receiptImportId = randomUUID();
     
-    // Step 1: Insert receipt_imports with status='received'
+    // Compute preliminary hash (before OCR - just vendor + date if available)
+    const preliminaryHash = computePreliminaryHash(
+      req.vendorName,
+      req.purchasedAtIso
+    );
+    
+    // Step 1: Insert receipt_imports with status='received' and preliminary hash
     await insertReceiptImport({
       id: receiptImportId,
       household_key: req.householdKey,
@@ -93,6 +102,9 @@ export async function POST(request: Request): Promise<Response> {
       ocr_raw_text: null,
       status: 'received',
       error_message: null,
+      content_hash: preliminaryHash,
+      is_duplicate: false,
+      duplicate_of_receipt_import_id: null,
     });
     
     // Step 2: OCR extract text
@@ -148,6 +160,57 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
     
+    // Step 3.5: Compute full content hash with OCR text
+    const contentHash = computeContentHash({
+      ocrRawText: ocrResult.rawText,
+      vendorName,
+      purchasedAtIso: purchasedAt,
+    });
+    
+    // Step 3.6: DEDUPE CHECK - look for existing canonical import with same hash
+    const existingCanonical = await findCanonicalReceiptByHash(
+      req.householdKey,
+      contentHash
+    );
+    
+    if (existingCanonical) {
+      // DUPLICATE DETECTED
+      // Mark this import as duplicate, skip inventory upsert, but still return success
+      // This is safe: worst case we skip inventory update, but we never delete data
+      
+      await updateReceiptImportStatus(receiptImportId, {
+        status: 'parsed', // Still mark as parsed (OCR succeeded)
+        ocr_provider: ocrResult.provider,
+        ocr_raw_text: ocrResult.rawText,
+        vendor_name: vendorName,
+        purchased_at: purchasedAt,
+        content_hash: contentHash,
+        is_duplicate: true,
+        duplicate_of_receipt_import_id: existingCanonical.id,
+      });
+      
+      // Note: We could optionally still insert line items for audit purposes,
+      // but we MUST NOT upsert inventory_items (would inflate counts)
+      
+      const response: ReceiptImportResponse = {
+        receiptImportId,
+        status: 'parsed', // Return success - idempotent behavior
+      };
+      
+      // INVARIANT CHECK: No arrays in response
+      assertNoArraysDeep(response);
+      
+      return new Response(
+        JSON.stringify(response),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    // NOT A DUPLICATE - proceed with full processing
+    
     // Use purchase date or now for last_seen_at
     const lastSeenAt = purchasedAt ?? new Date().toISOString();
     
@@ -181,6 +244,7 @@ export async function POST(request: Request): Promise<Response> {
       });
       
       // Step 6: Upsert inventory_items (only if confidence >= threshold)
+      // ONLY for non-duplicate imports
       if (confidence >= INVENTORY_CONFIDENCE_THRESHOLD && nameResult.normalizedName) {
         await upsertInventoryItemFromReceipt({
           id: randomUUID(), // Only used for new inserts
@@ -194,13 +258,16 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
     
-    // Step 7: Update receipt_imports to status='parsed'
+    // Step 7: Update receipt_imports to status='parsed' with final hash
     await updateReceiptImportStatus(receiptImportId, {
       status: 'parsed',
       ocr_provider: ocrResult.provider,
       ocr_raw_text: ocrResult.rawText,
       vendor_name: vendorName,
       purchased_at: purchasedAt,
+      content_hash: contentHash,
+      is_duplicate: false,
+      duplicate_of_receipt_import_id: null,
     });
     
     // Build response
