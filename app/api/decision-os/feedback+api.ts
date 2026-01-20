@@ -13,9 +13,11 @@
 
 import { randomUUID } from 'crypto';
 import {
+  getClient,
   getDecisionEventByIdAndHousehold,
   insertDecisionEventFeedbackCopy,
 } from '@/lib/decision-os/database';
+import { consumeInventoryForMeal } from '@/lib/decision-os/consumption';
 
 // =============================================================================
 // REQUEST/RESPONSE TYPES
@@ -128,6 +130,30 @@ export async function POST(request: Request): Promise<Response> {
       feedbackRequest.userAction,
       feedbackRequest.nowIso
     );
+    
+    // CONSUMPTION HOOK: When a cook decision is approved, update inventory
+    // Only fires when: userAction='approved' AND decision_type='cook' AND meal_id present
+    if (
+      feedbackRequest.userAction === 'approved' &&
+      originalEvent.decision_type === 'cook' &&
+      originalEvent.meal_id
+    ) {
+      try {
+        // Get database client for consumption operations
+        const client = await getClient();
+        
+        // Best-effort consumption - failures don't block the feedback response
+        await consumeInventoryForMeal(
+          feedbackRequest.householdKey,
+          originalEvent.meal_id,
+          feedbackRequest.nowIso,
+          client
+        );
+      } catch (consumptionError) {
+        // Log but don't fail - consumption is best-effort
+        console.warn('Consumption hook error (non-blocking):', consumptionError);
+      }
+    }
     
     // Return success response
     const response: FeedbackResponse = {
