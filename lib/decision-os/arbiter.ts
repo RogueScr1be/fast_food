@@ -421,6 +421,20 @@ export interface MealWithFinalScore {
 }
 
 /**
+ * Result of meal selection including scores for autopilot evaluation.
+ */
+export interface MealSelectionResult {
+  meal: MealRow | null;
+  /** Inventory score (0..1) for selected meal */
+  inventoryScore: number;
+  /** Taste score (0..1, normalized) for selected meal */
+  tasteScore: number;
+  /** Whether meal was in recent decisions (last ROTATION_WINDOW) */
+  isRecentlyUsed: boolean;
+  finalScore: number;
+}
+
+/**
  * Score a meal based on inventory availability.
  * Higher score = more ingredients likely available.
  * 
@@ -549,7 +563,7 @@ export function selectMeal(
   nowIso?: string,
   tasteScores?: Map<string, number>,
   contextHash?: string
-): MealRow | null {
+): MealSelectionResult {
   if (activeMeals.length === 0) {
     return null;
   }
@@ -618,8 +632,23 @@ export function selectMeal(
     return a.meal.canonical_key.localeCompare(b.meal.canonical_key);
   });
   
-  // Return the top scoring meal (SINGLE meal, never a list)
-  return scored[0]?.meal ?? null;
+  // Return the top scoring meal with scores (SINGLE meal, never a list)
+  const selected = scored[0];
+  if (!selected) {
+    return {
+      meal: null,
+      inventoryScore: 0,
+      tasteScore: 0,
+      isRecentlyUsed: false,
+    };
+  }
+  
+  return {
+    meal: selected.meal,
+    inventoryScore: selected.inventoryScore,
+    tasteScore: selected.tasteScore,
+    isRecentlyUsed: recentSet.has(selected.meal.id),
+  };
 }
 
 // =============================================================================
@@ -681,12 +710,41 @@ export interface ArbiterInput {
 }
 
 /**
+ * Extended result from makeDecision including internal context for autopilot.
+ * The `response` field is the actual DecisionResponse to return to client.
+ */
+export interface ArbiterResult {
+  response: DecisionResponse;
+  /** Internal context for autopilot evaluation (not sent to client) */
+  internalContext: {
+    /** Selected meal ID, if any */
+    selectedMealId: string | null;
+    /** Inventory score (0..1) for selected meal */
+    inventoryScore: number;
+    /** Taste score (0..1, normalized) for selected meal */
+    tasteScore: number;
+    /** Whether meal was in recent decisions (last ROTATION_WINDOW) */
+    isRecentlyUsed: boolean;
+    /** Decision event ID */
+    decisionEventId: string;
+    /** Context hash for the decision */
+    contextHash: string;
+    /** Decision payload for potential feedback copy */
+    decisionPayload: Record<string, unknown>;
+  } | null;
+}
+
+/**
  * Main decision arbiter function
  * Returns EXACTLY ONE decision or null with drmRecommended
  * 
  * INVARIANT: Response never contains arrays
+ * 
+ * Returns ArbiterResult which includes:
+ * - response: The DecisionResponse to send to client
+ * - internalContext: Data for autopilot evaluation (not sent to client)
  */
-export async function makeDecision(input: ArbiterInput): Promise<DecisionResponse> {
+export async function makeDecision(input: ArbiterInput): Promise<ArbiterResult> {
   // Reset metrics for this request
   resetMetrics();
   
@@ -711,9 +769,12 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     
     // Return DRM recommendation - no decision made
     return {
-      decision: null,
-      drmRecommended: true,
-      reason: drmEval.reason,
+      response: {
+        decision: null,
+        drmRecommended: true,
+        reason: drmEval.reason,
+      },
+      internalContext: null,
     };
   }
   
@@ -738,7 +799,7 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
   });
   
   // Select a meal with taste-aware scoring (Phase 4)
-  const selectedMeal = selectMeal(
+  const selectionResult = selectMeal(
     activeMeals,
     ingredients,
     inventory,
@@ -748,6 +809,8 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     tasteScores,
     preSelectionContextHash
   );
+  
+  const selectedMeal = selectionResult.meal;
   
   // Generate event ID
   const decisionEventId = generateEventId();
@@ -800,9 +863,20 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
   // Log metrics (dev-only)
   logMetrics();
   
-  // Return single decision
+  // Return single decision with internal context for autopilot
   return {
-    decision: action,
-    drmRecommended: false,
+    response: {
+      decision: action,
+      drmRecommended: false,
+    },
+    internalContext: {
+      selectedMealId: mealId,
+      inventoryScore: selectionResult.inventoryScore,
+      tasteScore: selectionResult.tasteScore,
+      isRecentlyUsed: selectionResult.isRecentlyUsed,
+      decisionEventId,
+      contextHash,
+      decisionPayload,
+    },
   };
 }

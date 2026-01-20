@@ -218,7 +218,7 @@ describe('selectMeal with inventory', () => {
     // Only compare chicken vs beef (exclude pasta which is all pantry staples)
     const mealsToCompare = [CHICKEN_MEAL, BEEF_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       mealsToCompare,
       ALL_INGREDIENTS,
       inventory,
@@ -228,8 +228,8 @@ describe('selectMeal with inventory', () => {
     
     // Chicken meal should win: has chicken breast + vegetables in inventory
     // Beef meal loses: no ground beef, cheese, or tortillas in inventory
-    expect(selected).not.toBeNull();
-    expect(selected!.canonical_key).toBe('chicken-stir-fry');
+    expect(result.meal).not.toBeNull();
+    expect(result.meal!.canonical_key).toBe('chicken-stir-fry');
   });
   
   test('prefers meal with more matching ingredients', () => {
@@ -244,7 +244,7 @@ describe('selectMeal with inventory', () => {
     // Compare beef vs chicken (exclude pasta)
     const mealsToCompare = [CHICKEN_MEAL, BEEF_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       mealsToCompare,
       ALL_INGREDIENTS,
       inventory,
@@ -253,8 +253,8 @@ describe('selectMeal with inventory', () => {
     );
     
     // Beef meal should score higher (3 ingredients in inventory vs 0 for chicken)
-    expect(selected).not.toBeNull();
-    expect(selected!.canonical_key).toBe('beef-tacos');
+    expect(result.meal).not.toBeNull();
+    expect(result.meal!.canonical_key).toBe('beef-tacos');
   });
   
   test('pantry-staple meals score high when inventory is sparse', () => {
@@ -266,7 +266,7 @@ describe('selectMeal with inventory', () => {
     
     const allMeals = [CHICKEN_MEAL, PASTA_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       inventory,
@@ -276,14 +276,14 @@ describe('selectMeal with inventory', () => {
     
     // Pasta (all pantry staples = 1.0 average) beats chicken (0.725 average)
     // This is expected: pasta is a safer bet when inventory is incomplete
-    expect(selected).not.toBeNull();
-    expect(selected!.canonical_key).toBe('spaghetti-aglio-olio');
+    expect(result.meal).not.toBeNull();
+    expect(result.meal!.canonical_key).toBe('spaghetti-aglio-olio');
   });
   
   test('empty inventory falls back to safe core when useSafeCoreOnly=true', () => {
     const allMeals = [CHICKEN_MEAL, BEEF_MEAL, PASTA_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       [], // Empty inventory
@@ -292,8 +292,8 @@ describe('selectMeal with inventory', () => {
     );
     
     // Should select a safe core meal (pasta is in SAFE_CORE_MEAL_KEYS)
-    expect(selected).not.toBeNull();
-    expect(SAFE_CORE_MEAL_KEYS).toContain(selected!.canonical_key);
+    expect(result.meal).not.toBeNull();
+    expect(SAFE_CORE_MEAL_KEYS).toContain(result.meal!.canonical_key);
   });
   
   test('low confidence inventory (< 0.60) does not influence selection', () => {
@@ -307,7 +307,7 @@ describe('selectMeal with inventory', () => {
     
     // When inventory is effectively empty (all low confidence),
     // safe core meals should be preferred
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       lowConfidenceInventory,
@@ -316,8 +316,8 @@ describe('selectMeal with inventory', () => {
     );
     
     // Should select safe core (pasta) since low confidence items are ignored
-    expect(selected).not.toBeNull();
-    expect(selected!.canonical_key).toBe('spaghetti-aglio-olio');
+    expect(result.meal).not.toBeNull();
+    expect(result.meal!.canonical_key).toBe('spaghetti-aglio-olio');
   });
   
   test('rotation excludes recently used meals', () => {
@@ -327,7 +327,7 @@ describe('selectMeal with inventory', () => {
     
     const allMeals = [CHICKEN_MEAL, BEEF_MEAL, PASTA_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       inventory,
@@ -337,8 +337,8 @@ describe('selectMeal with inventory', () => {
     
     // Should NOT select chicken even though it matches inventory
     // because it was recently used
-    expect(selected).not.toBeNull();
-    expect(selected!.canonical_key).not.toBe('chicken-stir-fry');
+    expect(result.meal).not.toBeNull();
+    expect(result.meal!.canonical_key).not.toBe('chicken-stir-fry');
   });
   
   test('all meals recently used resets rotation', () => {
@@ -348,7 +348,7 @@ describe('selectMeal with inventory', () => {
     
     const allMeals = [CHICKEN_MEAL, BEEF_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       inventory,
@@ -357,7 +357,7 @@ describe('selectMeal with inventory', () => {
     );
     
     // Should still select something (rotation reset)
-    expect(selected).not.toBeNull();
+    expect(result.meal).not.toBeNull();
   });
 });
 
@@ -401,7 +401,7 @@ describe('Receipt Import -> Arbiter Integration', () => {
     // When comparing only chicken vs beef (non-pantry meals), chicken wins
     const mealsWithoutPantryOnly = [CHICKEN_MEAL, BEEF_MEAL];
     
-    const selected = selectMeal(
+    const result = selectMeal(
       mealsWithoutPantryOnly,
       ALL_INGREDIENTS,
       inventoryAfterReceipt,
@@ -409,7 +409,7 @@ describe('Receipt Import -> Arbiter Integration', () => {
       false
     );
     
-    expect(selected!.canonical_key).toBe('chicken-stir-fry');
+    expect(result.meal!.canonical_key).toBe('chicken-stir-fry');
   });
   
   test('empty inventory means arbiter uses safe core fallback', () => {
@@ -419,7 +419,7 @@ describe('Receipt Import -> Arbiter Integration', () => {
     const allMeals = [CHICKEN_MEAL, BEEF_MEAL, PASTA_MEAL];
     
     // When inventory is empty, useSafeCoreOnly should be true
-    const selected = selectMeal(
+    const result = selectMeal(
       allMeals,
       ALL_INGREDIENTS,
       emptyInventory,
@@ -428,8 +428,8 @@ describe('Receipt Import -> Arbiter Integration', () => {
     );
     
     // Should select a safe core meal
-    expect(selected).not.toBeNull();
-    expect(SAFE_CORE_MEAL_KEYS).toContain(selected!.canonical_key);
+    expect(result.meal).not.toBeNull();
+    expect(SAFE_CORE_MEAL_KEYS).toContain(result.meal!.canonical_key);
   });
   
   test('low confidence items from OCR errors do not influence arbiter', () => {
