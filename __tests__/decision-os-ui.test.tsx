@@ -4,6 +4,7 @@
  * INVARIANTS TESTED:
  * 1. Never renders more than one card
  * 2. Reject triggers at most one re-decision call
+ * 3. Three action buttons exist
  */
 
 import React from 'react';
@@ -43,41 +44,42 @@ describe('Decision OS UI - Single Card Invariant', () => {
     mockFetch.mockClear();
   });
 
+  // Mock response matching actual API format
   const mockDecisionResponse = {
     decision: {
-      id: 'cook-1',
-      type: 'cook',
-      title: 'Garlic Butter Pasta',
-      estMinutes: 25,
-      stepsShort: ['Step 1', 'Step 2', 'Step 3'],
+      decisionType: 'cook',
+      decisionEventId: 'evt-123',
+      mealId: 'meal-001',
+      title: 'Spaghetti Aglio e Olio',
+      stepsShort: 'Cook spaghetti. Saute garlic in olive oil. Toss together.',
+      estMinutes: 15,
+      contextHash: 'hash123',
     },
     drmRecommended: false,
-    decisionEventId: 'evt-123',
   };
 
   const mockSecondDecisionResponse = {
     decision: {
-      id: 'cook-2',
-      type: 'zero_cook',
+      decisionType: 'zero_cook',
+      decisionEventId: 'evt-456',
       title: 'Greek Salad',
+      stepsShort: 'Chop vegetables, add feta, drizzle with olive oil.',
       estMinutes: 10,
-      stepsShort: ['Chop', 'Mix', 'Serve'],
+      contextHash: 'hash456',
     },
     drmRecommended: false,
-    decisionEventId: 'evt-456',
   };
 
   const mockDrmResponse = {
     rescue: {
-      id: 'rescue-1',
-      type: 'order',
+      rescueType: 'order',
+      decisionEventId: 'evt-789',
       title: 'DoorDash Delivery',
-      estMinutes: 35,
-      vendor: 'DoorDash',
+      estMinutes: 30,
+      vendorKey: 'doordash-local',
       deepLinkUrl: 'doordash://store',
-      fallbackUrl: 'https://www.doordash.com',
     },
-    decisionEventId: 'evt-789',
+    exhausted: false,
   };
 
   test('renders exactly ONE card at a time', async () => {
@@ -86,10 +88,10 @@ describe('Decision OS UI - Single Card Invariant', () => {
       json: () => Promise.resolve(mockDecisionResponse),
     });
 
-    const { getAllByTestId, queryAllByTestId } = render(<DecisionOsScreen />);
+    const { queryAllByTestId } = render(<DecisionOsScreen />);
 
     await waitFor(() => {
-      // There should be exactly one card container
+      // There should be at most one card container
       const cardContainers = queryAllByTestId('single-card-container');
       expect(cardContainers.length).toBeLessThanOrEqual(1);
     });
@@ -107,16 +109,16 @@ describe('Decision OS UI - Single Card Invariant', () => {
       json: () => Promise.resolve(mockDecisionResponse),
     });
 
-    const { getByText } = render(<DecisionOsScreen />);
+    const { getByText, queryByText } = render(<DecisionOsScreen />);
 
     await waitFor(() => {
       // Only one title should be visible
-      expect(getByText('Garlic Butter Pasta')).toBeTruthy();
+      expect(getByText('Spaghetti Aglio e Olio')).toBeTruthy();
     });
 
     // No other decision titles should be visible
-    expect(() => getByText('Greek Salad')).toThrow();
-    expect(() => getByText('DoorDash Delivery')).toThrow();
+    expect(queryByText('Greek Salad')).toBeNull();
+    expect(queryByText('DoorDash Delivery')).toBeNull();
   });
 
   test('no list, array, or multiple cards rendered', async () => {
@@ -142,37 +144,38 @@ describe('Decision OS UI - Reject Single Re-decision Invariant', () => {
 
   const mockDecisionResponse = {
     decision: {
-      id: 'cook-1',
-      type: 'cook',
-      title: 'Garlic Butter Pasta',
-      estMinutes: 25,
-      stepsShort: ['Step 1', 'Step 2'],
+      decisionType: 'cook',
+      decisionEventId: 'evt-123',
+      mealId: 'meal-001',
+      title: 'Spaghetti Aglio e Olio',
+      stepsShort: 'Cook spaghetti.',
+      estMinutes: 15,
+      contextHash: 'hash123',
     },
     drmRecommended: false,
-    decisionEventId: 'evt-123',
   };
 
   const mockSecondDecision = {
     decision: {
-      id: 'cook-2',
-      type: 'zero_cook',
+      decisionType: 'zero_cook',
+      decisionEventId: 'evt-456',
       title: 'Quick Salad',
+      stepsShort: 'Mix greens.',
       estMinutes: 5,
-      stepsShort: ['Mix'],
+      contextHash: 'hash456',
     },
     drmRecommended: false,
-    decisionEventId: 'evt-456',
   };
 
   const mockDrmResponse = {
     rescue: {
-      id: 'rescue-1',
-      type: 'order',
+      rescueType: 'order',
+      decisionEventId: 'evt-drm',
       title: 'Rescue Option',
       estMinutes: 30,
-      vendor: 'DoorDash',
+      vendorKey: 'doordash',
     },
-    decisionEventId: 'evt-drm',
+    exhausted: false,
   };
 
   test('reject calls decision API at most ONCE then goes to DRM', async () => {
@@ -205,8 +208,10 @@ describe('Decision OS UI - Reject Single Re-decision Invariant', () => {
       fireEvent.press(getByTestId('reject-button'));
     });
 
-    // Count calls so far
-    const callsAfterFirstReject = mockFetch.mock.calls.length;
+    // Wait for state update
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
 
     // Second rejection - feedback call
     mockFetch.mockResolvedValueOnce({
@@ -296,14 +301,15 @@ describe('Decision OS UI - Actions', () => {
 
   const mockDecisionResponse = {
     decision: {
-      id: 'cook-1',
-      type: 'cook',
+      decisionType: 'cook',
+      decisionEventId: 'evt-123',
+      mealId: 'meal-001',
       title: 'Test Meal',
+      stepsShort: 'Step 1',
       estMinutes: 20,
-      stepsShort: ['Step 1'],
+      contextHash: 'hash123',
     },
     drmRecommended: false,
-    decisionEventId: 'evt-123',
   };
 
   test('has exactly three action buttons', async () => {
@@ -361,12 +367,13 @@ describe('Decision OS UI - Actions', () => {
 
     const mockDrmResponse = {
       rescue: {
-        id: 'rescue-1',
-        type: 'order',
+        rescueType: 'order',
+        decisionEventId: 'evt-drm',
         title: 'Rescue',
         estMinutes: 30,
+        vendorKey: 'doordash',
       },
-      decisionEventId: 'evt-drm',
+      exhausted: false,
     };
 
     const { getByTestId } = render(<DecisionOsScreen />);
@@ -398,5 +405,37 @@ describe('Decision OS UI - Actions', () => {
     
     const body = JSON.parse(drmCall![1].body);
     expect(body.triggerReason).toBe('handle_it');
+  });
+});
+
+describe('Decision OS UI - Order Type Deep Link', () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  const mockOrderDecision = {
+    decision: {
+      decisionType: 'order',
+      decisionEventId: 'evt-order',
+      vendorKey: 'doordash-local',
+      title: 'DoorDash Delivery',
+      deepLinkUrl: 'doordash://store',
+      estMinutes: 30,
+      contextHash: 'hash789',
+    },
+    drmRecommended: false,
+  };
+
+  test('order type shows vendor name in CTA', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(mockOrderDecision),
+    });
+
+    const { getByText } = render(<DecisionOsScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Open doordash-local')).toBeTruthy();
+    });
   });
 });
