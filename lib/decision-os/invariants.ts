@@ -191,3 +191,132 @@ export function validateSingleAction(action: unknown): void {
     }
   }
 }
+
+// =============================================================================
+// DRM RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate a DRM response for all invariants
+ * - No arrays anywhere
+ * - rescue is object or null (not array)
+ * - exhausted is boolean
+ * - drmEventId required when rescue present
+ * 
+ * @param response - Response to validate
+ * @throws InvariantViolationError on violation
+ */
+export function validateDrmResponse(response: unknown): void {
+  if (typeof response !== 'object' || response === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: DRM response must be an object'
+    );
+  }
+  
+  const resp = response as Record<string, unknown>;
+  
+  // Check exhausted is boolean
+  if (typeof resp.exhausted !== 'boolean') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: exhausted must be a boolean'
+    );
+  }
+  
+  // Check rescue is object or null, not array
+  if (resp.rescue !== null) {
+    if (Array.isArray(resp.rescue)) {
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: rescue must be a single object, not an array'
+      );
+    }
+    if (typeof resp.rescue !== 'object') {
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: rescue must be an object or null'
+      );
+    }
+    
+    // When rescue is present, validate it
+    validateSingleRescue(resp.rescue);
+  }
+  
+  // Deep check for arrays anywhere in the response
+  assertNoArraysDeep(response, 'DRM response payload');
+}
+
+/**
+ * Validate a single rescue action
+ * 
+ * @param rescue - Rescue action to validate
+ * @throws InvariantViolationError on violation
+ */
+export function validateSingleRescue(rescue: unknown): void {
+  if (typeof rescue !== 'object' || rescue === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue must be an object'
+    );
+  }
+  
+  const resc = rescue as Record<string, unknown>;
+  
+  // Must have rescueType
+  if (!['order', 'zero_cook'].includes(resc.rescueType as string)) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.rescueType must be order or zero_cook'
+    );
+  }
+  
+  // Must have drmEventId
+  if (typeof resc.drmEventId !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.drmEventId must be a string'
+    );
+  }
+  
+  // Must have title
+  if (typeof resc.title !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.title must be a string'
+    );
+  }
+  
+  // Must have estMinutes
+  if (typeof resc.estMinutes !== 'number') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.estMinutes must be a number'
+    );
+  }
+  
+  // Must have contextHash
+  if (typeof resc.contextHash !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.contextHash must be a string'
+    );
+  }
+  
+  // No arrays anywhere
+  assertNoArraysDeep(rescue, 'rescue');
+  
+  // No forbidden fields (same as action validation)
+  const forbiddenFields = [
+    'options', 'alternatives', 'suggestions', 'otherMeals',
+    'recommendations', 'choices', 'list', 'items', 'meals'
+  ];
+  
+  for (const field of forbiddenFields) {
+    if (field in resc) {
+      throw new InvariantViolationError(
+        `INVARIANT VIOLATION: rescue must not contain '${field}' field`
+      );
+    }
+  }
+}
+
+/**
+ * Validate rescue_payload before database insert
+ * 
+ * @param payload - Payload to validate
+ * @throws InvariantViolationError on violation
+ */
+export function validateRescuePayload(payload: unknown): void {
+  assertNoArraysDeep(payload, 'rescue_payload');
+}

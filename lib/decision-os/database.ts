@@ -16,6 +16,7 @@ import type {
   MealIngredientRow,
   DecisionEventRow,
 } from '@/types/decision-os/decision';
+import type { DrmEventRow } from '@/types/decision-os/drm';
 
 // =============================================================================
 // DATABASE CONNECTION CONFIGURATION
@@ -126,6 +127,7 @@ class InMemoryClient implements DatabaseClient {
   private ingredients: MealIngredientRow[] = [];
   private inventory: InventoryItemRow[] = [];
   private decisionEvents: DecisionEventRow[] = [];
+  private drmEvents: DrmEventRow[] = [];
   private initialized: boolean = false;
   
   private initialize(): void {
@@ -194,6 +196,36 @@ class InMemoryClient implements DatabaseClient {
       return { rows: found ? [found] as unknown as T[] : [] };
     }
     
+    // DRM events queries
+    if (sqlLower.includes('insert into decision_os.drm_events')) {
+      const event: DrmEventRow = {
+        id: params?.[0] as string,
+        household_key: params?.[1] as string,
+        triggered_at: params?.[2] as string,
+        trigger_type: params?.[3] as 'explicit' | 'implicit',
+        trigger_reason: params?.[4] as DrmEventRow['trigger_reason'],
+        rescue_type: params?.[5] as 'order' | 'zero_cook' | null,
+        rescue_payload: params?.[6] ? JSON.parse(params[6] as string) : null,
+        exhausted: params?.[7] as boolean,
+      };
+      this.drmEvents.push(event);
+      return { rows: [event] as unknown as T[] };
+    }
+    
+    if (sqlLower.includes('select') && sqlLower.includes('drm_events') && sqlLower.includes('where id')) {
+      const id = params?.[0] as string;
+      const found = this.drmEvents.find(e => e.id === id);
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    if (sqlLower.includes('from decision_os.drm_events') && sqlLower.includes('where household_key')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const filtered = this.drmEvents
+        .filter(d => d.household_key === householdKey)
+        .sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+      return { rows: filtered as unknown as T[] };
+    }
+    
     return { rows: [] };
   }
   
@@ -210,17 +242,27 @@ class InMemoryClient implements DatabaseClient {
     this.decisionEvents.push(event);
   }
   
+  _addDrmEvent(event: DrmEventRow): void {
+    this.drmEvents.push(event);
+  }
+  
+  _getDrmEvents(): DrmEventRow[] {
+    return this.drmEvents;
+  }
+  
   _clearAll(): void {
     this.meals = [];
     this.ingredients = [];
     this.inventory = [];
     this.decisionEvents = [];
+    this.drmEvents = [];
     this.initialized = false;
   }
   
   _reset(): void {
     this.inventory = [];
     this.decisionEvents = [];
+    this.drmEvents = [];
     this.initialize();
   }
 }
@@ -578,4 +620,70 @@ export async function getDecisionEventById(
     [id]
   );
   return result.rows[0] ?? null;
+}
+
+// =============================================================================
+// DRM EVENT QUERIES
+// =============================================================================
+
+/**
+ * Insert a DRM event
+ * SQL: INSERT INTO decision_os.drm_events (...)
+ * 
+ * Note: Append-only - no updates or deletes allowed
+ */
+export async function insertDrmEvent(
+  event: DrmEventRow,
+  client?: DatabaseClient
+): Promise<void> {
+  const db = client ?? await getClient();
+  
+  await db.query(
+    `INSERT INTO decision_os.drm_events 
+     (id, household_key, triggered_at, trigger_type, trigger_reason,
+      rescue_type, rescue_payload, exhausted)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      event.id,
+      event.household_key,
+      event.triggered_at,
+      event.trigger_type,
+      event.trigger_reason,
+      event.rescue_type,
+      event.rescue_payload ? JSON.stringify(event.rescue_payload) : null,
+      event.exhausted,
+    ]
+  );
+}
+
+/**
+ * Get DRM event by ID
+ * SQL: SELECT * FROM decision_os.drm_events WHERE id = $1
+ */
+export async function getDrmEventById(
+  id: string,
+  client?: DatabaseClient
+): Promise<DrmEventRow | null> {
+  const db = client ?? await getClient();
+  const result = await db.query<DrmEventRow>(
+    'SELECT * FROM decision_os.drm_events WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Get DRM events for a household
+ * SQL: SELECT * FROM decision_os.drm_events WHERE household_key = $1
+ */
+export async function getDrmEventsForHousehold(
+  householdKey: string,
+  client?: DatabaseClient
+): Promise<DrmEventRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<DrmEventRow>(
+    'SELECT * FROM decision_os.drm_events WHERE household_key = $1 ORDER BY triggered_at DESC',
+    [householdKey]
+  );
+  return result.rows;
 }
