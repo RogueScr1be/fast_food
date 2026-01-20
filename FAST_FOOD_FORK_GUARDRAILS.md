@@ -218,6 +218,14 @@ export default function RootLayout() {
    BLOCK: router.push('/discover')
    ```
 
+7. **DRM tags are internal-only; the client never receives a DRM-specific meal list or tag set.**
+   ```
+   BLOCK: API returning tags_internal to client
+   BLOCK: API returning list of "pantry meals" or "DRM meals"
+   BLOCK: Client filtering meals by DRM-related tags
+   ALLOW: Arbiter internally using tags_internal for scoring
+   ```
+
 ### 2.3 Automated Checks (Lint + Test)
 
 **CHECK A: Decision endpoint returns exactly one action**
@@ -902,7 +910,8 @@ psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
 | `decision_os.inventory_items` | Probabilistic inventory | No |
 | `decision_os.decision_events` | Decision log | **Yes** |
 | `decision_os.drm_events` | DRM event log | **Yes** |
-| `decision_os.household_constraints` | Allergy flags | No |
+
+**Note**: `household_constraints` table REMOVED from Phase 1. Allergies are handled via one-time local-only prompt (client storage).
 
 ### 9.5 Triggers Enforcing Append-Only
 
@@ -914,7 +923,22 @@ drm_events_no_update        -- BEFORE UPDATE → raises exception
 drm_events_no_delete        -- BEFORE DELETE → raises exception
 ```
 
-### 9.6 Seed Data Summary
+### 9.6 Key Constraints and Defaults
+
+| Column | Constraint/Default | Notes |
+|--------|-------------------|-------|
+| `inventory_items.confidence` | `CHECK (confidence >= 0 AND confidence <= 1)` | Explicit range validation |
+| `inventory_items.last_seen_at` | `DEFAULT NOW()` | Auto-populates if not provided |
+| `decision_events.user_action` | `DEFAULT 'pending'` | New decisions start as pending |
+
+**`decision_events.user_action` allowed values:**
+- `pending` (DEFAULT) - Decision presented, awaiting user action
+- `approved` - User approved
+- `rejected` - User rejected
+- `drm_triggered` - User triggered DRM
+- `expired` - Timeout without action
+
+### 9.7 Seed Data Summary
 
 - **50 meals** total
   - 18 easy (≤15 min)

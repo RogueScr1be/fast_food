@@ -22,7 +22,9 @@ DROP TABLE IF EXISTS decision_os.decision_events;
 DROP TABLE IF EXISTS decision_os.inventory_items;
 DROP TABLE IF EXISTS decision_os.meal_ingredients;
 DROP TABLE IF EXISTS decision_os.meals;
-DROP TABLE IF EXISTS decision_os.household_constraints;
+
+-- NOTE: household_constraints not included in Phase 1
+-- (allergies handled via client-side storage only)
 
 -- Drop schema
 DROP SCHEMA IF EXISTS decision_os;
