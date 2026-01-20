@@ -844,10 +844,85 @@ Before Phase 1 build prompts:
 - [ ] `// @decision-os:quarantined` added to all legacy files
 - [ ] ESLint rule `no-browse-patterns` implemented
 - [ ] CI workflow `decision-os-invariants.yml` added
-- [ ] Postgres `decision_os` schema created
-- [ ] 50 seed meals loaded
+- [x] Postgres `decision_os` schema created *(Phase 1 complete)*
+- [x] 50 seed meals loaded *(Phase 1 complete)*
 - [ ] Allergy prompt screen designed
 - [ ] Contract types defined in `/types/decision-os/`
+
+---
+
+## 9. DATABASE SETUP (Phase 1 Complete)
+
+### 9.1 Files Created
+
+```
+db/
+├── migrations/
+│   ├── 001_create_decision_os_schema.up.sql    # Creates schema + tables + triggers
+│   └── 001_create_decision_os_schema.down.sql  # Rollback (drops everything)
+├── seeds/
+│   └── 001_meals.sql                           # 50 curated meals + ingredients
+└── README.md                                    # Full documentation
+```
+
+### 9.2 Running Migrations Locally
+
+**Prerequisites**:
+- PostgreSQL 14+ installed
+- Database created (e.g., `fastfood_dev`)
+
+```bash
+# Set connection string
+export DATABASE_URL="postgresql://user:password@localhost:5432/fastfood_dev"
+
+# Run UP migration (creates schema)
+psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
+
+# Run seeds (loads 50 meals)
+psql $DATABASE_URL -f db/seeds/001_meals.sql
+
+# Verify
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM decision_os.meals;"
+# Expected: 50
+```
+
+### 9.3 Rollback
+
+```bash
+# WARNING: Destroys all data in decision_os schema
+psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
+```
+
+### 9.4 Tables Created
+
+| Table | Purpose | Append-Only |
+|-------|---------|-------------|
+| `decision_os.meals` | Meal definitions (seeded) | No |
+| `decision_os.meal_ingredients` | Ingredients per meal | No |
+| `decision_os.inventory_items` | Probabilistic inventory | No |
+| `decision_os.decision_events` | Decision log | **Yes** |
+| `decision_os.drm_events` | DRM event log | **Yes** |
+| `decision_os.household_constraints` | Allergy flags | No |
+
+### 9.5 Triggers Enforcing Append-Only
+
+```sql
+-- These triggers BLOCK all UPDATE/DELETE on event tables:
+decision_events_no_update   -- BEFORE UPDATE → raises exception
+decision_events_no_delete   -- BEFORE DELETE → raises exception
+drm_events_no_update        -- BEFORE UPDATE → raises exception
+drm_events_no_delete        -- BEFORE DELETE → raises exception
+```
+
+### 9.6 Seed Data Summary
+
+- **50 meals** total
+  - 18 easy (≤15 min)
+  - 20 medium (16-30 min)
+  - 12 longer (31-45 min)
+- **15 pantry meals** (shelf-stable ingredients, for DRM rescue)
+- **250+ ingredients** mapped to meals
+- Cuisines: American, Mexican, Italian, Asian, Mediterranean, Indian, French
 
 ---
 
