@@ -554,6 +554,9 @@ jobs:
 |-----------|--------|---------|
 | 001_create_decision_os_schema | meals, meal_ingredients, inventory_items, decision_events, drm_events, household_constraints | Core decision OS schema |
 | 002_create_receipt_ingestion_tables | receipt_imports, receipt_line_items | Receipt OCR ingestion (Phase 2) |
+| 003_add_receipt_dedupe | (columns on receipt_imports) | Receipt deduplication (Phase 3) |
+| 004_add_inventory_decay | (columns on inventory_items) | Inventory decay + consumption (Phase 3) |
+| 005_create_taste_graph | taste_signals, taste_meal_scores | Behavioral taste learning (Phase 4) |
 
 **Running Migrations**:
 ```bash
@@ -718,6 +721,10 @@ CREATE INDEX idx_inventory_items_household_name ON decision_os.inventory_items(h
 - No arrays/lists returned to clients as "choices"
 - Idempotent-safe and auditable (raw OCR stored for debug/reprocessing)
 
+**Taste Graph Invariants (Phase 4)**:
+- Taste Graph is behavioral-only; no user preference UI
+- Taste features are internal-only; never sent to client
+
 ### 4.2 What Is Omitted
 
 | Table | Reason |
@@ -725,9 +732,10 @@ CREATE INDEX idx_inventory_items_household_name ON decision_os.inventory_items(h
 | `users` | Single household v1, no auth |
 | `households` | Hardcoded single household |
 | `recipes` (detailed) | Meal name + ingredients sufficient for v1 |
-| `taste_graph` | Derived from decision_events, computed not stored |
 | `preferences` | No explicit preferences (earned autonomy) |
 | `meal_plans` | No planning (single decision paradigm) |
+
+**Note**: `taste_signals` and `taste_meal_scores` (Phase 4) replaced the earlier "derived from decision_events" approach with explicit tables for better learning and cache efficiency.
 
 ### 4.3 Multi-Tenant / RLS
 
