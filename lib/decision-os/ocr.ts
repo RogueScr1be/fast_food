@@ -31,68 +31,24 @@ export interface OcrProvider {
 // =============================================================================
 
 /**
- * Deterministic mock OCR provider for testing.
- * Returns predictable output based on input patterns.
+ * Well-known mock keys for deterministic OCR responses.
+ * Tests should use these keys to get predictable output.
+ * 
+ * KEYING STRATEGY:
+ * - Use `MOCK_KEY_*` prefixes for specific test scenarios
+ * - Any other input returns DEFAULT_RECEIPT
+ * - Never rely on input length (flaky)
  */
-export class MockOcrProvider implements OcrProvider {
-  private mockResponses: Map<string, string> = new Map();
-  
-  constructor() {
-    // Default mock responses based on input patterns
-    this.setupDefaultMocks();
-  }
-  
-  private setupDefaultMocks(): void {
-    // These will be matched by prefix or contain checks
-  }
-  
-  /**
-   * Set a specific mock response for testing
-   */
-  setMockResponse(inputPattern: string, rawText: string): void {
-    this.mockResponses.set(inputPattern, rawText);
-  }
-  
-  /**
-   * Clear all mock responses
-   */
-  clearMocks(): void {
-    this.mockResponses.clear();
-  }
-  
-  async extractText(imageBase64: string): Promise<OcrResult> {
-    // Check for specific mock responses
-    for (const [pattern, response] of this.mockResponses) {
-      if (imageBase64.includes(pattern) || imageBase64 === pattern) {
-        return { provider: 'mock', rawText: response };
-      }
-    }
-    
-    // Default deterministic response based on base64 length
-    // This ensures tests are predictable
-    const length = imageBase64.length;
-    
-    if (length < 100) {
-      // Small/invalid image - return minimal receipt
-      return {
-        provider: 'mock',
-        rawText: `GROCERY STORE
-123 Main St
------------
-MILK 2% GAL     $3.99
-BREAD WHL WHT   $2.49
------------
-SUBTOTAL        $6.48
-TAX             $0.52
-TOTAL           $7.00
-VISA ****1234`,
-      };
-    }
-    
-    // Standard test receipt
-    return {
-      provider: 'mock',
-      rawText: `SAFEWAY #1234
+export const MOCK_KEY_EMPTY = 'MOCK_OCR_EMPTY';           // Returns empty text (failure simulation)
+export const MOCK_KEY_MINIMAL = 'MOCK_OCR_MINIMAL';       // Returns minimal 2-item receipt
+export const MOCK_KEY_CHICKEN = 'MOCK_OCR_CHICKEN';       // Returns receipt with chicken breast
+export const MOCK_KEY_FULL = 'MOCK_OCR_FULL';             // Returns full grocery receipt
+
+/**
+ * Default receipt text returned for any input not matching a specific key.
+ * This is deterministic - always the same output for unknown inputs.
+ */
+export const DEFAULT_RECEIPT = `SAFEWAY #1234
 456 Oak Avenue
 San Francisco, CA 94102
 01/15/2026 5:32 PM
@@ -119,8 +75,97 @@ TOTAL                       $65.67
 
 VISA ************1234
 AUTH: 123456
-THANK YOU FOR SHOPPING!`,
-    };
+THANK YOU FOR SHOPPING!`;
+
+/**
+ * Minimal receipt for quick tests
+ */
+export const MINIMAL_RECEIPT = `GROCERY STORE
+123 Main St
+-----------
+MILK 2% GAL     $3.99
+BREAD WHL WHT   $2.49
+-----------
+SUBTOTAL        $6.48
+TAX             $0.52
+TOTAL           $7.00
+VISA ****1234`;
+
+/**
+ * Chicken-focused receipt for inventory preference tests
+ */
+export const CHICKEN_RECEIPT = `FRESH MARKET
+789 Pine Street
+01/20/2026 6:15 PM
+
+CHK BRST BNLS 2 LB           $12.99
+VEGETABLES MIX               $4.99
+RICE WHITE 2 LB              $3.49
+SOY SAUCE                    $2.99
+
+SUBTOTAL                    $24.46
+TAX                          $1.96
+TOTAL                       $26.42`;
+
+/**
+ * Deterministic mock OCR provider for testing.
+ * 
+ * KEYING STRATEGY (stable, not flaky):
+ * 1. Check for MOCK_KEY_* prefixes in input -> return corresponding receipt
+ * 2. Check for custom mock responses set via setMockResponse()
+ * 3. Default: return DEFAULT_RECEIPT (always the same)
+ * 
+ * This ensures tests are deterministic regardless of input variations.
+ */
+export class MockOcrProvider implements OcrProvider {
+  private mockResponses: Map<string, string> = new Map();
+  
+  constructor() {
+    // No automatic setup - all responses are explicit
+  }
+  
+  /**
+   * Set a specific mock response for a key pattern.
+   * The key is matched if the input contains or equals the pattern.
+   */
+  setMockResponse(inputPattern: string, rawText: string): void {
+    this.mockResponses.set(inputPattern, rawText);
+  }
+  
+  /**
+   * Clear all custom mock responses
+   */
+  clearMocks(): void {
+    this.mockResponses.clear();
+  }
+  
+  async extractText(imageBase64: string): Promise<OcrResult> {
+    // 1. Check well-known mock keys (stable keying strategy)
+    if (imageBase64.includes(MOCK_KEY_EMPTY)) {
+      return { provider: 'mock', rawText: '' };
+    }
+    
+    if (imageBase64.includes(MOCK_KEY_MINIMAL)) {
+      return { provider: 'mock', rawText: MINIMAL_RECEIPT };
+    }
+    
+    if (imageBase64.includes(MOCK_KEY_CHICKEN)) {
+      return { provider: 'mock', rawText: CHICKEN_RECEIPT };
+    }
+    
+    if (imageBase64.includes(MOCK_KEY_FULL)) {
+      return { provider: 'mock', rawText: DEFAULT_RECEIPT };
+    }
+    
+    // 2. Check custom mock responses
+    for (const [pattern, response] of this.mockResponses) {
+      if (pattern === '' || imageBase64.includes(pattern) || imageBase64 === pattern) {
+        return { provider: 'mock', rawText: response };
+      }
+    }
+    
+    // 3. Default: return standard receipt (deterministic, not based on length)
+    return { provider: 'mock', rawText: DEFAULT_RECEIPT };
   }
 }
 

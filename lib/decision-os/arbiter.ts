@@ -168,6 +168,14 @@ export function evaluateDrmTrigger(
 // MEAL SELECTION LOGIC
 // =============================================================================
 
+/**
+ * Minimum confidence threshold for inventory items to be considered
+ * Items below this threshold are treated as "not in inventory"
+ * 
+ * INVARIANT: Inventory remains advisory - low confidence items do not contribute
+ */
+export const INVENTORY_CONFIDENCE_THRESHOLD = 0.60;
+
 export interface MealWithScore {
   meal: MealRow;
   inventoryScore: number;
@@ -176,6 +184,17 @@ export interface MealWithScore {
 /**
  * Score a meal based on inventory confidence
  * Higher score = more ingredients likely available
+ * 
+ * SCORING RULES:
+ * - Pantry staples: always 1.0 (assumed available)
+ * - Inventory match with confidence >= 0.60: use inventory confidence
+ * - Inventory match with confidence < 0.60: treated as missing (0)
+ * - No inventory match: 0 (ingredient unavailable)
+ * 
+ * @param meal - The meal to score
+ * @param ingredients - All ingredients from database
+ * @param inventory - Inventory items (will be filtered by confidence)
+ * @returns Score between 0 and 1
  */
 export function scoreMealByInventory(
   meal: MealRow,
@@ -188,11 +207,16 @@ export function scoreMealByInventory(
     return 0.5; // No ingredients listed, neutral score
   }
   
+  // INVARIANT: Only count inventory items with confidence >= threshold
+  const highConfidenceInventory = inventory.filter(
+    inv => inv.confidence >= INVENTORY_CONFIDENCE_THRESHOLD
+  );
+  
   let totalScore = 0;
   let scoredCount = 0;
   
   for (const ingredient of mealIngredients) {
-    // Skip pantry staples - assume always available
+    // Pantry staples: always 1.0 (assumed always available)
     if (ingredient.is_pantry_staple) {
       totalScore += 1.0;
       scoredCount++;
@@ -200,16 +224,18 @@ export function scoreMealByInventory(
     }
     
     // Find matching inventory item (case-insensitive contains match)
+    // ONLY from high-confidence inventory
     const ingredientLower = ingredient.ingredient_name.toLowerCase();
-    const matchingItem = inventory.find(inv => {
+    const matchingItem = highConfidenceInventory.find(inv => {
       const invLower = inv.item_name.toLowerCase();
       return invLower.includes(ingredientLower) || ingredientLower.includes(invLower);
     });
     
     if (matchingItem) {
+      // Use the inventory item's confidence (already >= threshold)
       totalScore += matchingItem.confidence;
     } else {
-      // Not in inventory - score 0 (ingredient unavailable)
+      // Not in inventory (or below threshold) - score 0
       // This penalizes meals requiring ingredients not in inventory
       totalScore += 0;
     }
