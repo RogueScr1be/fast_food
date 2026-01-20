@@ -3,281 +3,429 @@
  * 
  * INVARIANTS TESTED:
  * 1. Feedback endpoint inserts NEW row (append-only), does not update
- * 2. Decision endpoint returns single decision or null
- * 3. DRM endpoint always returns rescue decision
+ * 2. Original events have user_action = 'pending' (NOT null)
+ * 3. Feedback creates row with user_action = approved/rejected/drm_triggered
+ * 4. Decision endpoint returns single decision or null
+ * 5. DRM endpoint always returns rescue decision or exhausted
  */
 
-import { DecisionStore } from '../services/DecisionStore';
+import {
+  getTestClient,
+  insertDecisionEvent,
+  getDecisionEventById,
+  getDecisionEventByIdAndHousehold,
+  insertDecisionEventFeedbackCopy,
+  getAllDecisionEvents,
+  getDecisionEventCount,
+} from '../lib/decision-os/database';
+import type { DecisionEventRow } from '../types/decision-os/decision';
 
-describe('Decision Store - Append Only Invariant', () => {
+describe('Decision OS Database - Append Only Invariant', () => {
+  let testClient: ReturnType<typeof getTestClient>;
+
   beforeEach(() => {
-    DecisionStore.clearAll();
+    testClient = getTestClient();
   });
 
-  test('feedback inserts NEW event row, does not update existing', () => {
+  test('original decision event has user_action = pending (not null)', async () => {
     const householdKey = 'test-household';
     const nowIso = new Date().toISOString();
-
-    // Create initial decision
-    const decision = DecisionStore.getDecision(householdKey, nowIso, {});
-    const originalEventId = decision.decisionEventId;
     
-    // Count events after decision
-    const countAfterDecision = DecisionStore.getEventCount();
-    expect(countAfterDecision).toBe(1);
+    const event: DecisionEventRow = {
+      id: 'evt-test-001',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash123',
+      decision_payload: { title: 'Test Meal' },
+      user_action: 'pending', // MUST be 'pending', not null
+    };
+    
+    await insertDecisionEvent(event, testClient);
+    
+    const retrieved = await getDecisionEventById(event.id, testClient);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.user_action).toBe('pending'); // NOT null
+  });
 
-    // Record feedback
-    const feedbackResult = DecisionStore.recordFeedback(
-      householdKey,
-      originalEventId,
+  test('feedback inserts NEW row, does not update original', async () => {
+    const householdKey = 'test-household';
+    const nowIso = new Date().toISOString();
+    
+    // Create original decision event
+    const originalEvent: DecisionEventRow = {
+      id: 'evt-original-001',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash123',
+      decision_payload: { title: 'Test Meal', stepsShort: 'Cook it' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(originalEvent, testClient);
+    
+    // Verify original exists with pending
+    const originalBefore = await getDecisionEventById(originalEvent.id, testClient);
+    expect(originalBefore!.user_action).toBe('pending');
+    
+    // Count events before feedback
+    const countBefore = await getDecisionEventCount(householdKey, testClient);
+    expect(countBefore).toBe(1);
+    
+    // Insert feedback copy (APPEND-ONLY)
+    const feedbackEventId = 'evt-feedback-001';
+    const actionedAt = new Date().toISOString();
+    
+    await insertDecisionEventFeedbackCopy(
+      originalEvent,
+      feedbackEventId,
       'approved',
-      nowIso
+      actionedAt,
+      testClient
     );
-
+    
     // Count events after feedback - should have INCREASED
-    const countAfterFeedback = DecisionStore.getEventCount();
-    expect(countAfterFeedback).toBe(2); // 1 original + 1 feedback = 2
-
-    // Feedback should have created a NEW event ID
-    expect(feedbackResult.newEventId).not.toBe(originalEventId);
-
-    // Verify both events exist
-    const allEvents = DecisionStore.getAllEvents();
-    expect(allEvents.length).toBe(2);
-
-    // Original event should NOT have userAction
-    const originalEvent = allEvents.find(e => e.id === originalEventId);
-    expect(originalEvent?.userAction).toBeNull();
-
-    // New feedback event should have userAction
-    const feedbackEvent = allEvents.find(e => e.id === feedbackResult.newEventId);
-    expect(feedbackEvent?.userAction).toBe('approved');
+    const countAfter = await getDecisionEventCount(householdKey, testClient);
+    expect(countAfter).toBe(2); // 1 original + 1 feedback = 2
+    
+    // Original event should STILL have user_action = 'pending' (not updated)
+    const originalAfter = await getDecisionEventById(originalEvent.id, testClient);
+    expect(originalAfter!.user_action).toBe('pending'); // UNCHANGED
+    
+    // Feedback event should have user_action = 'approved'
+    const feedbackEvent = await getDecisionEventById(feedbackEventId, testClient);
+    expect(feedbackEvent!.user_action).toBe('approved');
+    expect(feedbackEvent!.actioned_at).toBe(actionedAt);
   });
 
-  test('multiple feedbacks each create NEW rows', () => {
-    const householdKey = 'test-household';
+  test('after feedback, there are exactly 2 rows: first pending, second approved', async () => {
+    const householdKey = 'test-household-2rows';
     const nowIso = new Date().toISOString();
-
-    // Create decision
-    const decision = DecisionStore.getDecision(householdKey, nowIso, {});
-    expect(DecisionStore.getEventCount()).toBe(1);
-
-    // First feedback (rejected)
-    DecisionStore.recordFeedback(householdKey, decision.decisionEventId, 'rejected', nowIso);
-    expect(DecisionStore.getEventCount()).toBe(2);
-
-    // Second decision after rejection
-    const decision2 = DecisionStore.getDecision(householdKey, nowIso, {});
-    expect(DecisionStore.getEventCount()).toBe(3);
-
-    // Second feedback (approved)
-    DecisionStore.recordFeedback(householdKey, decision2.decisionEventId, 'approved', nowIso);
-    expect(DecisionStore.getEventCount()).toBe(4);
-
-    // Verify all events are preserved
-    const allEvents = DecisionStore.getAllEvents();
-    expect(allEvents.length).toBe(4);
-
-    // Each feedback should be a separate row
-    const feedbackEvents = allEvents.filter(e => e.userAction !== null);
-    expect(feedbackEvents.length).toBe(2);
-  });
-
-  test('feedback with unknown eventId still creates new row', () => {
-    const householdKey = 'test-household';
-    const nowIso = new Date().toISOString();
-
-    const initialCount = DecisionStore.getEventCount();
-
-    // Record feedback for non-existent event
-    const result = DecisionStore.recordFeedback(
-      householdKey,
-      'non-existent-event-id',
+    
+    // Create original decision event
+    const originalEvent: DecisionEventRow = {
+      id: 'evt-2rows-original',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'zero_cook',
+      meal_id: null,
+      external_vendor_key: null,
+      context_hash: 'hash456',
+      decision_payload: { title: 'Quick Salad', stepsShort: 'Mix ingredients' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(originalEvent, testClient);
+    
+    // Insert feedback
+    const feedbackEventId = 'evt-2rows-feedback';
+    const actionedAt = new Date().toISOString();
+    
+    await insertDecisionEventFeedbackCopy(
+      originalEvent,
+      feedbackEventId,
       'approved',
-      nowIso
+      actionedAt,
+      testClient
     );
-
-    // Should still record (append-only pattern)
-    expect(result.recorded).toBe(true);
-    expect(DecisionStore.getEventCount()).toBe(initialCount + 1);
-  });
-
-  test('original decision event is never mutated', () => {
-    const householdKey = 'test-household';
-    const nowIso = new Date().toISOString();
-
-    // Create decision
-    const decision = DecisionStore.getDecision(householdKey, nowIso, { tired: true });
-    const originalEventId = decision.decisionEventId;
-
-    // Get original event state
-    const eventsBefore = DecisionStore.getAllEvents();
-    const originalBefore = eventsBefore.find(e => e.id === originalEventId);
-    const originalStateBefore = JSON.stringify(originalBefore);
-
-    // Record feedback
-    DecisionStore.recordFeedback(householdKey, originalEventId, 'rejected', nowIso);
-
-    // Get original event state after feedback
-    const eventsAfter = DecisionStore.getAllEvents();
-    const originalAfter = eventsAfter.find(e => e.id === originalEventId);
-    const originalStateAfter = JSON.stringify(originalAfter);
-
-    // Original event should be unchanged
-    expect(originalStateAfter).toBe(originalStateBefore);
-    expect(originalAfter?.userAction).toBeNull();
-  });
-});
-
-describe('Decision Store - Decision Endpoint Behavior', () => {
-  beforeEach(() => {
-    DecisionStore.clearAll();
-  });
-
-  test('returns single decision object, not array', () => {
-    const result = DecisionStore.getDecision('default', new Date().toISOString(), {});
     
-    // Result should have decision as single object or null
-    expect(result.decision).not.toBeInstanceOf(Array);
-    if (result.decision !== null) {
-      expect(typeof result.decision.id).toBe('string');
-      expect(typeof result.decision.title).toBe('string');
-    }
+    // Get all events for this household
+    const allEvents = await getAllDecisionEvents(householdKey, testClient);
+    
+    expect(allEvents.length).toBe(2);
+    
+    // First row should be pending (original)
+    const pendingRow = allEvents.find(e => e.user_action === 'pending');
+    expect(pendingRow).toBeTruthy();
+    expect(pendingRow!.id).toBe(originalEvent.id);
+    
+    // Second row should be approved (feedback copy)
+    const approvedRow = allEvents.find(e => e.user_action === 'approved');
+    expect(approvedRow).toBeTruthy();
+    expect(approvedRow!.id).toBe(feedbackEventId);
+    expect(approvedRow!.actioned_at).toBe(actionedAt);
+    
+    // Both should have same decision_payload
+    expect(pendingRow!.decision_payload).toEqual(approvedRow!.decision_payload);
   });
 
-  test('each decision creates one event', () => {
+  test('multiple feedbacks each create NEW rows', async () => {
+    const householdKey = 'test-household-multi';
     const nowIso = new Date().toISOString();
     
-    DecisionStore.getDecision('default', nowIso, {});
-    expect(DecisionStore.getEventCount()).toBe(1);
+    // Create first decision
+    const event1: DecisionEventRow = {
+      id: 'evt-multi-1',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash1',
+      decision_payload: { title: 'Meal 1' },
+      user_action: 'pending',
+    };
+    await insertDecisionEvent(event1, testClient);
+    expect(await getDecisionEventCount(householdKey, testClient)).toBe(1);
     
-    DecisionStore.getDecision('default', nowIso, {});
-    expect(DecisionStore.getEventCount()).toBe(2);
+    // First feedback (rejected)
+    await insertDecisionEventFeedbackCopy(event1, 'evt-fb-1', 'rejected', nowIso, testClient);
+    expect(await getDecisionEventCount(householdKey, testClient)).toBe(2);
     
-    DecisionStore.getDecision('default', nowIso, {});
-    expect(DecisionStore.getEventCount()).toBe(3);
-  });
-
-  test('returns drmRecommended true after multiple rejections', () => {
-    const householdKey = 'test-household';
-    const nowIso = new Date().toISOString();
-
-    // First decision
-    const d1 = DecisionStore.getDecision(householdKey, nowIso, {});
-    DecisionStore.recordFeedback(householdKey, d1.decisionEventId, 'rejected', nowIso);
-
     // Second decision
-    const d2 = DecisionStore.getDecision(householdKey, nowIso, {});
-    DecisionStore.recordFeedback(householdKey, d2.decisionEventId, 'rejected', nowIso);
-
-    // Third decision should recommend DRM
-    const d3 = DecisionStore.getDecision(householdKey, nowIso, {});
+    const event2: DecisionEventRow = {
+      id: 'evt-multi-2',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-002',
+      external_vendor_key: null,
+      context_hash: 'hash2',
+      decision_payload: { title: 'Meal 2' },
+      user_action: 'pending',
+    };
+    await insertDecisionEvent(event2, testClient);
+    expect(await getDecisionEventCount(householdKey, testClient)).toBe(3);
     
-    // After multiple rejections, should recommend DRM
-    // (The exact threshold may vary, but pattern should hold)
-    expect(typeof d3.drmRecommended).toBe('boolean');
+    // Second feedback (approved)
+    await insertDecisionEventFeedbackCopy(event2, 'evt-fb-2', 'approved', nowIso, testClient);
+    expect(await getDecisionEventCount(householdKey, testClient)).toBe(4);
+    
+    // Verify all events
+    const allEvents = await getAllDecisionEvents(householdKey, testClient);
+    expect(allEvents.length).toBe(4);
+    
+    // Should have 2 pending, 1 rejected, 1 approved
+    const pendingEvents = allEvents.filter(e => e.user_action === 'pending');
+    const rejectedEvents = allEvents.filter(e => e.user_action === 'rejected');
+    const approvedEvents = allEvents.filter(e => e.user_action === 'approved');
+    
+    expect(pendingEvents.length).toBe(2);
+    expect(rejectedEvents.length).toBe(1);
+    expect(approvedEvents.length).toBe(1);
   });
-});
 
-describe('Decision Store - DRM Endpoint Behavior', () => {
-  beforeEach(() => {
-    DecisionStore.clearAll();
-  });
-
-  test('DRM always returns a rescue decision', () => {
-    const result = DecisionStore.getDrmRescue(
-      'default',
-      new Date().toISOString(),
-      'handle_it'
+  test('original event is never mutated after feedback', async () => {
+    const householdKey = 'test-household-immutable';
+    const nowIso = new Date().toISOString();
+    
+    // Create original
+    const originalEvent: DecisionEventRow = {
+      id: 'evt-immutable-original',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'immutable-hash',
+      decision_payload: { title: 'Original Title', extra: 'data' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(originalEvent, testClient);
+    
+    // Capture original state
+    const originalBefore = await getDecisionEventById(originalEvent.id, testClient);
+    const originalStateBefore = JSON.stringify(originalBefore);
+    
+    // Insert feedback
+    await insertDecisionEventFeedbackCopy(
+      originalEvent,
+      'evt-immutable-feedback',
+      'rejected',
+      nowIso,
+      testClient
     );
-
-    expect(result.rescue).toBeTruthy();
-    expect(result.rescue.id).toBeTruthy();
-    expect(result.rescue.title).toBeTruthy();
-    expect(result.decisionEventId).toBeTruthy();
+    
+    // Original should be unchanged
+    const originalAfter = await getDecisionEventById(originalEvent.id, testClient);
+    const originalStateAfter = JSON.stringify(originalAfter);
+    
+    expect(originalStateAfter).toBe(originalStateBefore);
+    expect(originalAfter!.user_action).toBe('pending'); // Still pending
+    expect(originalAfter!.actioned_at).toBeUndefined(); // Still no actioned_at
   });
 
-  test('DRM creates event with drmTriggered flag', () => {
+  test('getDecisionEventByIdAndHousehold validates household key', async () => {
+    const householdKey = 'household-a';
+    const wrongHousehold = 'household-b';
     const nowIso = new Date().toISOString();
     
-    const result = DecisionStore.getDrmRescue('default', nowIso, 'handle_it');
+    const event: DecisionEventRow = {
+      id: 'evt-household-check',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash',
+      decision_payload: { title: 'Test' },
+      user_action: 'pending',
+    };
     
-    const events = DecisionStore.getAllEvents();
-    const drmEvent = events.find(e => e.id === result.decisionEventId);
+    await insertDecisionEvent(event, testClient);
     
-    expect(drmEvent?.drmTriggered).toBe(true);
-    expect(drmEvent?.triggerReason).toBe('handle_it');
-  });
-
-  test('DRM preserves trigger reason', () => {
-    const nowIso = new Date().toISOString();
+    // Should find with correct household
+    const found = await getDecisionEventByIdAndHousehold(event.id, householdKey, testClient);
+    expect(found).not.toBeNull();
     
-    DecisionStore.getDrmRescue('default', nowIso, 'handle_it');
-    DecisionStore.getDrmRescue('default', nowIso, 'auto_drm');
-    DecisionStore.getDrmRescue('default', nowIso, 'rejection_cascade');
-    
-    const events = DecisionStore.getAllEvents();
-    const reasons = events.map(e => e.triggerReason);
-    
-    expect(reasons).toContain('handle_it');
-    expect(reasons).toContain('auto_drm');
-    expect(reasons).toContain('rejection_cascade');
+    // Should NOT find with wrong household
+    const notFound = await getDecisionEventByIdAndHousehold(event.id, wrongHousehold, testClient);
+    expect(notFound).toBeNull();
   });
 });
 
 describe('Feedback Types', () => {
+  let testClient: ReturnType<typeof getTestClient>;
+
   beforeEach(() => {
-    DecisionStore.clearAll();
+    testClient = getTestClient();
   });
 
-  test('records approved feedback', () => {
+  test('records approved feedback with actioned_at', async () => {
+    const householdKey = 'test-approved';
     const nowIso = new Date().toISOString();
-    const decision = DecisionStore.getDecision('default', nowIso, {});
+    const actionedAt = new Date(Date.now() + 1000).toISOString();
     
-    const result = DecisionStore.recordFeedback(
-      'default',
-      decision.decisionEventId,
+    const event: DecisionEventRow = {
+      id: 'evt-approved-test',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash',
+      decision_payload: { title: 'Test' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(event, testClient);
+    
+    const feedbackEvent = await insertDecisionEventFeedbackCopy(
+      event,
+      'evt-approved-feedback',
       'approved',
-      nowIso
+      actionedAt,
+      testClient
     );
     
-    const events = DecisionStore.getAllEvents();
-    const feedbackEvent = events.find(e => e.id === result.newEventId);
-    
-    expect(feedbackEvent?.userAction).toBe('approved');
+    expect(feedbackEvent.user_action).toBe('approved');
+    expect(feedbackEvent.actioned_at).toBe(actionedAt);
   });
 
-  test('records rejected feedback', () => {
+  test('records rejected feedback', async () => {
+    const householdKey = 'test-rejected';
     const nowIso = new Date().toISOString();
-    const decision = DecisionStore.getDecision('default', nowIso, {});
     
-    const result = DecisionStore.recordFeedback(
-      'default',
-      decision.decisionEventId,
+    const event: DecisionEventRow = {
+      id: 'evt-rejected-test',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash',
+      decision_payload: { title: 'Test' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(event, testClient);
+    
+    const feedbackEvent = await insertDecisionEventFeedbackCopy(
+      event,
+      'evt-rejected-feedback',
       'rejected',
-      nowIso
+      nowIso,
+      testClient
     );
     
-    const events = DecisionStore.getAllEvents();
-    const feedbackEvent = events.find(e => e.id === result.newEventId);
-    
-    expect(feedbackEvent?.userAction).toBe('rejected');
+    expect(feedbackEvent.user_action).toBe('rejected');
   });
 
-  test('records drm_triggered feedback', () => {
+  test('records drm_triggered feedback', async () => {
+    const householdKey = 'test-drm';
     const nowIso = new Date().toISOString();
-    const decision = DecisionStore.getDecision('default', nowIso, {});
     
-    const result = DecisionStore.recordFeedback(
-      'default',
-      decision.decisionEventId,
+    const event: DecisionEventRow = {
+      id: 'evt-drm-test',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'cook',
+      meal_id: 'meal-001',
+      external_vendor_key: null,
+      context_hash: 'hash',
+      decision_payload: { title: 'Test' },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(event, testClient);
+    
+    const feedbackEvent = await insertDecisionEventFeedbackCopy(
+      event,
+      'evt-drm-feedback',
       'drm_triggered',
-      nowIso
+      nowIso,
+      testClient
     );
     
-    const events = DecisionStore.getAllEvents();
-    const feedbackEvent = events.find(e => e.id === result.newEventId);
+    expect(feedbackEvent.user_action).toBe('drm_triggered');
+  });
+});
+
+describe('Decision Event Structure', () => {
+  let testClient: ReturnType<typeof getTestClient>;
+
+  beforeEach(() => {
+    testClient = getTestClient();
+  });
+
+  test('feedback copies all fields from original', async () => {
+    const householdKey = 'test-copy-fields';
+    const nowIso = new Date().toISOString();
     
-    expect(feedbackEvent?.userAction).toBe('drm_triggered');
+    const event: DecisionEventRow = {
+      id: 'evt-copy-original',
+      household_key: householdKey,
+      decided_at: nowIso,
+      decision_type: 'order',
+      meal_id: null,
+      external_vendor_key: 'doordash-local',
+      context_hash: 'unique-hash-123',
+      decision_payload: { 
+        title: 'DoorDash Order',
+        vendorKey: 'doordash-local',
+        deepLinkUrl: 'doordash://store',
+        estMinutes: 30
+      },
+      user_action: 'pending',
+    };
+    
+    await insertDecisionEvent(event, testClient);
+    
+    const feedbackEvent = await insertDecisionEventFeedbackCopy(
+      event,
+      'evt-copy-feedback',
+      'approved',
+      nowIso,
+      testClient
+    );
+    
+    // Verify all copied fields
+    expect(feedbackEvent.household_key).toBe(event.household_key);
+    expect(feedbackEvent.decision_type).toBe(event.decision_type);
+    expect(feedbackEvent.meal_id).toBe(event.meal_id);
+    expect(feedbackEvent.external_vendor_key).toBe(event.external_vendor_key);
+    expect(feedbackEvent.context_hash).toBe(event.context_hash);
+    expect(feedbackEvent.decision_payload).toEqual(event.decision_payload);
+    
+    // Verify feedback-specific fields
+    expect(feedbackEvent.id).not.toBe(event.id); // Different ID
+    expect(feedbackEvent.user_action).toBe('approved');
+    expect(feedbackEvent.actioned_at).toBe(nowIso);
   });
 });

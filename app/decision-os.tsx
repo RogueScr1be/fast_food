@@ -20,7 +20,42 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Check, X, Zap, Clock, ChefHat, ShoppingBag, ExternalLink } from 'lucide-react-native';
-import type { Decision, DecisionResponse, DrmResponse, DecisionType } from '../types/decision-os';
+import type {
+  SingleAction,
+  CookAction,
+  OrderAction,
+  ZeroCookAction,
+  DecisionResponse,
+} from '@/types/decision-os/decision';
+
+// Local types for DRM response (matches drm+api.ts)
+interface SingleRescue {
+  rescueType: 'order' | 'zero_cook';
+  decisionEventId: string;
+  title: string;
+  estMinutes: number;
+  stepsShort?: string;
+  vendorKey?: string;
+  deepLinkUrl?: string;
+}
+
+interface DrmApiResponse {
+  rescue: SingleRescue | null;
+  exhausted: boolean;
+}
+
+// UI-friendly decision type
+type DecisionType = 'cook' | 'order' | 'zero_cook';
+
+interface UiDecision {
+  decisionType: DecisionType;
+  decisionEventId: string;
+  title: string;
+  estMinutes: number;
+  stepsShort?: string;
+  vendorKey?: string;
+  deepLinkUrl?: string;
+}
 
 // API base URL
 const getApiBase = (): string => {
@@ -36,11 +71,41 @@ const getApiBase = (): string => {
 const API_BASE = getApiBase();
 
 /**
+ * Convert SingleAction to UI-friendly format
+ */
+function toUiDecision(action: SingleAction): UiDecision {
+  return {
+    decisionType: action.decisionType,
+    decisionEventId: action.decisionEventId,
+    title: action.title,
+    estMinutes: action.estMinutes,
+    stepsShort: (action as CookAction | ZeroCookAction).stepsShort,
+    vendorKey: (action as OrderAction).vendorKey,
+    deepLinkUrl: (action as OrderAction).deepLinkUrl,
+  };
+}
+
+/**
+ * Convert DRM rescue to UI-friendly format
+ */
+function rescueToUiDecision(rescue: SingleRescue): UiDecision {
+  return {
+    decisionType: rescue.rescueType,
+    decisionEventId: rescue.decisionEventId,
+    title: rescue.title,
+    estMinutes: rescue.estMinutes,
+    stepsShort: rescue.stepsShort,
+    vendorKey: rescue.vendorKey,
+    deepLinkUrl: rescue.deepLinkUrl,
+  };
+}
+
+/**
  * Decision Card Component
  * Renders a SINGLE decision - no arrays, no lists
  */
 interface DecisionCardProps {
-  decision: Decision;
+  decision: UiDecision;
   onApprove: () => void;
   onReject: () => void;
   onTriggerDrm: () => void;
@@ -76,19 +141,19 @@ const DecisionCard: React.FC<DecisionCardProps> = ({
     }
   };
 
-  const isOrderType = decision.type === 'order';
+  const isOrderType = decision.decisionType === 'order';
 
   return (
     <View style={styles.cardContainer}>
       <LinearGradient
-        colors={getGradient(decision.type)}
+        colors={getGradient(decision.decisionType)}
         style={styles.cardHeader}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
         <View style={styles.cardHeaderContent}>
           <View style={styles.iconContainer}>
-            {getIcon(decision.type)}
+            {getIcon(decision.decisionType)}
           </View>
           <View style={styles.titleContainer}>
             <Text style={styles.cardLabel}>Tonight:</Text>
@@ -106,22 +171,17 @@ const DecisionCard: React.FC<DecisionCardProps> = ({
         {!isOrderType && decision.stepsShort && (
           <View style={styles.stepsContainer}>
             <Text style={styles.stepsLabel}>Do this now:</Text>
-            {decision.stepsShort.map((step, index) => (
-              <View key={index} style={styles.stepRow}>
-                <Text style={styles.stepNumber}>{index + 1}</Text>
-                <Text style={styles.stepText}>{step}</Text>
-              </View>
-            ))}
+            <Text style={styles.stepsText}>{decision.stepsShort}</Text>
           </View>
         )}
 
         {/* Order: Show vendor CTA */}
-        {isOrderType && decision.vendor && (
+        {isOrderType && decision.vendorKey && (
           <View style={styles.orderContainer}>
             <Text style={styles.orderLabel}>Do this now:</Text>
             <View style={styles.vendorCta}>
               <ExternalLink size={20} color="#4A00E0" />
-              <Text style={styles.vendorText}>Open {decision.vendor}</Text>
+              <Text style={styles.vendorText}>Open {decision.vendorKey}</Text>
             </View>
           </View>
         )}
@@ -169,7 +229,7 @@ const DecisionCard: React.FC<DecisionCardProps> = ({
  */
 export default function DecisionOsScreen() {
   // SINGLE card state - NOT an array
-  const [currentCard, setCurrentCard] = useState<Decision | null>(null);
+  const [currentCard, setCurrentCard] = useState<UiDecision | null>(null);
   const [currentEventId, setCurrentEventId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -195,7 +255,11 @@ export default function DecisionOsScreen() {
         body: JSON.stringify({
           householdKey: 'default',
           nowIso: getNowIso(),
-          signal: {}
+          signal: {
+            timeWindow: 'dinner',
+            energy: 'unknown',
+            calendarConflict: false
+          }
         })
       });
       
@@ -207,8 +271,9 @@ export default function DecisionOsScreen() {
       
       if (data.decision) {
         // Set SINGLE card
-        setCurrentCard(data.decision);
-        setCurrentEventId(data.decisionEventId);
+        const uiDecision = toUiDecision(data.decision);
+        setCurrentCard(uiDecision);
+        setCurrentEventId(data.decision.decisionEventId);
       } else if (data.drmRecommended) {
         // Auto-trigger DRM
         await triggerDrm('auto_drm');
@@ -224,7 +289,7 @@ export default function DecisionOsScreen() {
   /**
    * Trigger DRM and show rescue
    */
-  const triggerDrm = async (reason: 'handle_it' | 'auto_drm' | 'rejection_cascade') => {
+  const triggerDrm = async (reason: 'handle_it' | 'auto_drm' | 'im_done' | 'two_rejections' | 'calendar_conflict' | 'low_energy' | 'late_no_action') => {
     setIsProcessing(true);
     
     try {
@@ -234,6 +299,7 @@ export default function DecisionOsScreen() {
         body: JSON.stringify({
           householdKey: 'default',
           nowIso: getNowIso(),
+          triggerType: 'explicit',
           triggerReason: reason
         })
       });
@@ -242,11 +308,17 @@ export default function DecisionOsScreen() {
         throw new Error(`HTTP ${response.status}`);
       }
       
-      const data: DrmResponse = await response.json();
+      const data: DrmApiResponse = await response.json();
       
-      // Set SINGLE rescue card
-      setCurrentCard(data.rescue);
-      setCurrentEventId(data.decisionEventId);
+      if (data.rescue) {
+        // Set SINGLE rescue card
+        const uiDecision = rescueToUiDecision(data.rescue);
+        setCurrentCard(uiDecision);
+        setCurrentEventId(data.rescue.decisionEventId);
+      } else if (data.exhausted) {
+        // DRM exhausted - show error
+        setError('No rescue options available right now.');
+      }
     } catch (err) {
       console.error('DRM failed:', err);
       setError('Failed to get rescue option.');
@@ -286,28 +358,22 @@ export default function DecisionOsScreen() {
     setIsProcessing(true);
     
     // For order type, try deep link first
-    if (currentCard.type === 'order' && currentCard.deepLinkUrl) {
+    if (currentCard.decisionType === 'order' && currentCard.deepLinkUrl) {
       try {
         const canOpen = await Linking.canOpenURL(currentCard.deepLinkUrl);
         if (canOpen) {
           await Linking.openURL(currentCard.deepLinkUrl);
-        } else if (currentCard.fallbackUrl) {
-          // Single fallback URL - no list
-          await Linking.openURL(currentCard.fallbackUrl);
         } else {
-          // Generic fallback
+          // Generic fallback - single URL, no list
           await Linking.openURL('https://www.doordash.com');
         }
       } catch (err) {
-        // Deep link failed - show single fallback
+        // Deep link failed - generic fallback
         console.error('Deep link failed:', err);
-        if (currentCard.fallbackUrl) {
-          try {
-            await Linking.openURL(currentCard.fallbackUrl);
-          } catch {
-            // Last resort generic fallback
-            await Linking.openURL('https://www.doordash.com');
-          }
+        try {
+          await Linking.openURL('https://www.doordash.com');
+        } catch {
+          // Ignore fallback errors
         }
       }
     }
@@ -342,7 +408,11 @@ export default function DecisionOsScreen() {
           body: JSON.stringify({
             householdKey: 'default',
             nowIso: getNowIso(),
-            signal: {}
+            signal: {
+              timeWindow: 'dinner',
+              energy: 'unknown',
+              calendarConflict: false
+            }
           })
         });
         
@@ -353,20 +423,21 @@ export default function DecisionOsScreen() {
         const data: DecisionResponse = await response.json();
         
         if (data.decision) {
-          setCurrentCard(data.decision);
-          setCurrentEventId(data.decisionEventId);
+          const uiDecision = toUiDecision(data.decision);
+          setCurrentCard(uiDecision);
+          setCurrentEventId(data.decision.decisionEventId);
         } else if (data.drmRecommended) {
           // Auto-trigger DRM after rejection cascade
-          await triggerDrm('rejection_cascade');
+          await triggerDrm('two_rejections');
         }
       } catch (err) {
         console.error('Re-decision failed:', err);
         // On failure, trigger DRM as fallback
-        await triggerDrm('rejection_cascade');
+        await triggerDrm('two_rejections');
       }
     } else {
       // Already rejected once, go straight to DRM
-      await triggerDrm('rejection_cascade');
+      await triggerDrm('two_rejections');
     }
     
     setIsProcessing(false);
@@ -565,24 +636,7 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 8,
   },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  stepNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#F0F0F0',
-    textAlign: 'center',
-    lineHeight: 24,
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-    color: '#666',
-    marginRight: 12,
-  },
-  stepText: {
-    flex: 1,
+  stepsText: {
     fontSize: 15,
     fontFamily: 'Inter-Regular',
     color: '#333',
