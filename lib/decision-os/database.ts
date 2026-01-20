@@ -128,6 +128,8 @@ class InMemoryClient implements DatabaseClient {
   private inventory: InventoryItemRow[] = [];
   private decisionEvents: DecisionEventRow[] = [];
   private drmEvents: DrmEventRow[] = [];
+  private receiptImports: ReceiptImportRow[] = [];
+  private receiptLineItems: ReceiptLineItemRow[] = [];
   private initialized: boolean = false;
   
   private initialize(): void {
@@ -257,6 +259,174 @@ class InMemoryClient implements DatabaseClient {
       const filtered = this.drmEvents
         .filter(d => d.household_key === householdKey)
         .sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    // ==== RECEIPT IMPORTS QUERIES ====
+    
+    // INSERT receipt_imports
+    if (sqlLower.includes('insert into decision_os.receipt_imports')) {
+      const receipt: ReceiptImportRow = {
+        id: params?.[0] as string,
+        household_key: params?.[1] as string,
+        source: params?.[2] as 'image_upload' | 'email_forward' | 'manual_text',
+        vendor_name: params?.[3] as string | null,
+        purchased_at: params?.[4] as string | null,
+        ocr_provider: params?.[5] as string | null,
+        ocr_raw_text: params?.[6] as string | null,
+        status: params?.[7] as 'received' | 'parsed' | 'failed',
+        error_message: params?.[8] as string | null,
+        created_at: new Date().toISOString(),
+      };
+      this.receiptImports.push(receipt);
+      return { rows: [receipt] as unknown as T[] };
+    }
+    
+    // UPDATE receipt_imports
+    if (sqlLower.includes('update decision_os.receipt_imports')) {
+      const id = params?.[0] as string;
+      const receipt = this.receiptImports.find(r => r.id === id);
+      if (receipt) {
+        receipt.status = params?.[1] as 'received' | 'parsed' | 'failed';
+        // Handle dynamic params - check for specific fields
+        let paramIdx = 2;
+        if (sqlLower.includes('ocr_provider')) {
+          receipt.ocr_provider = params?.[paramIdx++] as string | null;
+        }
+        if (sqlLower.includes('ocr_raw_text')) {
+          receipt.ocr_raw_text = params?.[paramIdx++] as string | null;
+        }
+        if (sqlLower.includes('vendor_name') && !sqlLower.includes('insert')) {
+          receipt.vendor_name = params?.[paramIdx++] as string | null;
+        }
+        if (sqlLower.includes('purchased_at') && !sqlLower.includes('insert')) {
+          receipt.purchased_at = params?.[paramIdx++] as string | null;
+        }
+        if (sqlLower.includes('error_message') && !sqlLower.includes('insert')) {
+          receipt.error_message = params?.[paramIdx++] as string | null;
+        }
+      }
+      return { rows: [] };
+    }
+    
+    // SELECT receipt_imports by ID
+    if (sqlLower.includes('from decision_os.receipt_imports') && sqlLower.includes('where id')) {
+      const id = params?.[0] as string;
+      const found = this.receiptImports.find(r => r.id === id);
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    // ==== RECEIPT LINE ITEMS QUERIES ====
+    
+    // INSERT receipt_line_items
+    if (sqlLower.includes('insert into decision_os.receipt_line_items')) {
+      const lineItem: ReceiptLineItemRow = {
+        id: params?.[0] as string,
+        receipt_import_id: params?.[1] as string,
+        raw_line: params?.[2] as string,
+        raw_item_name: params?.[3] as string | null,
+        raw_qty_text: params?.[4] as string | null,
+        raw_price: params?.[5] as number | null,
+        normalized_item_name: params?.[6] as string | null,
+        normalized_unit: params?.[7] as string | null,
+        normalized_qty_estimated: params?.[8] as number | null,
+        confidence: params?.[9] as number,
+        created_at: new Date().toISOString(),
+      };
+      this.receiptLineItems.push(lineItem);
+      return { rows: [lineItem] as unknown as T[] };
+    }
+    
+    // SELECT receipt_line_items COUNT by receipt_import_id
+    if (sqlLower.includes('select count') && sqlLower.includes('receipt_line_items')) {
+      const receiptImportId = params?.[0] as string;
+      const count = this.receiptLineItems.filter(li => li.receipt_import_id === receiptImportId).length;
+      return { rows: [{ count: count.toString() }] as unknown as T[] };
+    }
+    
+    // SELECT receipt_line_items by receipt_import_id
+    if (sqlLower.includes('from decision_os.receipt_line_items') && sqlLower.includes('where receipt_import_id')) {
+      const receiptImportId = params?.[0] as string;
+      const filtered = this.receiptLineItems
+        .filter(li => li.receipt_import_id === receiptImportId)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      return { rows: filtered as unknown as T[] };
+    }
+    
+    // ==== INVENTORY UPSERT/QUERIES ====
+    
+    // INSERT inventory_items with ON CONFLICT (upsert)
+    if (sqlLower.includes('insert into decision_os.inventory_items') && sqlLower.includes('on conflict')) {
+      const id = params?.[0] as string;
+      const householdKey = params?.[1] as string;
+      const itemName = params?.[2] as string;
+      const qtyEstimated = params?.[3] as number | null;
+      const unit = params?.[4] as string | null;
+      const confidence = params?.[5] as number;
+      const lastSeenAt = params?.[6] as string;
+      
+      // Find existing
+      const existing = this.inventory.find(
+        i => i.household_key === householdKey && i.item_name === itemName
+      );
+      
+      if (existing) {
+        // UPSERT: update with GREATEST confidence rule
+        existing.confidence = Math.max(existing.confidence, confidence);
+        // qty_estimated: add if both present
+        if (existing.qty_estimated !== null && qtyEstimated !== null) {
+          existing.qty_estimated = (existing.qty_estimated as number) + qtyEstimated;
+        } else if (qtyEstimated !== null) {
+          existing.qty_estimated = qtyEstimated;
+        }
+        // unit: keep existing if present
+        if (!existing.unit && unit) {
+          existing.unit = unit;
+        }
+        existing.source = 'receipt';
+        existing.last_seen_at = lastSeenAt;
+      } else {
+        // INSERT new
+        const newItem: InventoryItemRow = {
+          id,
+          household_key: householdKey,
+          item_name: itemName,
+          qty_estimated: qtyEstimated,
+          unit,
+          confidence,
+          source: 'receipt',
+          last_seen_at: lastSeenAt,
+          expires_at: null,
+          created_at: new Date().toISOString(),
+        };
+        this.inventory.push(newItem);
+      }
+      return { rows: [] };
+    }
+    
+    // COUNT inventory_items
+    if (sqlLower.includes('select count') && sqlLower.includes('inventory_items')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const count = this.inventory.filter(i => i.household_key === householdKey).length;
+      return { rows: [{ count: count.toString() }] as unknown as T[] };
+    }
+    
+    // SELECT inventory_items by household_key and item_name
+    if (sqlLower.includes('from decision_os.inventory_items') && sqlLower.includes('where household_key') && sqlLower.includes('and item_name')) {
+      const householdKey = params?.[0] as string;
+      const itemName = params?.[1] as string;
+      const found = this.inventory.find(
+        i => i.household_key === householdKey && i.item_name === itemName
+      );
+      return { rows: found ? [found] as unknown as T[] : [] };
+    }
+    
+    // SELECT all inventory_items by household_key ORDER BY item_name
+    if (sqlLower.includes('from decision_os.inventory_items') && sqlLower.includes('where household_key') && sqlLower.includes('order by item_name')) {
+      const householdKey = params?.[0] as string ?? 'default';
+      const filtered = this.inventory
+        .filter(i => i.household_key === householdKey)
+        .sort((a, b) => a.item_name.localeCompare(b.item_name));
       return { rows: filtered as unknown as T[] };
     }
     
@@ -826,4 +996,324 @@ export async function getAllDecisionEvents(
     [householdKey]
   );
   return result.rows;
+}
+
+// =============================================================================
+// RECEIPT INGESTION QUERIES (Phase 2)
+// =============================================================================
+
+/**
+ * Receipt import row type
+ */
+export interface ReceiptImportRow {
+  id: string;
+  household_key: string;
+  source: 'image_upload' | 'email_forward' | 'manual_text';
+  vendor_name: string | null;
+  purchased_at: string | null;
+  ocr_provider: string | null;
+  ocr_raw_text: string | null;
+  status: 'received' | 'parsed' | 'failed';
+  error_message: string | null;
+  created_at: string;
+}
+
+/**
+ * Receipt line item row type
+ */
+export interface ReceiptLineItemRow {
+  id: string;
+  receipt_import_id: string;
+  raw_line: string;
+  raw_item_name: string | null;
+  raw_qty_text: string | null;
+  raw_price: number | null;
+  normalized_item_name: string | null;
+  normalized_unit: string | null;
+  normalized_qty_estimated: number | null;
+  confidence: number;
+  created_at: string;
+}
+
+/**
+ * Insert a receipt import record
+ * 
+ * SQL: INSERT INTO decision_os.receipt_imports (...)
+ */
+export async function insertReceiptImport(
+  receipt: Omit<ReceiptImportRow, 'created_at'>,
+  client?: DatabaseClient
+): Promise<ReceiptImportRow> {
+  const db = client ?? await getClient();
+  
+  await db.query(
+    `INSERT INTO decision_os.receipt_imports 
+     (id, household_key, source, vendor_name, purchased_at, ocr_provider, ocr_raw_text, status, error_message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      receipt.id,
+      receipt.household_key,
+      receipt.source,
+      receipt.vendor_name,
+      receipt.purchased_at,
+      receipt.ocr_provider,
+      receipt.ocr_raw_text,
+      receipt.status,
+      receipt.error_message,
+    ]
+  );
+  
+  return {
+    ...receipt,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Update receipt import status and OCR data
+ * 
+ * SQL: UPDATE decision_os.receipt_imports SET ... WHERE id = $1
+ */
+export async function updateReceiptImportStatus(
+  id: string,
+  updates: {
+    status: 'received' | 'parsed' | 'failed';
+    ocr_provider?: string | null;
+    ocr_raw_text?: string | null;
+    vendor_name?: string | null;
+    purchased_at?: string | null;
+    error_message?: string | null;
+  },
+  client?: DatabaseClient
+): Promise<void> {
+  const db = client ?? await getClient();
+  
+  const setClauses: string[] = ['status = $2'];
+  const params: unknown[] = [id, updates.status];
+  let paramIndex = 3;
+  
+  if (updates.ocr_provider !== undefined) {
+    setClauses.push(`ocr_provider = $${paramIndex}`);
+    params.push(updates.ocr_provider);
+    paramIndex++;
+  }
+  
+  if (updates.ocr_raw_text !== undefined) {
+    setClauses.push(`ocr_raw_text = $${paramIndex}`);
+    params.push(updates.ocr_raw_text);
+    paramIndex++;
+  }
+  
+  if (updates.vendor_name !== undefined) {
+    setClauses.push(`vendor_name = $${paramIndex}`);
+    params.push(updates.vendor_name);
+    paramIndex++;
+  }
+  
+  if (updates.purchased_at !== undefined) {
+    setClauses.push(`purchased_at = $${paramIndex}`);
+    params.push(updates.purchased_at);
+    paramIndex++;
+  }
+  
+  if (updates.error_message !== undefined) {
+    setClauses.push(`error_message = $${paramIndex}`);
+    params.push(updates.error_message);
+    paramIndex++;
+  }
+  
+  await db.query(
+    `UPDATE decision_os.receipt_imports SET ${setClauses.join(', ')} WHERE id = $1`,
+    params
+  );
+}
+
+/**
+ * Insert receipt line item
+ * 
+ * SQL: INSERT INTO decision_os.receipt_line_items (...)
+ */
+export async function insertReceiptLineItem(
+  lineItem: Omit<ReceiptLineItemRow, 'created_at'>,
+  client?: DatabaseClient
+): Promise<ReceiptLineItemRow> {
+  const db = client ?? await getClient();
+  
+  await db.query(
+    `INSERT INTO decision_os.receipt_line_items 
+     (id, receipt_import_id, raw_line, raw_item_name, raw_qty_text, raw_price,
+      normalized_item_name, normalized_unit, normalized_qty_estimated, confidence)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      lineItem.id,
+      lineItem.receipt_import_id,
+      lineItem.raw_line,
+      lineItem.raw_item_name,
+      lineItem.raw_qty_text,
+      lineItem.raw_price,
+      lineItem.normalized_item_name,
+      lineItem.normalized_unit,
+      lineItem.normalized_qty_estimated,
+      lineItem.confidence,
+    ]
+  );
+  
+  return {
+    ...lineItem,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Get receipt import by ID
+ * 
+ * SQL: SELECT * FROM decision_os.receipt_imports WHERE id = $1
+ */
+export async function getReceiptImportById(
+  id: string,
+  client?: DatabaseClient
+): Promise<ReceiptImportRow | null> {
+  const db = client ?? await getClient();
+  const result = await db.query<ReceiptImportRow>(
+    'SELECT * FROM decision_os.receipt_imports WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Get receipt line items by receipt import ID
+ * 
+ * SQL: SELECT * FROM decision_os.receipt_line_items WHERE receipt_import_id = $1
+ */
+export async function getReceiptLineItemsByImportId(
+  receiptImportId: string,
+  client?: DatabaseClient
+): Promise<ReceiptLineItemRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<ReceiptLineItemRow>(
+    'SELECT * FROM decision_os.receipt_line_items WHERE receipt_import_id = $1 ORDER BY created_at ASC',
+    [receiptImportId]
+  );
+  return result.rows;
+}
+
+/**
+ * Count receipt line items by import ID (for testing)
+ */
+export async function getReceiptLineItemCount(
+  receiptImportId: string,
+  client?: DatabaseClient
+): Promise<number> {
+  const db = client ?? await getClient();
+  const result = await db.query<{ count: string }>(
+    'SELECT COUNT(*) as count FROM decision_os.receipt_line_items WHERE receipt_import_id = $1',
+    [receiptImportId]
+  );
+  return parseInt(result.rows[0]?.count ?? '0', 10);
+}
+
+// =============================================================================
+// INVENTORY UPSERT FOR RECEIPT INGESTION
+// =============================================================================
+
+/**
+ * Upsert inventory item from receipt (advisory)
+ * 
+ * Rules:
+ * - UPSERT by (household_key, item_name)
+ * - confidence = GREATEST(existing.confidence, new.confidence)
+ * - qty_estimated: add if both present, else keep existing or set new
+ * - unit: keep existing if present, else set new
+ * - source = 'receipt'
+ * - last_seen_at = provided timestamp or NOW()
+ * 
+ * SQL: INSERT ... ON CONFLICT (household_key, item_name) DO UPDATE ...
+ */
+export async function upsertInventoryItemFromReceipt(
+  item: {
+    id: string;
+    householdKey: string;
+    itemName: string;
+    qtyEstimated: number | null;
+    unit: string | null;
+    confidence: number;
+    lastSeenAt: string;
+  },
+  client?: DatabaseClient
+): Promise<void> {
+  const db = client ?? await getClient();
+  
+  await db.query(
+    `INSERT INTO decision_os.inventory_items 
+     (id, household_key, item_name, qty_estimated, unit, confidence, source, last_seen_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'receipt', $7)
+     ON CONFLICT (household_key, item_name) DO UPDATE SET
+       confidence = GREATEST(decision_os.inventory_items.confidence, EXCLUDED.confidence),
+       qty_estimated = CASE 
+         WHEN decision_os.inventory_items.qty_estimated IS NOT NULL AND EXCLUDED.qty_estimated IS NOT NULL 
+         THEN decision_os.inventory_items.qty_estimated + EXCLUDED.qty_estimated
+         WHEN EXCLUDED.qty_estimated IS NOT NULL 
+         THEN EXCLUDED.qty_estimated
+         ELSE decision_os.inventory_items.qty_estimated
+       END,
+       unit = COALESCE(decision_os.inventory_items.unit, EXCLUDED.unit),
+       source = 'receipt',
+       last_seen_at = EXCLUDED.last_seen_at`,
+    [
+      item.id,
+      item.householdKey,
+      item.itemName,
+      item.qtyEstimated,
+      item.unit,
+      item.confidence,
+      item.lastSeenAt,
+    ]
+  );
+}
+
+/**
+ * Get inventory item by household and name
+ */
+export async function getInventoryItemByName(
+  householdKey: string,
+  itemName: string,
+  client?: DatabaseClient
+): Promise<InventoryItemRow | null> {
+  const db = client ?? await getClient();
+  const result = await db.query<InventoryItemRow>(
+    'SELECT * FROM decision_os.inventory_items WHERE household_key = $1 AND item_name = $2',
+    [householdKey, itemName]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Get all inventory items for testing
+ */
+export async function getAllInventoryItems(
+  householdKey: string,
+  client?: DatabaseClient
+): Promise<InventoryItemRow[]> {
+  const db = client ?? await getClient();
+  const result = await db.query<InventoryItemRow>(
+    'SELECT * FROM decision_os.inventory_items WHERE household_key = $1 ORDER BY item_name ASC',
+    [householdKey]
+  );
+  return result.rows;
+}
+
+/**
+ * Count inventory items for testing
+ */
+export async function getInventoryItemCount(
+  householdKey: string,
+  client?: DatabaseClient
+): Promise<number> {
+  const db = client ?? await getClient();
+  const result = await db.query<{ count: string }>(
+    'SELECT COUNT(*) as count FROM decision_os.inventory_items WHERE household_key = $1',
+    [householdKey]
+  );
+  return parseInt(result.rows[0]?.count ?? '0', 10);
 }
