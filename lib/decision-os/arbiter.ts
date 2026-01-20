@@ -72,6 +72,18 @@ export const DINNER_END_HOUR = 21;
 export const LATE_THRESHOLD_HOUR = 20;
 
 /**
+ * Late no-action threshold (6:00 PM / 18:00 = DINNER_START + 1)
+ * If dinner window started and no approved decision yet, recommend DRM
+ */
+export const LATE_NO_ACTION_THRESHOLD_HOUR = 18;
+
+/**
+ * Two rejections time window in milliseconds (30 minutes)
+ * If 2+ rejections occur within this window, recommend DRM
+ */
+export const TWO_REJECTIONS_WINDOW_MS = 30 * 60 * 1000;
+
+/**
  * Rejection count threshold for DRM trigger
  * If user rejects this many decisions, trigger DRM
  */
@@ -121,7 +133,7 @@ export interface DrmEvaluation {
  * Parse hour from ISO string, respecting the timezone in the string
  * For "2026-01-19T20:30:00-06:00", returns 20 (8 PM in the specified timezone)
  */
-function parseLocalHour(isoString: string): number {
+export function parseLocalHour(isoString: string): number {
   // Extract the time portion (HH:MM:SS) before timezone
   const match = isoString.match(/T(\d{2}):/);
   if (match) {
@@ -132,17 +144,111 @@ function parseLocalHour(isoString: string): number {
 }
 
 /**
- * Evaluate if DRM should be triggered based on signal and time
- * Returns reason if DRM should trigger, null otherwise
+ * Parse local date (YYYY-MM-DD) from ISO string, respecting timezone
+ * For "2026-01-19T20:30:00-06:00", returns "2026-01-19"
+ */
+export function parseLocalDate(isoString: string): string {
+  // Extract the date portion before 'T'
+  const match = isoString.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) {
+    return match[1];
+  }
+  // Fallback to Date parsing
+  const date = new Date(isoString);
+  return date.toISOString().split('T')[0];
+}
+
+/**
+ * Check if two rejection events occurred within the specified time window.
+ * 
+ * @param events - Recent decision events (should be sorted by decided_at DESC)
+ * @param windowMs - Time window in milliseconds (default: 30 minutes)
+ * @returns true if 2+ consecutive rejections within window
+ */
+export function hasTwoRejectionsWithinWindow(
+  events: DecisionEventRow[],
+  windowMs: number = TWO_REJECTIONS_WINDOW_MS
+): boolean {
+  // Find all rejected events
+  const rejectedEvents = events.filter(e => e.user_action === 'rejected');
+  
+  if (rejectedEvents.length < 2) {
+    return false;
+  }
+  
+  // Sort by decided_at descending (most recent first)
+  const sorted = [...rejectedEvents].sort((a, b) => 
+    new Date(b.decided_at).getTime() - new Date(a.decided_at).getTime()
+  );
+  
+  // Check if the two most recent rejections are within the window
+  const mostRecent = new Date(sorted[0].decided_at).getTime();
+  const secondMostRecent = new Date(sorted[1].decided_at).getTime();
+  
+  return (mostRecent - secondMostRecent) <= windowMs;
+}
+
+/**
+ * Check if there's an approved decision for today.
+ * 
+ * @param events - Decision events to check
+ * @param todayDate - Today's date in YYYY-MM-DD format
+ * @returns true if at least one approved decision exists for today
+ */
+export function hasApprovedDecisionToday(
+  events: DecisionEventRow[],
+  todayDate: string
+): boolean {
+  return events.some(e => {
+    const eventDate = parseLocalDate(e.decided_at);
+    return eventDate === todayDate && e.user_action === 'approved';
+  });
+}
+
+/**
+ * Check if there's any pending, rejected, or expired decision for today.
+ * This indicates the user has engaged with the decision system today.
+ * 
+ * @param events - Decision events to check
+ * @param todayDate - Today's date in YYYY-MM-DD format
+ * @returns true if at least one engagement exists for today
+ */
+export function hasEngagementToday(
+  events: DecisionEventRow[],
+  todayDate: string
+): boolean {
+  return events.some(e => {
+    const eventDate = parseLocalDate(e.decided_at);
+    return eventDate === todayDate && 
+      ['pending', 'rejected', 'expired'].includes(e.user_action);
+  });
+}
+
+/**
+ * Evaluate if DRM should be triggered based on signal, time, and decision history.
+ * 
+ * IMPLICIT TRIGGER CONDITIONS (checked in priority order):
+ * 1. calendar_conflict: signal.calendarConflict = true
+ * 2. low_energy: signal.energy = 'low'
+ * 3. two_rejections: 2+ consecutive rejections within 30 minutes
+ * 4. late_no_action: 
+ *    - Time >= 6 PM (LATE_NO_ACTION_THRESHOLD_HOUR)
+ *    - No approved decision today
+ *    - At least one engagement (pending/rejected/expired) shown today OR late hour (>= 8 PM)
+ * 
+ * @param request - Decision request with signal and nowIso
+ * @param recentEvents - Recent decision events for this household
+ * @returns DRM evaluation with shouldTrigger and reason
  */
 export function evaluateDrmTrigger(
   request: DecisionRequest,
-  recentRejectionCount: number
+  recentEvents: DecisionEventRow[]
 ): DrmEvaluation {
   const { signal, nowIso } = request;
   
-  // Parse the hour from the ISO string (respects the timezone in the string)
+  // Parse the hour and date from the ISO string (respects the timezone in the string)
   const hour = parseLocalHour(nowIso);
+  const todayDate = parseLocalDate(nowIso);
   
   // Check conditions in priority order
   
@@ -156,14 +262,28 @@ export function evaluateDrmTrigger(
     return { shouldTrigger: true, reason: 'low_energy' };
   }
   
-  // 3. Two or more rejections in recent history
-  if (recentRejectionCount >= DRM_REJECTION_THRESHOLD) {
+  // 3. Two rejections within 30 minutes
+  if (hasTwoRejectionsWithinWindow(recentEvents)) {
     return { shouldTrigger: true, reason: 'two_rejections' };
   }
   
-  // 4. Late hour (past 8 PM for dinner)
-  if (signal.timeWindow === 'dinner' && hour >= LATE_THRESHOLD_HOUR) {
-    return { shouldTrigger: true, reason: 'late_no_action' };
+  // 4. Late no-action check (dinner time specific)
+  if (signal.timeWindow === 'dinner') {
+    // Check if we're past the late threshold (8 PM) - immediate DRM
+    if (hour >= LATE_THRESHOLD_HOUR) {
+      return { shouldTrigger: true, reason: 'late_no_action' };
+    }
+    
+    // Check if we're in the late window (6 PM - 8 PM) with no approved decision
+    if (hour >= LATE_NO_ACTION_THRESHOLD_HOUR) {
+      const hasApproved = hasApprovedDecisionToday(recentEvents, todayDate);
+      const hasEngaged = hasEngagementToday(recentEvents, todayDate);
+      
+      // Only trigger if no approval AND there's been engagement (shown decisions)
+      if (!hasApproved && hasEngaged) {
+        return { shouldTrigger: true, reason: 'late_no_action' };
+      }
+    }
   }
   
   return { shouldTrigger: false, reason: null };
@@ -403,13 +523,9 @@ export async function makeDecision(input: ArbiterInput): Promise<DecisionRespons
     persistDecisionEvent,
   } = input;
   
-  // Count recent rejections (last 7 decisions)
-  const recentRejectionCount = recentDecisions.filter(
-    d => d.user_action === 'rejected'
-  ).length;
-  
-  // Evaluate DRM triggers
-  const drmEval = evaluateDrmTrigger(request, recentRejectionCount);
+  // Evaluate DRM triggers using full event history
+  // (includes implicit triggers: two_rejections within 30min, late_no_action, etc.)
+  const drmEval = evaluateDrmTrigger(request, recentDecisions);
   
   if (drmEval.shouldTrigger && drmEval.reason) {
     // Return DRM recommendation - no decision made
