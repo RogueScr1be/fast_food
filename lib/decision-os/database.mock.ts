@@ -13,6 +13,7 @@ import type {
   MealIngredientRow,
   DecisionEventRow,
 } from '@/types/decision-os/decision';
+import type { DrmEventRow } from '@/types/decision-os/drm';
 
 // =============================================================================
 // MOCK DATA STORE
@@ -22,6 +23,7 @@ let mockMeals: MealRow[] = [];
 let mockIngredients: MealIngredientRow[] = [];
 let mockInventory: InventoryItemRow[] = [];
 let mockDecisionEvents: DecisionEventRow[] = [];
+let mockDrmEvents: DrmEventRow[] = [];
 
 // =============================================================================
 // MOCK DATABASE OPERATIONS
@@ -50,6 +52,7 @@ export function clearMockData(): void {
   mockIngredients = [];
   mockInventory = [];
   mockDecisionEvents = [];
+  mockDrmEvents = [];
 }
 
 // =============================================================================
@@ -93,6 +96,27 @@ export async function getDecisionEventById(id: string): Promise<DecisionEventRow
 }
 
 // =============================================================================
+// DRM EVENT FUNCTIONS (MOCK)
+// =============================================================================
+
+export async function insertDrmEvent(event: DrmEventRow): Promise<void> {
+  if (mockDrmEvents.some(e => e.id === event.id)) {
+    throw new Error(`DRM event ${event.id} already exists`);
+  }
+  mockDrmEvents.push(event);
+}
+
+export async function getDrmEventById(id: string): Promise<DrmEventRow | null> {
+  return mockDrmEvents.find(e => e.id === id) ?? null;
+}
+
+export async function getDrmEventsForHousehold(householdKey: string): Promise<DrmEventRow[]> {
+  return mockDrmEvents
+    .filter(d => d.household_key === householdKey)
+    .sort((a, b) => new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime());
+}
+
+// =============================================================================
 // TEST HELPERS
 // =============================================================================
 
@@ -102,6 +126,14 @@ export function addTestInventory(items: InventoryItemRow[]): void {
 
 export function addTestDecisionEvent(event: DecisionEventRow): void {
   mockDecisionEvents.push(event);
+}
+
+export function addTestDrmEvent(event: DrmEventRow): void {
+  mockDrmEvents.push(event);
+}
+
+export function getAllDrmEvents(): DrmEventRow[] {
+  return mockDrmEvents;
 }
 
 // =============================================================================
