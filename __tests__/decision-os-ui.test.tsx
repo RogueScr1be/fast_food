@@ -25,7 +25,7 @@ jest.mock('expo-linear-gradient', () => ({
   LinearGradient: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// Mock lucide-react-native
+// Mock lucide-react-native (all icons used in decision-os.tsx)
 jest.mock('lucide-react-native', () => ({
   Check: () => null,
   X: () => null,
@@ -34,6 +34,7 @@ jest.mock('lucide-react-native', () => ({
   ChefHat: () => null,
   ShoppingBag: () => null,
   ExternalLink: () => null,
+  Camera: () => null,
 }));
 
 // Import the component
