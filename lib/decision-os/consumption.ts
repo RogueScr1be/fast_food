@@ -13,6 +13,7 @@
 import type { DatabaseClient } from './database';
 import type { MealIngredientRow, InventoryItemRow } from '@/types/decision-os/decision';
 import { parseSimpleQty } from './inventory-model';
+import { matchInventoryItem } from './matching/matcher';
 
 // =============================================================================
 // TYPES
@@ -43,21 +44,38 @@ export async function getMealIngredientsForMeal(
 }
 
 /**
- * Find inventory items by case-insensitive contains match on item_name
+ * Get all inventory items for a household.
+ * Used by the tokenized matcher for local matching.
+ */
+export async function getInventoryForHousehold(
+  householdKey: string,
+  client: DatabaseClient
+): Promise<InventoryItemRow[]> {
+  const result = await client.query<InventoryItemRow>(
+    `SELECT * FROM decision_os.inventory_items WHERE household_key = $1`,
+    [householdKey]
+  );
+  return result.rows;
+}
+
+/**
+ * Find best matching inventory item using token-based matching (v2).
+ * 
+ * @deprecated Use matchInventoryItem from matching/matcher.ts directly
  */
 export async function findInventoryByIngredientName(
   householdKey: string,
   ingredientName: string,
   client: DatabaseClient
 ): Promise<InventoryItemRow[]> {
-  // Use ILIKE for case-insensitive contains match
-  const result = await client.query<InventoryItemRow>(
-    `SELECT * FROM decision_os.inventory_items 
-     WHERE household_key = $1 
-     AND (LOWER(item_name) LIKE $2 OR $3 LIKE '%' || LOWER(item_name) || '%')`,
-    [householdKey, `%${ingredientName.toLowerCase()}%`, ingredientName.toLowerCase()]
-  );
-  return result.rows;
+  // Load all inventory items for the household
+  const inventory = await getInventoryForHousehold(householdKey, client);
+  
+  // Use token-based matcher
+  const { matched } = matchInventoryItem(ingredientName, inventory);
+  
+  // Return as array for backward compatibility
+  return matched ? [matched] : [];
 }
 
 /**
