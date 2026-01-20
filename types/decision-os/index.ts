@@ -2,7 +2,7 @@
  * Decision OS Type Definitions
  */
 
-export type UserAction = 'approved' | 'rejected' | 'modified';
+export type UserAction = 'approved' | 'rejected' | 'modified' | 'undo';
 export type DecisionStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'drm_triggered';
 
 export interface DecisionEvent {
@@ -14,12 +14,25 @@ export interface DecisionEvent {
   decision_payload: Record<string, unknown>;
   is_feedback_copy?: boolean;
   original_event_id?: string; // References the original pending event for feedback copies
+  is_autopilot?: boolean; // True if this was an autopilot-approved event
+  notes?: string; // Optional notes (e.g., 'undo_autopilot')
 }
 
 export interface FeedbackRequest {
   eventId: string;
   userAction: UserAction;
   modifiedPayload?: Record<string, unknown>;
+}
+
+/**
+ * Decision response from the decision endpoint
+ */
+export interface DecisionResponse {
+  drmRecommended: boolean;
+  decision: Record<string, unknown> | null;
+  autopilot?: boolean;
+  decisionEventId?: string;
+  message?: string;
 }
 
 export interface FeedbackResponse {

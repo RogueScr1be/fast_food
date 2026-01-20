@@ -2,9 +2,16 @@ import {
   createFeedbackCopy,
   hasDuplicateFeedback,
   processFeedback,
+  processUndo,
   shouldRunConsumption,
   shouldUpdateTasteGraph,
   getTasteGraphWeight,
+  isWithinUndoWindow,
+  isAutopilotEvent,
+  shouldReverseConsumption,
+  findAutopilotApprovedCopy,
+  UNDO_WINDOW_MS,
+  IDEMPOTENCY_WINDOW_MS,
 } from '../feedback/handler';
 import type { DecisionEvent, FeedbackRequest } from '../../../types/decision-os';
 
@@ -338,5 +345,469 @@ describe('getTasteGraphWeight', () => {
     };
     
     expect(getTasteGraphWeight(event)).toBe(0);
+  });
+
+  it('returns -0.5 for undo events (same as rejected)', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'rejected',
+      decision_payload: {},
+      notes: 'undo_autopilot',
+    };
+    
+    expect(getTasteGraphWeight(event)).toBe(-0.5);
+  });
+});
+
+describe('isWithinUndoWindow', () => {
+  it('returns true when event is within 10 minute window', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 minutes ago
+      status: 'approved',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isWithinUndoWindow(event)).toBe(true);
+  });
+
+  it('returns true at exactly 10 minutes', () => {
+    const nowMs = Date.now();
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(nowMs - UNDO_WINDOW_MS).toISOString(), // Exactly 10 minutes ago
+      status: 'approved',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isWithinUndoWindow(event, nowMs)).toBe(true);
+  });
+
+  it('returns false when event is outside 10 minute window', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(), // 15 minutes ago
+      status: 'approved',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isWithinUndoWindow(event)).toBe(false);
+  });
+
+  it('returns false when actioned_at is missing', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'approved',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isWithinUndoWindow(event)).toBe(false);
+  });
+});
+
+describe('isAutopilotEvent', () => {
+  it('returns true for autopilot-approved events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'approved',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isAutopilotEvent(event)).toBe(true);
+  });
+
+  it('returns false for non-autopilot approved events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'approved',
+      decision_payload: {},
+    };
+    
+    expect(isAutopilotEvent(event)).toBe(false);
+  });
+
+  it('returns false for autopilot but rejected events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'rejected',
+      decision_payload: {},
+      is_autopilot: true,
+    };
+    
+    expect(isAutopilotEvent(event)).toBe(false);
+  });
+
+  it('returns false for pending events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'pending',
+      decision_payload: {},
+    };
+    
+    expect(isAutopilotEvent(event)).toBe(false);
+  });
+});
+
+describe('findAutopilotApprovedCopy', () => {
+  it('returns the most recent autopilot-approved copy', () => {
+    const copies: DecisionEvent[] = [
+      {
+        id: 'copy-1',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        actioned_at: '2026-01-20T11:00:00Z',
+        status: 'approved',
+        decision_payload: {},
+        is_autopilot: true,
+      },
+      {
+        id: 'copy-2',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        actioned_at: '2026-01-20T12:00:00Z', // More recent
+        status: 'approved',
+        decision_payload: {},
+        is_autopilot: true,
+      },
+    ];
+    
+    const result = findAutopilotApprovedCopy(copies);
+    expect(result?.id).toBe('copy-2');
+  });
+
+  it('returns undefined when no autopilot copies exist', () => {
+    const copies: DecisionEvent[] = [
+      {
+        id: 'copy-1',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        actioned_at: '2026-01-20T11:00:00Z',
+        status: 'approved',
+        decision_payload: {},
+        // Not autopilot
+      },
+    ];
+    
+    const result = findAutopilotApprovedCopy(copies);
+    expect(result).toBeUndefined();
+  });
+});
+
+describe('processUndo', () => {
+  const createAutopilotEvent = (minutesAgo: number): DecisionEvent => ({
+    id: 'autopilot-123',
+    user_profile_id: 1,
+    decided_at: '2026-01-20T10:00:00Z',
+    actioned_at: new Date(Date.now() - minutesAgo * 60 * 1000).toISOString(),
+    status: 'approved',
+    decision_payload: { meal: 'tacos' },
+    is_autopilot: true,
+  });
+
+  describe('undo within window', () => {
+    it('inserts exactly ONE new decision_event row (append-only)', () => {
+      const autopilotEvent = createAutopilotEvent(5); // 5 minutes ago
+      
+      const result = processUndo(autopilotEvent, []);
+      
+      expect(result.recorded).toBe(true);
+      expect(result.isDuplicate).toBe(false);
+      expect(result.reason).toBe('success');
+      expect(result.feedbackCopy).toBeDefined();
+      expect(result.feedbackCopy?.status).toBe('rejected');
+      expect(result.feedbackCopy?.notes).toBe('undo_autopilot');
+      expect(result.feedbackCopy?.is_feedback_copy).toBe(true);
+    });
+
+    it('undo is idempotent - multiple undos create only one copy', () => {
+      const autopilotEvent = createAutopilotEvent(5);
+      
+      // First undo succeeds
+      const firstResult = processUndo(autopilotEvent, []);
+      expect(firstResult.isDuplicate).toBe(false);
+      expect(firstResult.feedbackCopy).toBeDefined();
+      
+      // Simulate persisting the first undo
+      const undoCopy: DecisionEvent = {
+        ...firstResult.feedbackCopy!,
+        actioned_at: new Date().toISOString(),
+        notes: 'undo_autopilot',
+      };
+      
+      // Second undo is detected as duplicate
+      const secondResult = processUndo(autopilotEvent, [undoCopy]);
+      expect(secondResult.recorded).toBe(true);
+      expect(secondResult.isDuplicate).toBe(true);
+      expect(secondResult.reason).toBe('duplicate');
+      expect(secondResult.feedbackCopy).toBeUndefined();
+    });
+  });
+
+  describe('undo outside window', () => {
+    it('no new row inserted, still returns {recorded:true}', () => {
+      const autopilotEvent = createAutopilotEvent(15); // 15 minutes ago (outside window)
+      
+      const result = processUndo(autopilotEvent, []);
+      
+      expect(result.recorded).toBe(true);
+      expect(result.isDuplicate).toBe(false);
+      expect(result.reason).toBe('outside_window');
+      expect(result.feedbackCopy).toBeUndefined();
+    });
+
+    it('undo at exactly 10 minutes + 1ms returns outside_window', () => {
+      const nowMs = Date.now();
+      const autopilotEvent: DecisionEvent = {
+        id: 'autopilot-123',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        actioned_at: new Date(nowMs - UNDO_WINDOW_MS - 1).toISOString(), // Just over 10 minutes
+        status: 'approved',
+        decision_payload: { meal: 'tacos' },
+        is_autopilot: true,
+      };
+      
+      const result = processUndo(autopilotEvent, [], nowMs);
+      
+      expect(result.recorded).toBe(true);
+      expect(result.reason).toBe('outside_window');
+      expect(result.feedbackCopy).toBeUndefined();
+    });
+  });
+
+  describe('undo against non-autopilot event', () => {
+    it('no-op, returns {recorded:true}', () => {
+      const manualApprovedEvent: DecisionEvent = {
+        id: 'manual-123',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        actioned_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        status: 'approved',
+        decision_payload: { meal: 'tacos' },
+        // is_autopilot is NOT set
+      };
+      
+      const result = processUndo(manualApprovedEvent, []);
+      
+      expect(result.recorded).toBe(true);
+      expect(result.isDuplicate).toBe(false);
+      expect(result.reason).toBe('not_autopilot');
+      expect(result.feedbackCopy).toBeUndefined();
+    });
+
+    it('undo against pending event is no-op', () => {
+      const pendingEvent: DecisionEvent = {
+        id: 'pending-123',
+        user_profile_id: 1,
+        decided_at: '2026-01-20T10:00:00Z',
+        status: 'pending',
+        decision_payload: { meal: 'tacos' },
+      };
+      
+      const result = processUndo(pendingEvent, []);
+      
+      expect(result.recorded).toBe(true);
+      expect(result.reason).toBe('not_autopilot');
+      expect(result.feedbackCopy).toBeUndefined();
+    });
+  });
+});
+
+describe('processFeedback with undo action', () => {
+  const originalEvent: DecisionEvent = {
+    id: 'original-123',
+    user_profile_id: 1,
+    decided_at: '2026-01-20T10:00:00Z',
+    status: 'pending',
+    decision_payload: { meal: 'tacos' },
+  };
+
+  it('undo action finds autopilot copy and processes', () => {
+    const autopilotCopy: DecisionEvent = {
+      id: 'autopilot-copy-123',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      status: 'approved',
+      decision_payload: { meal: 'tacos' },
+      is_autopilot: true,
+      is_feedback_copy: true,
+      original_event_id: 'original-123',
+    };
+    
+    const request: FeedbackRequest = {
+      eventId: 'original-123',
+      userAction: 'undo',
+    };
+    
+    const result = processFeedback(originalEvent, [autopilotCopy], request);
+    
+    expect(result.recorded).toBe(true);
+    expect(result.feedbackCopy).toBeDefined();
+    expect(result.feedbackCopy?.notes).toBe('undo_autopilot');
+  });
+
+  it('undo action on autopilot original event processes correctly', () => {
+    const autopilotOriginal: DecisionEvent = {
+      id: 'original-123',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      status: 'approved',
+      decision_payload: { meal: 'tacos' },
+      is_autopilot: true,
+    };
+    
+    const request: FeedbackRequest = {
+      eventId: 'original-123',
+      userAction: 'undo',
+    };
+    
+    const result = processFeedback(autopilotOriginal, [], request);
+    
+    expect(result.recorded).toBe(true);
+    expect(result.feedbackCopy).toBeDefined();
+    expect(result.feedbackCopy?.notes).toBe('undo_autopilot');
+  });
+
+  it('undo action with no autopilot event returns not_autopilot', () => {
+    const request: FeedbackRequest = {
+      eventId: 'original-123',
+      userAction: 'undo',
+    };
+    
+    const result = processFeedback(originalEvent, [], request);
+    
+    expect(result.recorded).toBe(true);
+    expect(result.reason).toBe('not_autopilot');
+    expect(result.feedbackCopy).toBeUndefined();
+  });
+});
+
+describe('shouldReverseConsumption', () => {
+  it('returns false for all events (v1 limitation)', () => {
+    const undoEvent: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'rejected',
+      decision_payload: {},
+      notes: 'undo_autopilot',
+    };
+    
+    expect(shouldReverseConsumption(undoEvent)).toBe(false);
+  });
+
+  it('documents v1 limitation: consumption not reversed', () => {
+    // This test documents the intentional v1 behavior:
+    // We do NOT reverse consumption because we don't track 
+    // exact consumption amounts per decision event.
+    const approvedEvent: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'approved',
+      decision_payload: {},
+    };
+    
+    expect(shouldReverseConsumption(approvedEvent)).toBe(false);
+  });
+});
+
+describe('createFeedbackCopy with undo', () => {
+  const autopilotEvent: DecisionEvent = {
+    id: 'autopilot-123',
+    user_profile_id: 1,
+    decided_at: '2026-01-20T10:00:00Z',
+    actioned_at: '2026-01-20T10:05:00Z',
+    status: 'approved',
+    decision_payload: { meal: 'tacos' },
+    is_autopilot: true,
+  };
+
+  it('creates undo feedback copy with notes=undo_autopilot', () => {
+    const copy = createFeedbackCopy(autopilotEvent, 'undo');
+    
+    expect(copy.status).toBe('rejected');
+    expect(copy.notes).toBe('undo_autopilot');
+    expect(copy.is_feedback_copy).toBe(true);
+    expect(copy.original_event_id).toBe('autopilot-123');
+  });
+
+  it('undo copy preserves original payload', () => {
+    const copy = createFeedbackCopy(autopilotEvent, 'undo');
+    
+    expect(copy.decision_payload).toEqual({ meal: 'tacos' });
+  });
+});
+
+describe('hasDuplicateFeedback with undo', () => {
+  it('detects duplicate undo within idempotency window', () => {
+    const undoCopy: DecisionEvent = {
+      id: 'undo-copy-1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date().toISOString(),
+      status: 'rejected',
+      decision_payload: {},
+      is_feedback_copy: true,
+      notes: 'undo_autopilot',
+    };
+    
+    expect(hasDuplicateFeedback([undoCopy], 'undo')).toBe(true);
+  });
+
+  it('does not confuse regular rejection with undo', () => {
+    const regularRejection: DecisionEvent = {
+      id: 'reject-copy-1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date().toISOString(),
+      status: 'rejected',
+      decision_payload: {},
+      is_feedback_copy: true,
+      // No notes - this is a regular rejection
+    };
+    
+    // Regular rejection should NOT be detected as duplicate undo
+    expect(hasDuplicateFeedback([regularRejection], 'undo')).toBe(false);
+  });
+
+  it('undo outside idempotency window is not duplicate', () => {
+    const oldUndo: DecisionEvent = {
+      id: 'undo-copy-1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(), // 15 minutes ago
+      status: 'rejected',
+      decision_payload: {},
+      is_feedback_copy: true,
+      notes: 'undo_autopilot',
+    };
+    
+    expect(hasDuplicateFeedback([oldUndo], 'undo')).toBe(false);
   });
 });
