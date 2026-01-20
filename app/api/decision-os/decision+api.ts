@@ -32,6 +32,7 @@ import {
   getInventoryItems,
   getRecentDecisionEvents,
   insertDecisionEvent,
+  getTasteScoresForMeals,
 } from '@/lib/decision-os/database';
 
 /**
@@ -82,7 +83,7 @@ export async function POST(request: Request): Promise<Response> {
     
     const decisionRequest: DecisionRequest = body;
     
-    // Fetch data from database
+    // Fetch base data from database
     const [activeMeals, ingredients, inventory, recentDecisions] = await Promise.all([
       getActiveMeals(),
       getMealIngredients(),
@@ -90,7 +91,14 @@ export async function POST(request: Request): Promise<Response> {
       getRecentDecisionEvents(decisionRequest.householdKey, 7),
     ]);
     
-    // Make decision
+    // Fetch taste scores for candidate meals (Phase 4)
+    const mealIds = activeMeals.map(m => m.id);
+    const tasteScores = await getTasteScoresForMeals(
+      decisionRequest.householdKey,
+      mealIds
+    );
+    
+    // Make decision with taste-aware scoring
     const response: DecisionResponse = await makeDecision({
       request: decisionRequest,
       activeMeals,
@@ -99,6 +107,7 @@ export async function POST(request: Request): Promise<Response> {
       recentDecisions,
       generateEventId: () => randomUUID(),
       persistDecisionEvent: insertDecisionEvent,
+      tasteScores,
     });
     
     // INVARIANT CHECK: Deep validation - no arrays anywhere in response
