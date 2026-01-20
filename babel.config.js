@@ -9,7 +9,8 @@ module.exports = function(api) {
         'module-resolver',
         {
           alias: {
-            '@': './app'
+            '@': './',
+            '@app': './app'
           },
           extensions: ['.js', '.jsx', '.ts', '.tsx', '.json']
         }
