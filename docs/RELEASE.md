@@ -14,26 +14,59 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `migrate_staging` | Push to main | Runs database migrations on staging |
 | `deploy_staging` | Push to main | Deploys to Vercel staging |
 | `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
-| `auth_sanity` | Push to main | Verifies auth flow works (200 or 401) |
+| `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
+| `auth_works_gate` | Push to main | Verifies endpoints return 200 WITH token |
 | `smoke_staging` | Push to main | Runs full staging smoke tests |
 
 ### Pipeline Gates
 
-The pipeline has two gates that must pass before smoke tests run:
+The pipeline has four gates that must pass in sequence:
 
-#### Healthz Gate
+#### 1. Healthz Gate
 
 After deployment, the pipeline calls `GET /api/healthz` and fails if:
 - Response is not 200
 - This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
 
-#### Auth Sanity Gate
+#### 2. Auth Required Gate (401)
 
-Before full smoke tests, the pipeline runs `npm run auth:sanity` which:
-- Calls Decision endpoint with STAGING_AUTH_TOKEN
-- Expects either 200 (valid response) OR 401 (unauthorized)
-- Fails on unexpected responses
-- Prints only PASS/FAIL (no secrets leaked)
+Verifies protected endpoints correctly REJECT unauthenticated requests:
+- Calls all Decision OS endpoints WITHOUT auth token
+- All must return 401 `{ error: 'unauthorized' }`
+- Prevents silent auth bypass bugs
+
+```bash
+npm run auth:sanity:require401
+# Expected output:
+# PASS healthz
+# PASS decision_401
+# PASS receipt_401
+# PASS feedback_401
+# PASS drm_401
+```
+
+#### 3. Auth Works Gate (200)
+
+Verifies protected endpoints correctly ACCEPT authenticated requests:
+- **Preflight**: Decodes JWT and fails if token expires within 5 minutes
+- Calls all Decision OS endpoints WITH auth token
+- All must return 200 with canonical shapes
+- Prevents "green now, red later" token expiration issues
+
+```bash
+npm run auth:sanity:require200
+# Expected output:
+# PASS token_preflight
+# PASS healthz
+# PASS decision_200
+# PASS receipt_200
+# PASS feedback_200
+# PASS drm_200
+```
+
+#### 4. Smoke Staging
+
+Full integration test of all Decision OS flows with authenticated requests.
 
 ---
 
