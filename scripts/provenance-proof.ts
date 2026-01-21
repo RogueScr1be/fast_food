@@ -85,6 +85,23 @@ async function getLatestDeployment(client: DbClient): Promise<DeploymentRow | nu
   return result.rows[0] || null;
 }
 
+/**
+ * Check if deployment is healthy by hitting /api/healthz
+ */
+async function checkHealthz(deploymentUrl: string): Promise<boolean> {
+  try {
+    const healthzUrl = `${deploymentUrl}/api/healthz`;
+    const response = await fetch(healthzUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(10000), // 10s timeout
+    });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 // =============================================================================
 // MAIN
 // =============================================================================
@@ -121,13 +138,20 @@ async function main(): Promise<void> {
     }
     
     // Compare URLs
-    if (latest.deployment_url === EXPECTED_DEPLOYMENT_URL) {
-      console.log('PASS provenance_verified');
-      process.exit(0);
-    } else {
+    if (latest.deployment_url !== EXPECTED_DEPLOYMENT_URL) {
       console.log('FAIL provenance_mismatch');
       process.exit(1);
     }
+    
+    // Hit healthz on the recorded deployment to verify it's live
+    const isHealthy = await checkHealthz(latest.deployment_url);
+    if (!isHealthy) {
+      console.log('FAIL deployment_healthz_failed');
+      process.exit(1);
+    }
+    
+    console.log('PASS provenance_verified');
+    process.exit(0);
   } finally {
     if (client) {
       try {

@@ -29,6 +29,18 @@ const GITHUB_SHA = process.env.GITHUB_SHA;
 const GITHUB_RUN_ID = process.env.GITHUB_RUN_ID;
 const ENV_NAME = process.env.ENV_NAME || 'staging';
 
+/**
+ * Validate URL format (must be https:// with valid hostname)
+ */
+function isValidDeploymentUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // Validate required env vars
 function validateEnv(): boolean {
   if (!DATABASE_URL) {
@@ -37,6 +49,10 @@ function validateEnv(): boolean {
   }
   if (!DEPLOYMENT_URL) {
     console.log('FAIL missing_deployment_url');
+    return false;
+  }
+  if (!isValidDeploymentUrl(DEPLOYMENT_URL)) {
+    console.log('FAIL invalid_deployment_url_format');
     return false;
   }
   if (!GITHUB_SHA) {

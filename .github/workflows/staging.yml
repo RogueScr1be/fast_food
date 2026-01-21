@@ -153,6 +153,13 @@ jobs:
         id: deploy
         run: |
           DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          
+          # Validate URL format (must be https:// with valid hostname)
+          if [[ ! "$DEPLOYMENT_URL" =~ ^https://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} ]]; then
+            echo "FAIL invalid_deployment_url_format"
+            exit 1
+          fi
+          
           echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
           echo "Deployed to: $DEPLOYMENT_URL"
         env:

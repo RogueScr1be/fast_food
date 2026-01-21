@@ -62,6 +62,35 @@ function getAliasHost(): string {
   }
 }
 
+/**
+ * Validate URL format (must be https:// with valid hostname)
+ */
+function isValidDeploymentUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if deployment is healthy by hitting /api/healthz
+ */
+async function checkHealthz(deploymentUrl: string): Promise<boolean> {
+  try {
+    const healthzUrl = `${deploymentUrl}/api/healthz`;
+    const response = await fetch(healthzUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(10000), // 10s timeout
+    });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
 // =============================================================================
 // DATABASE CLIENT
 // =============================================================================
@@ -168,6 +197,19 @@ async function main(): Promise<void> {
     // Target is the SECOND deployment (previous green)
     const targetDeployment = deployments[1];
     const targetUrl = targetDeployment.deployment_url;
+    
+    // Validate target URL format
+    if (!isValidDeploymentUrl(targetUrl)) {
+      console.log('FAIL invalid_rollback_target_url');
+      process.exit(1);
+    }
+    
+    // Check healthz on target before aliasing
+    const isHealthy = await checkHealthz(targetUrl);
+    if (!isHealthy) {
+      console.log('FAIL rollback_target_healthz_failed');
+      process.exit(1);
+    }
     
     // Execute rollback
     const success = executeRollback(targetUrl, aliasHost);
