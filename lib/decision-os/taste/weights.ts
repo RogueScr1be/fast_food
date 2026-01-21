@@ -19,7 +19,8 @@
  * The user may actually like the food; they just didn't want it auto-applied.
  */
 
-import type { DecisionEvent } from '../../../types/decision-os';
+import type { DecisionEvent, DecisionEventInsert } from '../../../types/decision-os';
+import { NOTES } from '../feedback/handler';
 
 /**
  * Base weights for each action/status.
@@ -61,19 +62,21 @@ export function isAfter8pm(isoTimestamp: string): boolean {
 }
 
 /**
- * Gets the base weight for an event based on its status/action.
+ * Gets the base weight for an event based on its user_action and notes.
  * 
- * @param event - The decision event
+ * Uses schema-true fields (user_action, notes) not phantom fields (status).
+ * 
+ * @param event - The decision event (or insert)
  * @returns Base weight before stress multiplier
  */
-export function getBaseWeight(event: DecisionEvent): number {
+export function getBaseWeight(event: DecisionEvent | DecisionEventInsert): number {
   // Check for undo first (notes='undo_autopilot')
-  if (event.notes === 'undo_autopilot') {
+  if (event.notes === NOTES.UNDO_AUTOPILOT) {
     return BASE_WEIGHTS.undo;
   }
   
-  // Use user_action if available, otherwise fall back to status
-  const action = event.user_action ?? event.status;
+  // Use user_action (schema-true)
+  const action = event.user_action;
   
   switch (action) {
     case 'approved':
@@ -82,18 +85,17 @@ export function getBaseWeight(event: DecisionEvent): number {
       return BASE_WEIGHTS.rejected;
     case 'drm_triggered':
       return BASE_WEIGHTS.drm_triggered;
-    case 'undo':
-      return BASE_WEIGHTS.undo;
     default:
       break;
   }
   
-  // Check status for expired
-  if (event.status === 'expired') {
+  // Check runtime status for expired (non-persisted events)
+  const runtimeStatus = (event as DecisionEvent)._runtime_status;
+  if (runtimeStatus === 'expired') {
     return BASE_WEIGHTS.expired;
   }
   
-  // pending or unknown status
+  // pending or unknown
   return 0;
 }
 
@@ -122,12 +124,12 @@ export function clamp(value: number, min: number, max: number): number {
  * After 8pm, magnitude is multiplied by 1.10 (stress multiplier).
  * Final weight is clamped to [-2, 2].
  * 
- * @param event - The decision event
+ * @param event - The decision event (or insert)
  * @param nowIso - Optional current ISO timestamp for testing (defaults to event.actioned_at)
  * @returns Computed weight, clamped to [-2, 2]
  */
 export function computeTasteWeight(
-  event: DecisionEvent,
+  event: DecisionEvent | DecisionEventInsert,
   nowIso?: string
 ): number {
   const baseWeight = getBaseWeight(event);
@@ -149,4 +151,18 @@ export function computeTasteWeight(
   
   // Clamp to bounds
   return clamp(weight, WEIGHT_MIN, WEIGHT_MAX);
+}
+
+/**
+ * Checks if undo should skip taste_meal_scores update.
+ * 
+ * Undo events:
+ * - Insert taste_signal with -0.5 weight (autonomy penalty)
+ * - Do NOT update taste_meal_scores (don't affect score/approvals/rejections)
+ * 
+ * @param event - The decision event (or insert)
+ * @returns True if should skip taste_meal_scores
+ */
+export function shouldSkipTasteMealScores(event: DecisionEvent | DecisionEventInsert): boolean {
+  return event.notes === NOTES.UNDO_AUTOPILOT;
 }

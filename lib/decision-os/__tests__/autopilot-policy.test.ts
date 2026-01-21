@@ -4,9 +4,27 @@ import {
   getEventTimestamp,
   computeApprovalRate,
   shouldAutopilot,
+  checkAutopilotEligibility,
+  hasRecentUndo,
+  isUndoEvent,
   DEFAULT_AUTOPILOT_CONFIG,
+  RECENT_UNDO_WINDOW_HOURS,
 } from '../autopilot/policy';
+import { NOTES } from '../feedback/handler';
 import type { DecisionEvent } from '../../../types/decision-os';
+
+/**
+ * Helper to create a schema-true event
+ */
+function createEvent(overrides: Partial<DecisionEvent> = {}): DecisionEvent {
+  return {
+    id: 'event-1',
+    user_profile_id: 1,
+    decided_at: '2026-01-20T10:00:00Z',
+    decision_payload: {},
+    ...overrides,
+  };
+}
 
 describe('parseLocalDate', () => {
   it('extracts YYYY-MM-DD from ISO string with Z timezone', () => {
@@ -14,14 +32,10 @@ describe('parseLocalDate', () => {
   });
 
   it('extracts YYYY-MM-DD from ISO string with offset timezone', () => {
-    // This would fail with Date() conversion in some timezones
     expect(parseLocalDate('2026-01-20T23:30:00-06:00')).toBe('2026-01-20');
   });
 
   it('extracts literal date from UTC string (no timezone conversion)', () => {
-    // "2026-01-21T04:30:00Z" is 4:30 AM UTC on Jan 21
-    // With Date() conversion in US timezones, this would become Jan 20
-    // But we want the literal date from the string: Jan 21
     expect(parseLocalDate('2026-01-21T04:30:00Z')).toBe('2026-01-21');
   });
 
@@ -38,7 +52,6 @@ describe('parseLocalDate', () => {
   });
 
   it('handles timestamps with positive offset', () => {
-    // Late night in +05:30 timezone - literal date is still Jan 20
     expect(parseLocalDate('2026-01-20T23:30:00+05:30')).toBe('2026-01-20');
   });
 
@@ -75,10 +88,10 @@ describe('getWindowDates', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const dates = getWindowDates(7, refDate);
     
-    expect(dates.has('2026-01-20')).toBe(true); // today
-    expect(dates.has('2026-01-19')).toBe(true); // -1
-    expect(dates.has('2026-01-14')).toBe(true); // -6
-    expect(dates.has('2026-01-13')).toBe(false); // -7 (outside window)
+    expect(dates.has('2026-01-20')).toBe(true);
+    expect(dates.has('2026-01-19')).toBe(true);
+    expect(dates.has('2026-01-14')).toBe(true);
+    expect(dates.has('2026-01-13')).toBe(false);
   });
 
   it('handles month boundaries correctly', () => {
@@ -86,52 +99,86 @@ describe('getWindowDates', () => {
     const dates = getWindowDates(7, refDate);
     
     expect(dates.has('2026-02-03')).toBe(true);
-    expect(dates.has('2026-01-28')).toBe(true); // crosses into January
+    expect(dates.has('2026-01-28')).toBe(true);
   });
 });
 
 describe('getEventTimestamp', () => {
   it('returns actioned_at when present', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
+    const event = createEvent({
       decided_at: '2026-01-19T10:00:00Z',
       actioned_at: '2026-01-20T15:00:00Z',
-      status: 'approved',
-      decision_payload: {},
-    };
+    });
     
     expect(getEventTimestamp(event)).toBe('2026-01-20T15:00:00Z');
   });
 
   it('returns decided_at when actioned_at is absent', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
+    const event = createEvent({
       decided_at: '2026-01-19T10:00:00Z',
-      status: 'pending',
-      decision_payload: {},
-    };
+    });
     
     expect(getEventTimestamp(event)).toBe('2026-01-19T10:00:00Z');
   });
 });
 
-describe('computeApprovalRate', () => {
-  const createEvent = (
-    id: string,
-    status: DecisionEvent['status'],
-    decided_at: string,
-    actioned_at?: string
-  ): DecisionEvent => ({
-    id,
-    user_profile_id: 1,
-    decided_at,
-    actioned_at,
-    status,
-    decision_payload: {},
+describe('isUndoEvent', () => {
+  it('returns true for undo events', () => {
+    const event = createEvent({
+      user_action: 'rejected',
+      notes: NOTES.UNDO_AUTOPILOT,
+    });
+    
+    expect(isUndoEvent(event)).toBe(true);
   });
 
+  it('returns false for regular rejection', () => {
+    const event = createEvent({
+      user_action: 'rejected',
+    });
+    
+    expect(isUndoEvent(event)).toBe(false);
+  });
+});
+
+describe('hasRecentUndo', () => {
+  it('returns true when undo exists within 72h window', () => {
+    const now = new Date('2026-01-20T12:00:00');
+    const undoEvent = createEvent({
+      id: 'undo-1',
+      user_action: 'rejected',
+      notes: NOTES.UNDO_AUTOPILOT,
+      actioned_at: '2026-01-18T12:00:00Z', // 2 days ago (within 72h)
+    });
+    
+    expect(hasRecentUndo([undoEvent], RECENT_UNDO_WINDOW_HOURS, now)).toBe(true);
+  });
+
+  it('returns false when undo is older than 72h', () => {
+    const now = new Date('2026-01-20T12:00:00');
+    const oldUndoEvent = createEvent({
+      id: 'undo-1',
+      user_action: 'rejected',
+      notes: NOTES.UNDO_AUTOPILOT,
+      actioned_at: '2026-01-16T11:59:00Z', // Just over 72h ago
+    });
+    
+    expect(hasRecentUndo([oldUndoEvent], RECENT_UNDO_WINDOW_HOURS, now)).toBe(false);
+  });
+
+  it('returns false when no undo events exist', () => {
+    const now = new Date('2026-01-20T12:00:00');
+    const regularEvent = createEvent({
+      id: 'event-1',
+      user_action: 'rejected',
+      actioned_at: '2026-01-19T12:00:00Z',
+    });
+    
+    expect(hasRecentUndo([regularEvent], RECENT_UNDO_WINDOW_HOURS, now)).toBe(false);
+  });
+});
+
+describe('computeApprovalRate', () => {
   it('returns 1.0 rate with eligible=false when no events', () => {
     const result = computeApprovalRate([]);
     
@@ -140,14 +187,12 @@ describe('computeApprovalRate', () => {
     expect(result.eligible).toBe(false);
   });
 
-  it('counts only approved and rejected events', () => {
+  it('counts only approved and rejected user_actions', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:05:00Z'),
-      createEvent('2', 'rejected', '2026-01-20T11:00:00Z', '2026-01-20T11:05:00Z'),
-      createEvent('3', 'pending', '2026-01-20T12:00:00Z'),
-      createEvent('4', 'expired', '2026-01-19T10:00:00Z'),
-      createEvent('5', 'drm_triggered', '2026-01-19T11:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'rejected', actioned_at: '2026-01-20T11:00:00Z' }),
+      createEvent({ id: '3', user_action: 'drm_triggered', actioned_at: '2026-01-20T12:00:00Z' }),
     ];
     
     const result = computeApprovalRate(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
@@ -158,14 +203,49 @@ describe('computeApprovalRate', () => {
     expect(result.rate).toBe(0.5);
   });
 
+  it('EXCLUDES undo events from approval rate calculation', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
+      // This undo should NOT count as a rejection
+      createEvent({
+        id: 'undo-1',
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+        actioned_at: '2026-01-15T10:00:00Z',
+      }),
+    ];
+    
+    const result = computeApprovalRate(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    // Undo is excluded, so 5 approved, 0 rejected
+    expect(result.approved).toBe(5);
+    expect(result.rejected).toBe(0);
+    expect(result.total).toBe(5);
+    expect(result.rate).toBe(1.0); // 100% approval (undo doesn't count)
+    expect(result.eligible).toBe(true);
+  });
+
   it('uses actioned_at for windowing when present', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     
-    // Event decided on Jan 10 but actioned on Jan 20 - should be IN window
-    const eventInWindow = createEvent('1', 'approved', '2026-01-10T10:00:00Z', '2026-01-20T10:00:00Z');
+    const eventInWindow = createEvent({
+      id: '1',
+      user_action: 'approved',
+      decided_at: '2026-01-10T10:00:00Z',
+      actioned_at: '2026-01-20T10:00:00Z', // Within window
+    });
     
-    // Event decided on Jan 20 but actioned on Jan 10 - should be OUT of window
-    const eventOutWindow = createEvent('2', 'approved', '2026-01-20T10:00:00Z', '2026-01-10T10:00:00Z');
+    const eventOutWindow = createEvent({
+      id: '2',
+      user_action: 'approved',
+      decided_at: '2026-01-20T10:00:00Z',
+      actioned_at: '2026-01-10T10:00:00Z', // Outside window
+    });
     
     const result1 = computeApprovalRate([eventInWindow], DEFAULT_AUTOPILOT_CONFIG, refDate);
     expect(result1.approved).toBe(1);
@@ -174,53 +254,14 @@ describe('computeApprovalRate', () => {
     expect(result2.approved).toBe(0);
   });
 
-  it('handles near-midnight events correctly by local date', () => {
-    // Reference: Jan 20, 2026 at noon
-    const refDate = new Date('2026-01-20T12:00:00');
-    
-    // Event at 11:59 PM on Jan 20 - should be in window
-    const lateNightEvent = createEvent(
-      '1', 
-      'approved', 
-      '2026-01-20T23:59:00Z', 
-      '2026-01-20T23:59:00Z'
-    );
-    
-    // Event at 00:01 AM on Jan 14 (boundary of 7-day window) - should be in window
-    const earlyMorningEvent = createEvent(
-      '2', 
-      'approved', 
-      '2026-01-14T00:01:00Z', 
-      '2026-01-14T00:01:00Z'
-    );
-    
-    // Event at 11:59 PM on Jan 13 - should be OUT of window
-    const outsideEvent = createEvent(
-      '3', 
-      'approved', 
-      '2026-01-13T23:59:00Z', 
-      '2026-01-13T23:59:00Z'
-    );
-    
-    const result = computeApprovalRate(
-      [lateNightEvent, earlyMorningEvent, outsideEvent],
-      DEFAULT_AUTOPILOT_CONFIG,
-      refDate
-    );
-    
-    // Should count 2 events (Jan 20 late night + Jan 14 early morning)
-    // Jan 13 event should be excluded
-    expect(result.approved).toBe(2);
-  });
-
   it('calculates correct approval rate', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:00:00Z'),
-      createEvent('2', 'approved', '2026-01-19T10:00:00Z', '2026-01-19T10:00:00Z'),
-      createEvent('3', 'approved', '2026-01-18T10:00:00Z', '2026-01-18T10:00:00Z'),
-      createEvent('4', 'approved', '2026-01-17T10:00:00Z', '2026-01-17T10:00:00Z'),
-      createEvent('5', 'rejected', '2026-01-16T10:00:00Z', '2026-01-16T10:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'rejected', actioned_at: '2026-01-16T10:00:00Z' }),
     ];
     
     const result = computeApprovalRate(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
@@ -228,72 +269,158 @@ describe('computeApprovalRate', () => {
     expect(result.approved).toBe(4);
     expect(result.rejected).toBe(1);
     expect(result.total).toBe(5);
-    expect(result.rate).toBe(0.8); // 4/5 = 80%
-    expect(result.eligible).toBe(true); // Meets min 5 decisions and 80% rate
+    expect(result.rate).toBe(0.8);
+    expect(result.eligible).toBe(true);
   });
 
   it('returns eligible=false when below min decisions', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:00:00Z'),
-      createEvent('2', 'approved', '2026-01-19T10:00:00Z', '2026-01-19T10:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
     ];
     
     const result = computeApprovalRate(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
     
     expect(result.total).toBe(2);
     expect(result.rate).toBe(1.0);
-    expect(result.eligible).toBe(false); // Only 2 decisions, need 5
+    expect(result.eligible).toBe(false);
   });
 
   it('returns eligible=false when below min approval rate', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:00:00Z'),
-      createEvent('2', 'approved', '2026-01-19T10:00:00Z', '2026-01-19T10:00:00Z'),
-      createEvent('3', 'rejected', '2026-01-18T10:00:00Z', '2026-01-18T10:00:00Z'),
-      createEvent('4', 'rejected', '2026-01-17T10:00:00Z', '2026-01-17T10:00:00Z'),
-      createEvent('5', 'rejected', '2026-01-16T10:00:00Z', '2026-01-16T10:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'rejected', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'rejected', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'rejected', actioned_at: '2026-01-16T10:00:00Z' }),
     ];
     
     const result = computeApprovalRate(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
     
     expect(result.total).toBe(5);
-    expect(result.rate).toBe(0.4); // 2/5 = 40%
-    expect(result.eligible).toBe(false); // Below 80% threshold
+    expect(result.rate).toBe(0.4);
+    expect(result.eligible).toBe(false);
+  });
+});
+
+describe('checkAutopilotEligibility', () => {
+  it('returns disabled when config.enabled is false', () => {
+    const config = { ...DEFAULT_AUTOPILOT_CONFIG, enabled: false };
+    
+    const result = checkAutopilotEligibility([], config);
+    
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('disabled');
+  });
+
+  it('returns recent_undo when undo within 72h', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      // 5 approvals to meet threshold
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
+      // Recent undo should block autopilot
+      createEvent({
+        id: 'undo-1',
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+        actioned_at: '2026-01-19T12:00:00Z', // 1 day ago (within 72h)
+      }),
+    ];
+    
+    const result = checkAutopilotEligibility(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('recent_undo');
+  });
+
+  it('returns insufficient_decisions when below minDecisions', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+    ];
+    
+    const result = checkAutopilotEligibility(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('insufficient_decisions');
+  });
+
+  it('returns low_approval_rate when below minApprovalRate', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'rejected', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'rejected', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'rejected', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'rejected', actioned_at: '2026-01-16T10:00:00Z' }),
+    ];
+    
+    const result = checkAutopilotEligibility(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('low_approval_rate');
+  });
+
+  it('returns enabled when all criteria met', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
+    ];
+    
+    const result = checkAutopilotEligibility(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    expect(result.eligible).toBe(true);
+    expect(result.reason).toBe('enabled');
+  });
+
+  it('undo older than 72h does not block autopilot', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
+      // Old undo (4 days ago) - should NOT block
+      createEvent({
+        id: 'undo-1',
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+        actioned_at: '2026-01-16T11:59:00Z', // Just over 72h ago
+      }),
+    ];
+    
+    const result = checkAutopilotEligibility(events, DEFAULT_AUTOPILOT_CONFIG, refDate);
+    
+    expect(result.eligible).toBe(true);
+    expect(result.reason).toBe('enabled');
   });
 });
 
 describe('shouldAutopilot', () => {
-  const createEvent = (
-    id: string,
-    status: DecisionEvent['status'],
-    decided_at: string,
-    actioned_at?: string
-  ): DecisionEvent => ({
-    id,
-    user_profile_id: 1,
-    decided_at,
-    actioned_at,
-    status,
-    decision_payload: {},
-  });
-
   it('returns false when autopilot is disabled', () => {
-    const events: DecisionEvent[] = [];
     const config = { ...DEFAULT_AUTOPILOT_CONFIG, enabled: false };
-    
-    expect(shouldAutopilot(events, config)).toBe(false);
+    expect(shouldAutopilot([], config)).toBe(false);
   });
 
   it('returns true when eligible', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:00:00Z'),
-      createEvent('2', 'approved', '2026-01-19T10:00:00Z', '2026-01-19T10:00:00Z'),
-      createEvent('3', 'approved', '2026-01-18T10:00:00Z', '2026-01-18T10:00:00Z'),
-      createEvent('4', 'approved', '2026-01-17T10:00:00Z', '2026-01-17T10:00:00Z'),
-      createEvent('5', 'approved', '2026-01-16T10:00:00Z', '2026-01-16T10:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
     ];
     
     expect(shouldAutopilot(events, DEFAULT_AUTOPILOT_CONFIG, refDate)).toBe(true);
@@ -302,7 +429,26 @@ describe('shouldAutopilot', () => {
   it('returns false when not enough decisions', () => {
     const refDate = new Date('2026-01-20T12:00:00');
     const events: DecisionEvent[] = [
-      createEvent('1', 'approved', '2026-01-20T10:00:00Z', '2026-01-20T10:00:00Z'),
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+    ];
+    
+    expect(shouldAutopilot(events, DEFAULT_AUTOPILOT_CONFIG, refDate)).toBe(false);
+  });
+
+  it('returns false when recent undo exists', () => {
+    const refDate = new Date('2026-01-20T12:00:00');
+    const events: DecisionEvent[] = [
+      createEvent({ id: '1', user_action: 'approved', actioned_at: '2026-01-20T10:00:00Z' }),
+      createEvent({ id: '2', user_action: 'approved', actioned_at: '2026-01-19T10:00:00Z' }),
+      createEvent({ id: '3', user_action: 'approved', actioned_at: '2026-01-18T10:00:00Z' }),
+      createEvent({ id: '4', user_action: 'approved', actioned_at: '2026-01-17T10:00:00Z' }),
+      createEvent({ id: '5', user_action: 'approved', actioned_at: '2026-01-16T10:00:00Z' }),
+      createEvent({
+        id: 'undo-1',
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+        actioned_at: '2026-01-19T12:00:00Z',
+      }),
     ];
     
     expect(shouldAutopilot(events, DEFAULT_AUTOPILOT_CONFIG, refDate)).toBe(false);

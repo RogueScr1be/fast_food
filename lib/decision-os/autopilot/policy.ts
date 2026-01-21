@@ -3,9 +3,14 @@
  * 
  * Computes approval rate using LOCAL DATE windowing (not UTC timestamps).
  * This ensures consistent behavior regardless of timezone.
+ * 
+ * UNDO THROTTLING:
+ * - Recent undo (within 72h) blocks autopilot
+ * - Undo events do NOT affect approval rate calculation
  */
 
 import type { DecisionEvent, ApprovalRateResult, AutopilotConfig } from '../../../types/decision-os';
+import { NOTES } from '../feedback/handler';
 
 /**
  * Default autopilot configuration
@@ -16,6 +21,21 @@ export const DEFAULT_AUTOPILOT_CONFIG: AutopilotConfig = {
   minDecisions: 5,       // Minimum 5 decisions in window
   windowDays: 7,         // 7-day rolling window
 };
+
+/**
+ * Recent undo window in hours.
+ * If an undo occurred within this window, autopilot is blocked.
+ */
+export const RECENT_UNDO_WINDOW_HOURS = 72;
+
+/**
+ * Autopilot eligibility result with detailed reason.
+ */
+export interface AutopilotEligibility {
+  eligible: boolean;
+  reason: 'enabled' | 'disabled' | 'insufficient_decisions' | 'low_approval_rate' | 'recent_undo';
+  approvalRate?: ApprovalRateResult;
+}
 
 /**
  * Regex to validate ISO date format at start of string.
@@ -84,9 +104,53 @@ export function getEventTimestamp(event: DecisionEvent): string {
 }
 
 /**
+ * Checks if an event is an undo event (notes='undo_autopilot').
+ * 
+ * @param event - Decision event
+ * @returns True if undo event
+ */
+export function isUndoEvent(event: DecisionEvent): boolean {
+  return event.user_action === 'rejected' && event.notes === NOTES.UNDO_AUTOPILOT;
+}
+
+/**
+ * Checks if there's a recent undo within the specified window.
+ * 
+ * @param events - Array of decision events
+ * @param windowHours - Window in hours (default: 72)
+ * @param referenceDate - Reference date (default: now)
+ * @returns True if recent undo exists
+ */
+export function hasRecentUndo(
+  events: DecisionEvent[],
+  windowHours: number = RECENT_UNDO_WINDOW_HOURS,
+  referenceDate?: Date
+): boolean {
+  const now = referenceDate ?? new Date();
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const cutoffMs = now.getTime() - windowMs;
+  
+  for (const event of events) {
+    if (!isUndoEvent(event)) {
+      continue;
+    }
+    
+    const eventTimestamp = getEventTimestamp(event);
+    const eventTime = new Date(eventTimestamp).getTime();
+    
+    if (eventTime >= cutoffMs) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Computes the approval rate for a user within the local-date window.
  * 
- * Only counts events with status 'approved' or 'rejected'.
+ * Only counts events with user_action 'approved' or 'rejected'.
+ * EXCLUDES undo events (notes='undo_autopilot') from the count.
  * Ignores 'pending', 'expired', and 'drm_triggered' statuses.
  * 
  * @param events - Array of decision events for the user
@@ -105,8 +169,13 @@ export function computeApprovalRate(
   let rejected = 0;
   
   for (const event of events) {
-    // Only count approved or rejected events
-    if (event.status !== 'approved' && event.status !== 'rejected') {
+    // SKIP undo events - they are autonomy penalties, not taste signals
+    if (isUndoEvent(event)) {
+      continue;
+    }
+    
+    // Only count approved or rejected user_actions
+    if (event.user_action !== 'approved' && event.user_action !== 'rejected') {
       continue;
     }
     
@@ -119,10 +188,10 @@ export function computeApprovalRate(
       continue;
     }
     
-    // Count by status
-    if (event.status === 'approved') {
+    // Count by user_action
+    if (event.user_action === 'approved') {
       approved++;
-    } else if (event.status === 'rejected') {
+    } else if (event.user_action === 'rejected') {
       rejected++;
     }
   }
@@ -165,10 +234,68 @@ export function shouldAutopilot(
   config: AutopilotConfig = DEFAULT_AUTOPILOT_CONFIG,
   referenceDate?: Date
 ): boolean {
+  const eligibility = checkAutopilotEligibility(events, config, referenceDate);
+  return eligibility.eligible;
+}
+
+/**
+ * Checks autopilot eligibility with detailed reason.
+ * 
+ * Gates (in order):
+ * 1. Config enabled
+ * 2. No recent undo (within 72h)
+ * 3. Minimum decisions met
+ * 4. Minimum approval rate met
+ * 
+ * @param events - User's historical decision events
+ * @param config - Autopilot configuration
+ * @param referenceDate - Reference date for window calculation
+ * @returns AutopilotEligibility with eligible flag and reason
+ */
+export function checkAutopilotEligibility(
+  events: DecisionEvent[],
+  config: AutopilotConfig = DEFAULT_AUTOPILOT_CONFIG,
+  referenceDate?: Date
+): AutopilotEligibility {
+  // Gate 1: Config enabled
   if (!config.enabled) {
-    return false;
+    return {
+      eligible: false,
+      reason: 'disabled',
+    };
   }
   
-  const result = computeApprovalRate(events, config, referenceDate);
-  return result.eligible;
+  // Gate 2: No recent undo (within 72h)
+  // This is the "earned autonomy" throttle
+  if (hasRecentUndo(events, RECENT_UNDO_WINDOW_HOURS, referenceDate)) {
+    return {
+      eligible: false,
+      reason: 'recent_undo',
+    };
+  }
+  
+  // Gate 3 & 4: Approval rate
+  const approvalRate = computeApprovalRate(events, config, referenceDate);
+  
+  if (approvalRate.total < config.minDecisions) {
+    return {
+      eligible: false,
+      reason: 'insufficient_decisions',
+      approvalRate,
+    };
+  }
+  
+  if (approvalRate.rate < config.minApprovalRate) {
+    return {
+      eligible: false,
+      reason: 'low_approval_rate',
+      approvalRate,
+    };
+  }
+  
+  return {
+    eligible: true,
+    reason: 'enabled',
+    approvalRate,
+  };
 }

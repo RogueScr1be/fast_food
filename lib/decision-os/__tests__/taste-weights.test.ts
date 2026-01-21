@@ -3,12 +3,27 @@ import {
   getBaseWeight,
   isAfter8pm,
   clamp,
+  shouldSkipTasteMealScores,
   BASE_WEIGHTS,
   STRESS_MULTIPLIER,
   WEIGHT_MIN,
   WEIGHT_MAX,
 } from '../taste/weights';
-import type { DecisionEvent } from '../../../types/decision-os';
+import { NOTES } from '../feedback/handler';
+import type { DecisionEvent, DecisionEventInsert } from '../../../types/decision-os';
+
+/**
+ * Helper to create a schema-true event (using user_action, not status)
+ */
+function createEvent(overrides: Partial<DecisionEvent> = {}): DecisionEvent {
+  return {
+    id: '1',
+    user_profile_id: 1,
+    decided_at: '2026-01-20T10:00:00Z',
+    decision_payload: {},
+    ...overrides,
+  };
+}
 
 describe('isAfter8pm', () => {
   it('returns false for morning times', () => {
@@ -55,227 +70,136 @@ describe('clamp', () => {
 
 describe('getBaseWeight', () => {
   it('returns +1.0 for approved', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'approved',
-      decision_payload: {},
-    };
+    const event = createEvent({ user_action: 'approved' });
     expect(getBaseWeight(event)).toBe(BASE_WEIGHTS.approved);
     expect(getBaseWeight(event)).toBe(1.0);
   });
 
   it('returns -1.0 for rejected', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'rejected',
-      decision_payload: {},
-    };
+    const event = createEvent({ user_action: 'rejected' });
     expect(getBaseWeight(event)).toBe(BASE_WEIGHTS.rejected);
     expect(getBaseWeight(event)).toBe(-1.0);
   });
 
   it('returns -0.5 for drm_triggered', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'drm_triggered',
-      decision_payload: {},
-    };
+    const event = createEvent({ user_action: 'drm_triggered' });
     expect(getBaseWeight(event)).toBe(BASE_WEIGHTS.drm_triggered);
     expect(getBaseWeight(event)).toBe(-0.5);
   });
 
-  it('returns -0.2 for expired', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'expired',
-      decision_payload: {},
-    };
+  it('returns -0.2 for expired (runtime status)', () => {
+    const event = createEvent({ _runtime_status: 'expired' });
     expect(getBaseWeight(event)).toBe(BASE_WEIGHTS.expired);
     expect(getBaseWeight(event)).toBe(-0.2);
   });
 
   it('returns -0.5 for undo (autonomy penalty)', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'rejected',
-      decision_payload: {},
-      notes: 'undo_autopilot',
-    };
+    const event = createEvent({
+      user_action: 'rejected',
+      notes: NOTES.UNDO_AUTOPILOT,
+    });
     expect(getBaseWeight(event)).toBe(BASE_WEIGHTS.undo);
     expect(getBaseWeight(event)).toBe(-0.5);
   });
 
-  it('returns 0 for pending', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'pending',
-      decision_payload: {},
-    };
+  it('returns 0 for events without user_action', () => {
+    const event = createEvent({});
     expect(getBaseWeight(event)).toBe(0);
-  });
-
-  it('uses user_action if available', () => {
-    const event: DecisionEvent = {
-      id: '1',
-      user_profile_id: 1,
-      decided_at: '2026-01-20T10:00:00Z',
-      status: 'pending', // Status says pending
-      user_action: 'approved', // But user_action says approved
-      decision_payload: {},
-    };
-    expect(getBaseWeight(event)).toBe(1.0);
   });
 });
 
 describe('computeTasteWeight', () => {
   describe('base weights without stress multiplier', () => {
     it('approved => +1.0', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T12:00:00Z', // Before 8pm
-        status: 'approved',
-        decision_payload: {},
-      };
+        user_action: 'approved',
+      });
       expect(computeTasteWeight(event)).toBe(1.0);
     });
 
     it('rejected => -1.0', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T12:00:00Z',
-        status: 'rejected',
-        decision_payload: {},
-      };
+        user_action: 'rejected',
+      });
       expect(computeTasteWeight(event)).toBe(-1.0);
     });
 
     it('drm_triggered => -0.5', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T12:00:00Z',
-        status: 'drm_triggered',
-        decision_payload: {},
-      };
+        user_action: 'drm_triggered',
+      });
       expect(computeTasteWeight(event)).toBe(-0.5);
     });
 
     it('expired => -0.2', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T12:00:00Z',
-        status: 'expired',
-        decision_payload: {},
-      };
+        _runtime_status: 'expired',
+      });
       expect(computeTasteWeight(event)).toBe(-0.2);
     });
 
     it('undo => -0.5 (autonomy penalty)', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T12:00:00Z',
-        status: 'rejected',
-        decision_payload: {},
-        notes: 'undo_autopilot',
-      };
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+      });
       expect(computeTasteWeight(event)).toBe(-0.5);
     });
 
-    it('pending => 0', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
-        status: 'pending',
-        decision_payload: {},
-      };
+    it('no user_action => 0', () => {
+      const event = createEvent({});
       expect(computeTasteWeight(event)).toBe(0);
     });
   });
 
   describe('stress multiplier after 8pm', () => {
     it('approved after 8pm => +1.10', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T21:00:00Z', // 9pm
-        status: 'approved',
-        decision_payload: {},
-      };
+        user_action: 'approved',
+      });
       expect(computeTasteWeight(event)).toBeCloseTo(1.0 * STRESS_MULTIPLIER);
       expect(computeTasteWeight(event)).toBeCloseTo(1.10);
     });
 
     it('rejected after 8pm => -1.10', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T20:30:00Z', // 8:30pm
-        status: 'rejected',
-        decision_payload: {},
-      };
+        user_action: 'rejected',
+      });
       expect(computeTasteWeight(event)).toBeCloseTo(-1.0 * STRESS_MULTIPLIER);
       expect(computeTasteWeight(event)).toBeCloseTo(-1.10);
     });
 
     it('undo after 8pm => -0.55 (autonomy penalty with stress)', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T21:00:00Z', // 9pm
-        status: 'rejected',
-        decision_payload: {},
-        notes: 'undo_autopilot',
-      };
+        user_action: 'rejected',
+        notes: NOTES.UNDO_AUTOPILOT,
+      });
       expect(computeTasteWeight(event)).toBeCloseTo(-0.5 * STRESS_MULTIPLIER);
       expect(computeTasteWeight(event)).toBeCloseTo(-0.55);
     });
 
     it('drm_triggered after 8pm => -0.55', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T20:00:00Z', // Exactly 8pm
-        status: 'drm_triggered',
-        decision_payload: {},
-      };
+        user_action: 'drm_triggered',
+      });
       expect(computeTasteWeight(event)).toBeCloseTo(-0.5 * STRESS_MULTIPLIER);
       expect(computeTasteWeight(event)).toBeCloseTo(-0.55);
     });
 
     it('expired after 8pm => -0.22', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
+      const event = createEvent({
         decided_at: '2026-01-20T20:00:00Z', // Decided at 8pm
-        status: 'expired',
-        decision_payload: {},
-      };
+        _runtime_status: 'expired',
+      });
       expect(computeTasteWeight(event)).toBeCloseTo(-0.2 * STRESS_MULTIPLIER);
       expect(computeTasteWeight(event)).toBeCloseTo(-0.22);
     });
@@ -283,7 +207,6 @@ describe('computeTasteWeight', () => {
 
   describe('clamping to [-2, 2]', () => {
     it('clamps extreme positive values to 2', () => {
-      // This test verifies clamping works, even though normal values won't exceed bounds
       expect(clamp(5, WEIGHT_MIN, WEIGHT_MAX)).toBe(2);
     });
 
@@ -292,14 +215,10 @@ describe('computeTasteWeight', () => {
     });
 
     it('normal weights are within bounds', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
-        decided_at: '2026-01-20T10:00:00Z',
+      const event = createEvent({
         actioned_at: '2026-01-20T21:00:00Z',
-        status: 'rejected',
-        decision_payload: {},
-      };
+        user_action: 'rejected',
+      });
       const weight = computeTasteWeight(event);
       expect(weight).toBeGreaterThanOrEqual(WEIGHT_MIN);
       expect(weight).toBeLessThanOrEqual(WEIGHT_MAX);
@@ -308,37 +227,65 @@ describe('computeTasteWeight', () => {
 
   describe('timestamp precedence', () => {
     it('uses actioned_at for stress calculation when available', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
+      const event = createEvent({
         decided_at: '2026-01-20T10:00:00Z', // Morning
         actioned_at: '2026-01-20T21:00:00Z', // Evening (after 8pm)
-        status: 'approved',
-        decision_payload: {},
-      };
+        user_action: 'approved',
+      });
       // Should use actioned_at (9pm) => stress multiplier applies
       expect(computeTasteWeight(event)).toBeCloseTo(1.10);
     });
 
     it('falls back to decided_at when actioned_at missing', () => {
-      const event: DecisionEvent = {
-        id: '1',
-        user_profile_id: 1,
+      const event = createEvent({
         decided_at: '2026-01-20T21:00:00Z', // Evening
-        status: 'expired',
-        decision_payload: {},
-      };
+        _runtime_status: 'expired',
+      });
       // Should use decided_at (9pm) => stress multiplier applies
       expect(computeTasteWeight(event)).toBeCloseTo(-0.22);
     });
   });
 });
 
+describe('shouldSkipTasteMealScores', () => {
+  it('returns true for undo events', () => {
+    const event = createEvent({
+      user_action: 'rejected',
+      notes: NOTES.UNDO_AUTOPILOT,
+    });
+    
+    expect(shouldSkipTasteMealScores(event)).toBe(true);
+  });
+
+  it('returns false for regular rejection', () => {
+    const event = createEvent({
+      user_action: 'rejected',
+    });
+    
+    expect(shouldSkipTasteMealScores(event)).toBe(false);
+  });
+
+  it('returns false for approved', () => {
+    const event = createEvent({
+      user_action: 'approved',
+    });
+    
+    expect(shouldSkipTasteMealScores(event)).toBe(false);
+  });
+
+  it('returns false for autopilot approval', () => {
+    const event = createEvent({
+      user_action: 'approved',
+      notes: NOTES.AUTOPILOT,
+    });
+    
+    expect(shouldSkipTasteMealScores(event)).toBe(false);
+  });
+});
+
 describe('Weight semantics documentation', () => {
   it('documents that undo is autonomy penalty, NOT taste rejection', () => {
-    // This test documents the intentional design:
     // Undo weight is -0.5 (same as drm_triggered), NOT -1.0 (rejected)
-    // Because the user may actually like the food; they just didn't want autopilot
     expect(BASE_WEIGHTS.undo).toBe(-0.5);
     expect(BASE_WEIGHTS.rejected).toBe(-1.0);
     expect(BASE_WEIGHTS.undo).not.toBe(BASE_WEIGHTS.rejected);

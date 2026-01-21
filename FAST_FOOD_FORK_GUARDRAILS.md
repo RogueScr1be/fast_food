@@ -35,9 +35,14 @@ This document defines the constraints and guardrails for the Decision OS impleme
 
 ### Undo Weight Semantics
 
-**Undo is an autonomy penalty signal (-0.5), not a taste rejection.**
+**Undo is an autonomy penalty (-0.5) and does not reduce taste scores.**
 
 The user may actually like the food choice; they just didn't want it auto-applied this time. Using -0.5 (same as `drm_triggered`) instead of -1.0 (full rejection) preserves this distinction.
+
+Undo behavior:
+- Inserts `taste_signal` with weight -0.5 (autonomy penalty)
+- Does NOT update `taste_meal_scores` (score/approvals/rejections unchanged)
+- This slows autopilot without changing meal preferences
 
 ### Stress Multiplier
 
@@ -50,24 +55,43 @@ Examples:
 ## Undo Behavior
 
 1. **Window**: 10 minutes from autopilot action
-2. **Eligibility**: Only autopilot-approved events can be undone
+2. **Eligibility**: Only autopilot-approved events can be undone (notes='autopilot')
 3. **Append-Only**: Creates new `decision_events` row with:
-   - `user_action = 'undo'`
-   - `status = 'rejected'`
-   - `notes = 'undo_autopilot'`
-   - `is_autopilot = false`
+   - `user_action = 'rejected'` (NOT 'undo')
+   - `notes = 'undo_autopilot'` (this is the only undo marker)
 4. **Idempotency**: Multiple undo requests create only one undo copy
 5. **Consumption**: v1 does NOT reverse consumption (documented limitation)
+6. **Throttles Autopilot**: Recent undo (within 72h) blocks autopilot (reason: 'recent_undo')
 
-## DB Column Mapping
+**Undo is persisted as `user_action='rejected'` with `notes='undo_autopilot'`.**
 
-When processing feedback, ensure these columns are set correctly:
+## Autopilot Behavior
 
-| Field | Description |
-|-------|-------------|
-| `user_action` | The client's submitted action (approved/rejected/drm_triggered/undo) |
-| `status` | Internal status for DB queries (maps from user_action) |
-| `is_autopilot` | `false` for all user-submitted feedback (including undo) |
-| `notes` | `'undo_autopilot'` for undo actions |
-| `actioned_at` | ISO timestamp when user acted (required) |
-| `decided_at` | Copied from original event |
+1. **Approval Marker**: Autopilot approvals are marked via `notes='autopilot'` on the feedback-copy row
+2. **Double-Learn Prevention**: If autopilot already approved, later client approval is no-op
+3. **Throttling**: Recent undo (72h window) blocks autopilot eligibility
+4. **Approval Rate**: Undo events are EXCLUDED from approval rate calculation
+
+**Autopilot approvals are marked via `notes='autopilot'` on the feedback-copy row.**
+
+## DB Column Mapping (Schema-True)
+
+**ACTUAL DB COLUMNS** (no phantom fields):
+
+| Column | Description |
+|--------|-------------|
+| `id` | Unique event ID |
+| `user_profile_id` | User's profile ID |
+| `decided_at` | ISO timestamp when decision was made |
+| `actioned_at` | ISO timestamp when user acted (required for feedback) |
+| `user_action` | `'approved'` \| `'rejected'` \| `'drm_triggered'` |
+| `notes` | `'undo_autopilot'` or `'autopilot'` |
+| `decision_payload` | JSON payload |
+| `decision_type` | Type of decision |
+| `meal_id` | Meal ID |
+| `context_hash` | Context hash |
+
+**NON-DB FIELDS** (runtime only, prefixed with `_runtime_`):
+- `_runtime_status`, `_runtime_is_autopilot`, `_runtime_is_feedback_copy`, `_runtime_original_event_id`
+
+These are used for in-memory processing but NOT written to DB.

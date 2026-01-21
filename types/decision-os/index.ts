@@ -11,36 +11,78 @@
  * 
  * NOTE: 'modified' is BANNED - clients cannot submit modified actions.
  * NOTE: 'expired' and 'pending' are internal-only statuses, not client actions.
+ * NOTE: 'undo' is accepted from client but persisted as user_action='rejected' with notes='undo_autopilot'
  */
-export type UserAction = 'approved' | 'rejected' | 'drm_triggered' | 'undo';
+export type ClientUserAction = 'approved' | 'rejected' | 'drm_triggered' | 'undo';
 
 /**
- * Internal decision status (not for client submission).
+ * DB-persisted user_action values.
+ * NOTE: 'undo' is NOT persisted - it maps to 'rejected' with notes='undo_autopilot'
  */
-export type DecisionStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'drm_triggered';
+export type PersistedUserAction = 'approved' | 'rejected' | 'drm_triggered';
 
+/**
+ * Notes markers for special event types.
+ */
+export const NOTES_MARKERS = {
+  UNDO_AUTOPILOT: 'undo_autopilot',  // Marks undo events (user_action='rejected')
+  AUTOPILOT: 'autopilot',             // Marks autopilot-generated approvals
+} as const;
+
+/**
+ * Decision event as stored in the DB.
+ * 
+ * ACTUAL DB COLUMNS (do not add phantom fields):
+ * - id, user_profile_id, decided_at, actioned_at
+ * - user_action: 'approved' | 'rejected' | 'drm_triggered'
+ * - notes: string (markers: 'undo_autopilot', 'autopilot')
+ * - decision_payload: jsonb
+ * - decision_type, meal_id, context_hash
+ * 
+ * NON-DB FIELDS (runtime only, not persisted):
+ * - status, is_autopilot, is_feedback_copy, original_event_id
+ */
 export interface DecisionEvent {
+  // === DB COLUMNS ===
   id: string;
   user_profile_id: number;
   decided_at: string; // ISO timestamp
   actioned_at?: string; // ISO timestamp when user acted
-  status: DecisionStatus; // Internal status for DB queries
-  user_action?: UserAction; // The client's submitted action (DB column)
+  user_action?: PersistedUserAction; // DB column: 'approved' | 'rejected' | 'drm_triggered'
+  notes?: string; // Markers: 'undo_autopilot' or 'autopilot'
   decision_payload: Record<string, unknown>;
-  is_feedback_copy?: boolean;
-  original_event_id?: string; // References the original pending event for feedback copies
-  is_autopilot?: boolean; // True if this was an autopilot-approved event (false/omitted for undo)
-  notes?: string; // Optional notes (e.g., 'undo_autopilot')
-  // Additional fields copied from original event for append-only inserts:
   decision_type?: string;
   meal_id?: number;
   context_hash?: string;
+  
+  // === RUNTIME ONLY (not persisted to DB) ===
+  // These fields are used for in-memory processing but NOT written to DB
+  _runtime_status?: 'pending' | 'approved' | 'rejected' | 'expired' | 'drm_triggered';
+  _runtime_is_autopilot?: boolean;
+  _runtime_is_feedback_copy?: boolean;
+  _runtime_original_event_id?: string;
 }
 
 export interface FeedbackRequest {
   eventId: string;
-  userAction: UserAction;
-  // NOTE: modifiedPayload removed - 'modified' action is BANNED
+  userAction: ClientUserAction; // Client can send 'undo', but it persists as 'rejected'
+}
+
+/**
+ * Row to be inserted into decision_events table.
+ * Contains ONLY DB columns - no runtime fields.
+ */
+export interface DecisionEventInsert {
+  id: string;
+  user_profile_id: number;
+  decided_at: string;
+  actioned_at: string;
+  user_action: PersistedUserAction;
+  notes?: string;
+  decision_payload: Record<string, unknown>;
+  decision_type?: string;
+  meal_id?: number;
+  context_hash?: string;
 }
 
 /**
