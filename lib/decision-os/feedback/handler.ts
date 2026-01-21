@@ -69,26 +69,44 @@ export function isWithinUndoWindow(event: DecisionEvent, nowMs: number = Date.no
 /**
  * Checks if an event is an autopilot-approved event (via notes marker).
  * 
- * Autopilot events are identified by: user_action='approved' AND notes='autopilot'
+ * CANONICAL MARKER: user_action='approved' AND notes='autopilot'
  * This is schema-true - no phantom is_autopilot column.
  * 
  * @param event - The decision event to check
  * @returns True if this is an autopilot-approved event
  */
-export function isAutopilotEvent(event: DecisionEvent): boolean {
+export function isAutopilotEvent(event: DecisionEvent | DecisionEventInsert): boolean {
   return event.user_action === 'approved' && event.notes === NOTES.AUTOPILOT;
+}
+
+/**
+ * Alias for isAutopilotEvent - clearer naming for predicate usage.
+ * 
+ * CANONICAL MARKER: user_action='approved' AND notes='autopilot'
+ */
+export function isAutopilotApprovalEvent(event: DecisionEvent | DecisionEventInsert): boolean {
+  return isAutopilotEvent(event);
 }
 
 /**
  * Checks if an event is an undo event (via notes marker).
  * 
- * Undo events are identified by: user_action='rejected' AND notes='undo_autopilot'
+ * CANONICAL MARKER: user_action='rejected' AND notes='undo_autopilot'
  * 
  * @param event - The decision event to check
  * @returns True if this is an undo event
  */
-export function isUndoEvent(event: DecisionEvent): boolean {
+export function isUndoEvent(event: DecisionEvent | DecisionEventInsert): boolean {
   return event.user_action === 'rejected' && event.notes === NOTES.UNDO_AUTOPILOT;
+}
+
+/**
+ * Alias for isUndoEvent - clearer naming for predicate usage.
+ * 
+ * CANONICAL MARKER: user_action='rejected' AND notes='undo_autopilot'
+ */
+export function isUndoAutopilotEvent(event: DecisionEvent | DecisionEventInsert): boolean {
+  return isUndoEvent(event);
 }
 
 /**

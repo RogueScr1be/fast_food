@@ -1,7 +1,7 @@
 /**
  * Receipt Import API Endpoint
  * 
- * POST /api/decision-os/receipt-import
+ * POST /api/decision-os/receipt/import
  * 
  * Request body:
  * {
@@ -21,8 +21,8 @@
  * - No arrays exposed in response
  */
 
-import { processReceiptImport } from '../../../lib/decision-os/receipt/handler';
-import type { ReceiptImportRequest, ReceiptImportResponse } from '../../../types/decision-os';
+import { processReceiptImport } from '../../../../lib/decision-os/receipt/handler';
+import type { ReceiptImportRequest, ReceiptImportResponse } from '../../../../types/decision-os';
 
 /**
  * Validate request body
