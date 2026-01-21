@@ -130,6 +130,44 @@ Set these in Vercel project settings (Settings → Environment Variables):
 | `OCR_PROVIDER` | No | `none` or `google_vision` |
 | `OCR_API_KEY` | If OCR enabled | Google Vision API key |
 
+### Decision OS Kill Switches (Feature Flags)
+
+Hard kill switches with fail-closed behavior. All default to `"false"` in production when not set.
+
+| Variable | Default (prod) | Default (dev) | Description |
+|----------|----------------|---------------|-------------|
+| `DECISION_OS_ENABLED` | `false` | `true` | Master kill switch - disables all Decision OS endpoints |
+| `DECISION_AUTOPILOT_ENABLED` | `false` | `true` | Autopilot feature - automatic meal approvals |
+| `DECISION_OCR_ENABLED` | `false` | `false` | OCR feature - receipt scanning (always defaults false) |
+| `DECISION_DRM_ENABLED` | `false` | `true` | DRM feature - Dinner Rescue Mode |
+
+**Values**: Use string `"true"` or `"false"`. Case-insensitive.
+
+**Behavior when disabled**:
+
+| Flag | Disabled Behavior |
+|------|-------------------|
+| `DECISION_OS_ENABLED=false` | All Decision OS endpoints return `401 { error: 'unauthorized' }` |
+| `DECISION_AUTOPILOT_ENABLED=false` | Autopilot evaluation skipped; no autopilot copies inserted |
+| `DECISION_OCR_ENABLED=false` | Receipt import returns `{ receiptImportId, status: 'failed' }` (200 OK) |
+| `DECISION_DRM_ENABLED=false` | DRM endpoint returns `{ drmActivated: false }` (200 OK) |
+
+**Production recommendations**:
+
+```bash
+# Minimum viable production (fail-closed):
+DECISION_OS_ENABLED=true
+DECISION_AUTOPILOT_ENABLED=true
+DECISION_DRM_ENABLED=true
+# OCR_ENABLED only if OCR_API_KEY is configured
+DECISION_OCR_ENABLED=false
+
+# Emergency shutdown (all features off):
+DECISION_OS_ENABLED=false
+```
+
+**Cascade behavior**: Feature flags (`autopilot`, `ocr`, `drm`) are only effective when `DECISION_OS_ENABLED=true`. If master is disabled, all features are disabled regardless of their individual settings.
+
 ### How to Get SUPABASE_JWT_SECRET
 
 1. Supabase dashboard → Project Settings → API

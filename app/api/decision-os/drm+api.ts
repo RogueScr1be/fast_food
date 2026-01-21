@@ -33,6 +33,7 @@
 import { getDb } from '../../../lib/decision-os/db/client';
 import { validateDrmResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
+import { isDecisionOsEnabled, isDrmEnabled } from '../../../lib/decision-os/config/flags';
 import type { DecisionEventInsert, DrmResponse } from '../../../types/decision-os';
 
 interface DrmRequest {
@@ -101,6 +102,19 @@ function buildResponse(drmActivated: boolean): DrmResponse {
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // KILL SWITCH: Check if Decision OS is enabled
+    if (!isDecisionOsEnabled()) {
+      // Return 401 unauthorized when Decision OS is disabled
+      return buildErrorResponse('unauthorized');
+    }
+    
+    // KILL SWITCH: Check if DRM feature is enabled
+    if (!isDrmEnabled()) {
+      // Return canonical response with drmActivated: false
+      const response = buildResponse(false);
+      return Response.json(response, { status: 200 });
+    }
+    
     // Authenticate request
     const authHeader = request.headers.get('Authorization');
     const authResult = await authenticateRequest(authHeader);

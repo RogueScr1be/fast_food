@@ -35,6 +35,7 @@ import {
 import { computeTasteWeight } from '../../../lib/decision-os/taste/weights';
 import { validateFeedbackResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
+import { isDecisionOsEnabled } from '../../../lib/decision-os/config/flags';
 
 /**
  * Valid client-submitted actions.
@@ -148,6 +149,12 @@ function buildSuccessResponse(): Response {
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // KILL SWITCH: Check if Decision OS is enabled
+    if (!isDecisionOsEnabled()) {
+      // Return 401 unauthorized when Decision OS is disabled
+      return buildErrorResponse('unauthorized');
+    }
+    
     // Authenticate request
     const authHeader = request.headers.get('Authorization');
     const authResult = await authenticateRequest(authHeader);

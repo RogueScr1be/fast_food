@@ -32,6 +32,7 @@
 import { processReceiptImport } from '../../../../lib/decision-os/receipt/handler';
 import { validateReceiptImportResponse, validateErrorResponse } from '../../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
+import { isDecisionOsEnabled, isOcrEnabled } from '../../../../lib/decision-os/config/flags';
 import type { ReceiptImportResponse } from '../../../../types/decision-os';
 
 interface ReceiptRequest {
@@ -82,10 +83,25 @@ function buildSuccessResponse(receiptImportId: string, status: ReceiptImportResp
 }
 
 /**
+ * Generate a unique receipt import ID (used when OCR is disabled)
+ */
+function generateReceiptImportId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `rec-${timestamp}-${random}`;
+}
+
+/**
  * POST handler for receipt import
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // KILL SWITCH: Check if Decision OS is enabled
+    if (!isDecisionOsEnabled()) {
+      // Return 401 unauthorized when Decision OS is disabled
+      return buildErrorResponse('unauthorized');
+    }
+    
     // Authenticate request
     const authHeader = request.headers.get('Authorization');
     const authResult = await authenticateRequest(authHeader);
@@ -103,6 +119,14 @@ export async function POST(request: Request): Promise<Response> {
     if (!validatedRequest) {
       // Invalid request - return failed status (best-effort, no 400)
       return buildSuccessResponse('', 'failed');
+    }
+    
+    // KILL SWITCH: Check if OCR feature is enabled
+    if (!isOcrEnabled()) {
+      // Return canonical failed response (still 200 OK)
+      // Generate a receipt import ID for tracking even when OCR is disabled
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'failed');
     }
     
     // Process the receipt import

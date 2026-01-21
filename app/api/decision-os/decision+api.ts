@@ -39,6 +39,7 @@ import { checkAutopilotEligibility } from '../../../lib/decision-os/autopilot/po
 import { createAutopilotApproval, hasAutopilotApproval } from '../../../lib/decision-os/feedback/handler';
 import { validateDecisionResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest, type AuthContext } from '../../../lib/decision-os/auth/helper';
+import { isDecisionOsEnabled, isAutopilotEnabled } from '../../../lib/decision-os/config/flags';
 import type { DecisionResponse, DecisionEvent } from '../../../types/decision-os';
 
 interface DecisionRequest {
@@ -164,6 +165,12 @@ function buildResponse(
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // KILL SWITCH: Check if Decision OS is enabled
+    if (!isDecisionOsEnabled()) {
+      // Return 401 unauthorized when Decision OS is disabled
+      return buildErrorResponse('unauthorized');
+    }
+    
     // Authenticate request
     const authHeader = request.headers.get('Authorization');
     const authResult = await authenticateRequest(authHeader);
@@ -200,8 +207,11 @@ export async function POST(request: Request): Promise<Response> {
     const contextHash = generateContextHash(userProfileId, context);
     const nowIso = new Date().toISOString();
     
-    // Check autopilot eligibility
-    const autopilotEligibility = checkAutopilotEligibility(userEvents);
+    // Check autopilot eligibility (only if autopilot feature is enabled)
+    const autopilotFeatureEnabled = isAutopilotEnabled();
+    const autopilotEligibility = autopilotFeatureEnabled 
+      ? checkAutopilotEligibility(userEvents)
+      : { eligible: false, reason: 'autopilot_disabled' };
     
     // Create pending event
     const pendingEvent: DecisionEvent = {
@@ -217,7 +227,8 @@ export async function POST(request: Request): Promise<Response> {
     };
     
     // If autopilot eligible and not already applied, create autopilot approval
-    if (autopilotEligibility.eligible) {
+    // ONLY if autopilot feature is enabled
+    if (autopilotFeatureEnabled && autopilotEligibility.eligible) {
       // Check for existing autopilot approval (idempotency)
       const existingCopies = await db.getDecisionEventsByContextHash(contextHash);
       
@@ -239,11 +250,12 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     // Build canonical response (NO decisionEventId, NO message)
+    // autopilot field only included if autopilot is enabled AND eligible
     const response = buildResponse(
       drmRecommended ? null : mealSuggestion,
       drmRecommended,
       drmRecommended ? 'Multiple rejections detected' : undefined,
-      autopilotEligibility.eligible ? true : undefined
+      (autopilotFeatureEnabled && autopilotEligibility.eligible) ? true : undefined
     );
     
     return Response.json(response, { status: 200 });
