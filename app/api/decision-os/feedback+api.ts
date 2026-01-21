@@ -190,6 +190,12 @@ export async function POST(request: Request): Promise<Response> {
       record('undo_received');
     }
     
+    // READONLY MODE: Skip all DB writes but return valid response
+    if (flags.readonlyMode) {
+      record('readonly_hit');
+      return buildSuccessResponse();
+    }
+    
     // Get the original event
     const originalEvent = await getEventById(validatedRequest.eventId);
     if (!originalEvent) {

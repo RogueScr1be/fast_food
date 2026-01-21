@@ -143,6 +143,14 @@ export async function POST(request: Request): Promise<Response> {
       return buildSuccessResponse(receiptImportId, 'failed');
     }
     
+    // READONLY MODE: Skip all DB writes but return valid response
+    if (flags.readonlyMode) {
+      record('readonly_hit');
+      // Return response indicating receipt would be processed (but no actual write)
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'received');
+    }
+    
     // Process the receipt import
     const result = await processReceiptImport(
       validatedRequest.imageBase64,

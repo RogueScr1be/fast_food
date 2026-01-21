@@ -362,6 +362,8 @@ describe('Metrics', () => {
         'db_flags_loaded',
         'db_flags_cache_hit',
         'db_flags_error',
+        'metrics_db_failed',
+        'readonly_hit',
       ];
       
       // Record each metric
@@ -376,5 +378,106 @@ describe('Metrics', () => {
         expect(snapshot[name]).toBe(1);
       }
     });
+  });
+
+  describe('DB-backed metrics', () => {
+    it('includes metrics_db_failed metric', () => {
+      record('metrics_db_failed');
+      expect(getMetric('metrics_db_failed')).toBe(1);
+      
+      record('metrics_db_failed');
+      expect(getMetric('metrics_db_failed')).toBe(2);
+    });
+
+    it('includes readonly_hit metric', () => {
+      record('readonly_hit');
+      expect(getMetric('readonly_hit')).toBe(1);
+    });
+  });
+});
+
+describe('Readonly Flag', () => {
+  const savedEnv = { ...process.env };
+  
+  /**
+   * Mock DB client for testing
+   */
+  class ReadonlyMockFlagDbClient implements FlagDbClient {
+    private flags: Map<string, boolean>;
+    
+    constructor(flags: Record<string, boolean> = {}) {
+      this.flags = new Map(Object.entries(flags));
+    }
+    
+    async query<T = unknown>(): Promise<{ rows: T[] }> {
+      const rows: RuntimeFlagRow[] = [];
+      for (const [key, enabled] of this.flags) {
+        rows.push({ key, enabled, updated_at: new Date().toISOString() });
+      }
+      return { rows: rows as T[] };
+    }
+  }
+  
+  beforeEach(() => {
+    jest.resetModules();
+    process.env = { ...savedEnv };
+    clearFlagCache();
+    process.env.NODE_ENV = 'development';
+    delete process.env.DECISION_OS_ENABLED;
+    delete process.env.RUNTIME_FLAGS_ENABLED;
+  });
+  
+  afterEach(() => {
+    process.env = { ...savedEnv };
+    clearFlagCache();
+  });
+  
+  it('getFlags returns readonlyMode false by default', () => {
+    const flags = getFlags();
+    expect(flags.readonlyMode).toBe(false);
+  });
+  
+  it('resolveFlags includes readonlyMode from DB', async () => {
+    process.env.DECISION_OS_ENABLED = 'true';
+    process.env.RUNTIME_FLAGS_ENABLED = 'true';
+    
+    const client = new ReadonlyMockFlagDbClient({
+      decision_os_enabled: true,
+      decision_os_readonly: true,
+    });
+    
+    const flags = await resolveFlags({ db: client });
+    
+    expect(flags.readonlyMode).toBe(true);
+  });
+  
+  it('readonly requires master enabled (AND logic)', async () => {
+    process.env.DECISION_OS_ENABLED = 'true';
+    process.env.RUNTIME_FLAGS_ENABLED = 'true';
+    
+    const client = new ReadonlyMockFlagDbClient({
+      decision_os_enabled: false, // Master disabled
+      decision_os_readonly: true,
+    });
+    
+    const flags = await resolveFlags({ db: client });
+    
+    // Readonly should be false because master is off
+    expect(flags.decisionOsEnabled).toBe(false);
+    expect(flags.readonlyMode).toBe(false);
+  });
+  
+  it('readonly defaults to false when not in DB', async () => {
+    process.env.DECISION_OS_ENABLED = 'true';
+    process.env.RUNTIME_FLAGS_ENABLED = 'true';
+    
+    const client = new ReadonlyMockFlagDbClient({
+      decision_os_enabled: true,
+      // decision_os_readonly is missing
+    });
+    
+    const flags = await resolveFlags({ db: client });
+    
+    expect(flags.readonlyMode).toBe(false);
   });
 });

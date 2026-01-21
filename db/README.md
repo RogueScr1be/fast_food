@@ -119,6 +119,9 @@ Migrations are numbered sequentially and must be run in order.
 | 008 | Add `auth_user_id` column to `user_profiles` |
 | 009 | Create `households` table |
 | 010 | Create `household_members` join table |
+| 011 | Create `runtime_flags` table (DB-backed kill switches) |
+| 012 | Create `runtime_metrics_daily` table (durable metrics) |
+| 013 | Add `decision_os_readonly` flag (emergency freeze) |
 
 **Run all migrations:**
 
@@ -134,6 +137,8 @@ The migration runner verifies:
 
 1. **Required Tables**: All core tables exist (user_profiles, meals, decision_events, etc.)
 2. **Required Columns**: Each table has all required columns (prevents schema drift)
+3. **Column Types**: Critical columns have correct types (e.g., `runtime_flags.enabled` is boolean)
+4. **NOT NULL Constraints**: Required columns are NOT NULL (e.g., `decision_events.user_action`)
 
 If verification fails, the migration exits with a non-zero code and clear error message:
 
@@ -141,7 +146,23 @@ If verification fails, the migration exits with a non-zero code and clear error 
 ERROR: Missing required tables: households, household_members
 
 Table 'decision_events' missing columns: household_key, notes
+
+Column 'runtime_flags.enabled' type mismatch: expected 'boolean', got 'text'
+
+Column 'decision_events.user_action' should be NOT NULL but is nullable
 ```
+
+**Critical column types verified**:
+- `runtime_flags.enabled` → boolean
+- `runtime_flags.key` → text
+- `runtime_metrics_daily.count` → bigint
+- `decision_events.user_action` → text
+- `decision_events.household_key` → text
+
+**NOT NULL columns verified**:
+- `decision_events.user_action`
+- `decision_events.household_key`
+- `runtime_flags.enabled`
 
 ### Troubleshooting Migration Failures
 

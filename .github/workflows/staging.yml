@@ -214,12 +214,41 @@ jobs:
         run: npm run flags:proof
 
   # =============================================================================
-  # JOB 8: Smoke Test Staging (push to main only)
+  # JOB 8: Readonly Mode Gate (push to main only)
+  # Proves readonly mode prevents DB writes while maintaining valid responses
+  # =============================================================================
+  readonly_gate:
+    name: Readonly Mode Gate
+    runs-on: ubuntu-latest
+    needs: runtime_flags_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prove readonly mode works
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: npm run readonly:proof
+
+  # =============================================================================
+  # JOB 9: Smoke Test Staging (push to main only)
   # =============================================================================
   smoke_staging:
     name: Smoke Test Staging
     runs-on: ubuntu-latest
-    needs: runtime_flags_gate
+    needs: readonly_gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout

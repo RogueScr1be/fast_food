@@ -29,6 +29,8 @@ export interface DecisionOsFlags {
   ocrEnabled: boolean;
   /** DRM feature - Dinner Rescue Mode */
   drmEnabled: boolean;
+  /** Read-only mode - if true, no DB writes (emergency freeze) */
+  readonlyMode: boolean;
 }
 
 /**
@@ -177,6 +179,7 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
           autopilotEnabled: false,
           ocrEnabled: false,
           drmEnabled: false,
+          readonlyMode: false,
           source: 'env',
           dbLoaded: false,
         };
@@ -199,6 +202,11 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
     (dbFlags.get('decision_ocr_enabled') ?? false);
   result.drmEnabled = envFlags.drmEnabled && 
     (dbFlags.get('decision_drm_enabled') ?? false);
+  
+  // Readonly mode: only check DB flag (no env flag for this)
+  // AND with master: readonly doesn't bypass auth
+  result.readonlyMode = result.decisionOsEnabled && 
+    (dbFlags.get('decision_os_readonly') ?? false);
   
   return result;
 }
@@ -254,6 +262,7 @@ export function getFlags(): DecisionOsFlags {
     autopilotEnabled: parseFlag(process.env.DECISION_AUTOPILOT_ENABLED, defaultAutopilot),
     ocrEnabled: parseFlag(process.env.DECISION_OCR_ENABLED, defaultOcr),
     drmEnabled: parseFlag(process.env.DECISION_DRM_ENABLED, defaultDrm),
+    readonlyMode: false, // Default false - only controlled by DB flag
   };
 }
 

@@ -17,6 +17,7 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
 | `auth_works_gate` | Push to main | Verifies endpoints return 200 WITH token |
 | `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
+| `readonly_gate` | Push to main | Proves readonly mode prevents DB writes |
 | `smoke_staging` | Push to main | Runs full staging smoke tests |
 
 ### Pipeline Gates
@@ -90,7 +91,37 @@ npm run flags:proof
 
 This gate proves that ops can flip flags from Supabase UI to immediately disable features without redeploying.
 
-#### 5. Smoke Staging
+#### 5. Readonly Gate
+
+Proves that readonly mode (emergency freeze) prevents all DB writes:
+
+1. Counts rows in `decision_events`, `taste_signals`, `inventory_items`, `receipt_imports`
+2. Sets `decision_os_readonly = true` in staging DB
+3. Calls all Decision OS endpoints (decision, feedback, drm, receipt)
+4. Verifies canonical responses returned (200 OK)
+5. Verifies row counts UNCHANGED (no DB writes occurred)
+6. Restores `readonly = false` (cleanup)
+
+```bash
+npm run readonly:proof
+# Expected output:
+# PASS env_vars_present
+# PASS db_connected
+# PASS initial_counts_captured
+# PASS set_readonly_true
+# PASS decision_returns_200
+# PASS receipt_returns_200
+# PASS feedback_returns_200
+# PASS drm_returns_200
+# PASS decision_events_unchanged
+# PASS taste_signals_unchanged
+# PASS inventory_items_unchanged
+# PASS receipt_imports_unchanged
+# PASS readonly_restored
+# === READONLY PROOF PASSED ===
+```
+
+#### 6. Smoke Staging
 
 Full integration test of all Decision OS flows with authenticated requests.
 
@@ -218,8 +249,29 @@ In addition to ENV flags, Decision OS supports DB-backed runtime flags that can 
 | `decision_autopilot_enabled` | Autopilot feature |
 | `decision_ocr_enabled` | OCR/receipt scanning |
 | `decision_drm_enabled` | Dinner Rescue Mode |
+| `decision_os_readonly` | Emergency freeze (read-only mode) |
 
 **Note**: ENV flags take precedence. If ENV says `false`, DB cannot override to `true`.
+
+### Emergency Freeze (Read-only Mode)
+
+When `decision_os_readonly=true` in the `runtime_flags` table:
+
+- All Decision OS endpoints continue to return canonical responses
+- **No database writes** occur (decision_events, taste_signals, inventory_items, receipt_imports unchanged)
+- Useful for emergency situations where you need to stop all writes instantly
+- Can be toggled from Supabase UI without redeploying
+
+**Behavior when readonly**:
+
+| Endpoint | Returns | DB Write |
+|----------|---------|----------|
+| `/api/decision-os/decision` | Normal decision response | **Skipped** |
+| `/api/decision-os/feedback` | `{ recorded: true }` | **Skipped** |
+| `/api/decision-os/drm` | `{ drmActivated: true }` | **Skipped** |
+| `/api/decision-os/receipt/import` | `{ receiptImportId, status: 'received' }` | **Skipped** |
+
+**Important**: Readonly mode requires `decision_os_enabled=true` (AND logic). It doesn't bypass auth.
 
 ### Internal Metrics Endpoint (Dev/Staging Only)
 
@@ -258,6 +310,37 @@ GET /api/decision-os/_internal/metrics
 | `ocr_provider_failed` | OCR failures |
 
 **Privacy**: Metrics are counters only - no user IDs, tokens, meal names, or sensitive data.
+
+### Durable Metrics (DB-backed)
+
+In production (or when `METRICS_DB_ENABLED=true`), metrics are also persisted to the `runtime_metrics_daily` table.
+
+**Table structure**:
+```sql
+runtime_metrics_daily (
+  day DATE,        -- UTC date
+  metric_key TEXT, -- Metric name (e.g., 'decision_called')
+  count BIGINT,    -- Cumulative count for this day
+  PRIMARY KEY (day, metric_key)
+)
+```
+
+**Behavior**:
+- Each `record()` call increments both in-memory counter and DB row
+- DB writes are fire-and-forget (non-blocking)
+- DB failures increment `metrics_db_failed` counter (fail-safe)
+- No sensitive data stored (privacy-safe)
+
+**Querying metrics** (from Supabase SQL editor):
+```sql
+-- Today's metrics
+SELECT * FROM runtime_metrics_daily WHERE day = CURRENT_DATE;
+
+-- Last 7 days
+SELECT * FROM runtime_metrics_daily 
+WHERE day >= CURRENT_DATE - INTERVAL '7 days'
+ORDER BY day DESC, metric_key;
+```
 
 ### How to Get SUPABASE_JWT_SECRET
 

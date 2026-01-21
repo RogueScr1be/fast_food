@@ -149,6 +149,14 @@ export async function POST(request: Request): Promise<Response> {
     const { reason } = validatedRequest;
     const nowIso = new Date().toISOString();
     
+    // READONLY MODE: Skip all DB writes but return valid response
+    if (flags.readonlyMode) {
+      record('readonly_hit');
+      // Return response indicating DRM would be activated (but no actual write)
+      const response = buildResponse(true);
+      return Response.json(response, { status: 200 });
+    }
+    
     // Create DRM event (append-only, internal)
     const eventId = generateDrmEventId();
     const drmEvent: DecisionEventInsert = {

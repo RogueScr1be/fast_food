@@ -34,6 +34,7 @@ export const REQUIRED_TABLES = [
   'household_members',
   'schema_migrations',
   'runtime_flags',
+  'runtime_metrics_daily',
 ] as const;
 
 /**
@@ -64,6 +65,7 @@ export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['taste_meal_scores', ['id', 'household_key', 'meal_id', 'score', 'approvals', 'rejections', 'updated_at']],
   ['schema_migrations', ['filename', 'applied_at']],
   ['runtime_flags', ['key', 'enabled', 'updated_at']],
+  ['runtime_metrics_daily', ['day', 'metric_key', 'count', 'updated_at']],
 ]);
 
 // =============================================================================
@@ -276,6 +278,157 @@ export async function verifyRequiredColumns(
   return result;
 }
 
+// =============================================================================
+// COLUMN TYPE VERIFICATION
+// =============================================================================
+
+/**
+ * Required column types for critical columns.
+ * Map of "table.column" -> expected type (lowercase).
+ */
+export const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
+  ['runtime_flags.enabled', 'boolean'],
+  ['runtime_flags.key', 'text'],
+  ['runtime_metrics_daily.count', 'bigint'],
+  ['decision_events.user_action', 'text'],
+  ['decision_events.household_key', 'text'],
+]);
+
+/**
+ * Columns that must NOT be nullable.
+ */
+export const NOT_NULL_COLUMNS: string[] = [
+  'decision_events.user_action',
+  'decision_events.household_key',
+  'runtime_flags.enabled',
+];
+
+/**
+ * Result of column type verification
+ */
+export interface TypeVerificationResult {
+  valid: boolean;
+  mismatches: Array<{ column: string; expected: string; actual: string }>;
+  errors: string[];
+}
+
+/**
+ * Verify required column types match expected types.
+ */
+export async function verifyRequiredColumnTypes(
+  client: DbClient,
+  requiredTypes: Map<string, string> = REQUIRED_COLUMN_TYPES
+): Promise<TypeVerificationResult> {
+  const result: TypeVerificationResult = {
+    valid: true,
+    mismatches: [],
+    errors: [],
+  };
+  
+  // Query column types from information_schema
+  const typesResult = await client.query<{ 
+    table_name: string; 
+    column_name: string; 
+    data_type: string;
+  }>(`
+    SELECT table_name, column_name, data_type 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public'
+  `);
+  
+  // Build lookup: "table.column" -> data_type
+  const columnTypes = new Map<string, string>();
+  for (const row of typesResult.rows) {
+    const key = `${row.table_name}.${row.column_name}`;
+    columnTypes.set(key, row.data_type.toLowerCase());
+  }
+  
+  // Check each required type
+  for (const [columnKey, expectedType] of requiredTypes) {
+    const actualType = columnTypes.get(columnKey);
+    
+    if (!actualType) {
+      result.errors.push(`Column '${columnKey}' not found`);
+      result.valid = false;
+      continue;
+    }
+    
+    if (actualType !== expectedType.toLowerCase()) {
+      result.mismatches.push({
+        column: columnKey,
+        expected: expectedType,
+        actual: actualType,
+      });
+      result.errors.push(
+        `Column '${columnKey}' type mismatch: expected '${expectedType}', got '${actualType}'`
+      );
+      result.valid = false;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Result of NOT NULL verification
+ */
+export interface NotNullVerificationResult {
+  valid: boolean;
+  nullableColumns: string[];
+  errors: string[];
+}
+
+/**
+ * Verify columns that should NOT be nullable are actually NOT NULL.
+ */
+export async function verifyNotNull(
+  client: DbClient,
+  notNullColumns: string[] = NOT_NULL_COLUMNS
+): Promise<NotNullVerificationResult> {
+  const result: NotNullVerificationResult = {
+    valid: true,
+    nullableColumns: [],
+    errors: [],
+  };
+  
+  // Query column nullable status from information_schema
+  const nullableResult = await client.query<{ 
+    table_name: string; 
+    column_name: string; 
+    is_nullable: string;
+  }>(`
+    SELECT table_name, column_name, is_nullable 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public'
+  `);
+  
+  // Build lookup: "table.column" -> is_nullable ('YES' or 'NO')
+  const columnNullable = new Map<string, boolean>();
+  for (const row of nullableResult.rows) {
+    const key = `${row.table_name}.${row.column_name}`;
+    columnNullable.set(key, row.is_nullable === 'YES');
+  }
+  
+  // Check each column that should NOT be nullable
+  for (const columnKey of notNullColumns) {
+    const isNullable = columnNullable.get(columnKey);
+    
+    if (isNullable === undefined) {
+      result.errors.push(`Column '${columnKey}' not found`);
+      result.valid = false;
+      continue;
+    }
+    
+    if (isNullable) {
+      result.nullableColumns.push(columnKey);
+      result.errors.push(`Column '${columnKey}' should be NOT NULL but is nullable`);
+      result.valid = false;
+    }
+  }
+  
+  return result;
+}
+
 /**
  * Run migrations using provided client
  */
@@ -429,10 +582,44 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     
+    // Verify column types
+    console.log('\n=== Verifying Column Types ===\n');
+    
+    const typeVerification = await verifyRequiredColumnTypes(pool);
+    
+    if (typeVerification.valid) {
+      console.log(`✓ All ${REQUIRED_COLUMN_TYPES.size} critical column types verified`);
+    } else {
+      console.log('Type verification FAILED:\n');
+      for (const error of typeVerification.errors) {
+        console.error(`  ✗ ${error}`);
+      }
+      console.error('\nMigration verification failed - column types incorrect.');
+      process.exit(1);
+    }
+    
+    // Verify NOT NULL constraints
+    console.log('\n=== Verifying NOT NULL Constraints ===\n');
+    
+    const notNullVerification = await verifyNotNull(pool);
+    
+    if (notNullVerification.valid) {
+      console.log(`✓ All ${NOT_NULL_COLUMNS.length} NOT NULL constraints verified`);
+    } else {
+      console.log('NOT NULL verification FAILED:\n');
+      for (const error of notNullVerification.errors) {
+        console.error(`  ✗ ${error}`);
+      }
+      console.error('\nMigration verification failed - NOT NULL constraints missing.');
+      process.exit(1);
+    }
+    
     console.log('\n=== Migration Complete ===');
     console.log(`Applied: ${result.applied.length}, Skipped: ${result.skipped.length}`);
     console.log(`Tables verified: ${tableVerification.found.length}/${REQUIRED_TABLES.length}`);
     console.log(`Columns verified: ${columnVerification.checkedTables.length} tables`);
+    console.log(`Types verified: ${REQUIRED_COLUMN_TYPES.size} columns`);
+    console.log(`NOT NULL verified: ${NOT_NULL_COLUMNS.length} columns`);
     
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

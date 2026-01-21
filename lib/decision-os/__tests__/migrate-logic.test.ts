@@ -463,5 +463,223 @@ describe('Migration Logic', () => {
         expect(cols.length).toBeGreaterThanOrEqual(2);
       }
     });
+
+    it('contains runtime_metrics_daily columns', () => {
+      expect(REQUIRED_COLUMNS.has('runtime_metrics_daily')).toBe(true);
+      expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('day');
+      expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('metric_key');
+      expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('count');
+      expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('updated_at');
+    });
+  });
+
+  describe('verifyRequiredColumnTypes', () => {
+    // Import at test time to avoid circular dependencies
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { 
+      verifyRequiredColumnTypes, 
+      REQUIRED_COLUMN_TYPES 
+    } = require('../../../db/migrate');
+
+    class TypeVerifyMockClient implements DbClient {
+      private columnTypes: Record<string, string>;
+
+      constructor(columnTypes: Record<string, string>) {
+        this.columnTypes = columnTypes;
+      }
+
+      async query<T = unknown>(sql: string): Promise<{ rows: T[] }> {
+        if (sql.includes('information_schema.columns')) {
+          const rows: Array<{ table_name: string; column_name: string; data_type: string }> = [];
+          for (const [key, dataType] of Object.entries(this.columnTypes)) {
+            const [table, column] = key.split('.');
+            rows.push({ table_name: table, column_name: column, data_type: dataType });
+          }
+          return { rows: rows as T[] };
+        }
+        return { rows: [] };
+      }
+
+      async end(): Promise<void> {}
+    }
+
+    it('passes when all required column types match', async () => {
+      const columnTypes: Record<string, string> = {
+        'runtime_flags.enabled': 'boolean',
+        'runtime_flags.key': 'text',
+        'runtime_metrics_daily.count': 'bigint',
+        'decision_events.user_action': 'text',
+        'decision_events.household_key': 'text',
+      };
+      const client = new TypeVerifyMockClient(columnTypes);
+
+      const result = await verifyRequiredColumnTypes(client);
+
+      expect(result.valid).toBe(true);
+      expect(result.mismatches).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('fails when a column type mismatches', async () => {
+      const columnTypes: Record<string, string> = {
+        'runtime_flags.enabled': 'text', // Should be boolean
+        'runtime_flags.key': 'text',
+        'runtime_metrics_daily.count': 'bigint',
+        'decision_events.user_action': 'text',
+        'decision_events.household_key': 'text',
+      };
+      const client = new TypeVerifyMockClient(columnTypes);
+
+      const result = await verifyRequiredColumnTypes(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.mismatches.some(m => 
+        m.column === 'runtime_flags.enabled' && 
+        m.expected === 'boolean' && 
+        m.actual === 'text'
+      )).toBe(true);
+    });
+
+    it('fails when a column is not found', async () => {
+      // Missing runtime_metrics_daily.count
+      const columnTypes: Record<string, string> = {
+        'runtime_flags.enabled': 'boolean',
+        'runtime_flags.key': 'text',
+        'decision_events.user_action': 'text',
+        'decision_events.household_key': 'text',
+      };
+      const client = new TypeVerifyMockClient(columnTypes);
+
+      const result = await verifyRequiredColumnTypes(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('runtime_metrics_daily.count'))).toBe(true);
+    });
+
+    it('works with custom required types', async () => {
+      const customTypes = new Map<string, string>([
+        ['custom_table.custom_col', 'integer'],
+      ]);
+      
+      const client = new TypeVerifyMockClient({
+        'custom_table.custom_col': 'text', // Wrong type
+      });
+
+      const result = await verifyRequiredColumnTypes(client, customTypes);
+
+      expect(result.valid).toBe(false);
+      expect(result.mismatches.some(m => 
+        m.column === 'custom_table.custom_col' && 
+        m.expected === 'integer' && 
+        m.actual === 'text'
+      )).toBe(true);
+    });
+
+    it('REQUIRED_COLUMN_TYPES contains critical columns', () => {
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_flags.enabled')).toBe('boolean');
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_flags.key')).toBe('text');
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_metrics_daily.count')).toBe('bigint');
+      expect(REQUIRED_COLUMN_TYPES.get('decision_events.user_action')).toBe('text');
+      expect(REQUIRED_COLUMN_TYPES.get('decision_events.household_key')).toBe('text');
+    });
+  });
+
+  describe('verifyNotNull', () => {
+    // Import at test time to avoid circular dependencies
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { verifyNotNull, NOT_NULL_COLUMNS } = require('../../../db/migrate');
+
+    class NotNullVerifyMockClient implements DbClient {
+      private columnNullable: Record<string, boolean>;
+
+      constructor(columnNullable: Record<string, boolean>) {
+        this.columnNullable = columnNullable;
+      }
+
+      async query<T = unknown>(sql: string): Promise<{ rows: T[] }> {
+        if (sql.includes('information_schema.columns')) {
+          const rows: Array<{ table_name: string; column_name: string; is_nullable: string }> = [];
+          for (const [key, isNullable] of Object.entries(this.columnNullable)) {
+            const [table, column] = key.split('.');
+            rows.push({ 
+              table_name: table, 
+              column_name: column, 
+              is_nullable: isNullable ? 'YES' : 'NO' 
+            });
+          }
+          return { rows: rows as T[] };
+        }
+        return { rows: [] };
+      }
+
+      async end(): Promise<void> {}
+    }
+
+    it('passes when all NOT NULL columns are correctly NOT NULL', async () => {
+      const columnNullable: Record<string, boolean> = {
+        'decision_events.user_action': false,
+        'decision_events.household_key': false,
+        'runtime_flags.enabled': false,
+      };
+      const client = new NotNullVerifyMockClient(columnNullable);
+
+      const result = await verifyNotNull(client);
+
+      expect(result.valid).toBe(true);
+      expect(result.nullableColumns).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('fails when a column is nullable but should be NOT NULL', async () => {
+      const columnNullable: Record<string, boolean> = {
+        'decision_events.user_action': true, // Should NOT be nullable
+        'decision_events.household_key': false,
+        'runtime_flags.enabled': false,
+      };
+      const client = new NotNullVerifyMockClient(columnNullable);
+
+      const result = await verifyNotNull(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.nullableColumns).toContain('decision_events.user_action');
+      expect(result.errors.some(e => 
+        e.includes('decision_events.user_action') && 
+        e.includes('NOT NULL') && 
+        e.includes('nullable')
+      )).toBe(true);
+    });
+
+    it('fails when a column is not found', async () => {
+      // Missing decision_events.household_key
+      const columnNullable: Record<string, boolean> = {
+        'decision_events.user_action': false,
+        'runtime_flags.enabled': false,
+      };
+      const client = new NotNullVerifyMockClient(columnNullable);
+
+      const result = await verifyNotNull(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('decision_events.household_key'))).toBe(true);
+    });
+
+    it('works with custom NOT NULL columns list', async () => {
+      const customColumns = ['custom_table.custom_col'];
+      
+      const client = new NotNullVerifyMockClient({
+        'custom_table.custom_col': true, // Nullable but should be NOT NULL
+      });
+
+      const result = await verifyNotNull(client, customColumns);
+
+      expect(result.valid).toBe(false);
+      expect(result.nullableColumns).toContain('custom_table.custom_col');
+    });
+
+    it('NOT_NULL_COLUMNS contains critical columns', () => {
+      expect(NOT_NULL_COLUMNS).toContain('decision_events.user_action');
+      expect(NOT_NULL_COLUMNS).toContain('decision_events.household_key');
+      expect(NOT_NULL_COLUMNS).toContain('runtime_flags.enabled');
+    });
   });
 });

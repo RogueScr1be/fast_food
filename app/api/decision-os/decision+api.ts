@@ -238,6 +238,19 @@ export async function POST(request: Request): Promise<Response> {
       context_hash: contextHash,
     };
     
+    // READONLY MODE: Skip all DB writes but return valid response
+    if (flags.readonlyMode) {
+      record('readonly_hit');
+      // Return response without any DB writes
+      const response = buildResponse(
+        drmRecommended ? null : mealSuggestion,
+        drmRecommended,
+        drmRecommended ? 'Multiple rejections detected' : undefined,
+        (autopilotFeatureEnabled && autopilotEligibility.eligible) ? true : undefined
+      );
+      return Response.json(response, { status: 200 });
+    }
+    
     // If autopilot eligible and not already applied, create autopilot approval
     // ONLY if autopilot feature is enabled
     if (autopilotFeatureEnabled && autopilotEligibility.eligible) {
