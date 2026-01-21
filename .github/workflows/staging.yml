@@ -124,50 +124,44 @@ jobs:
     runs-on: ubuntu-latest
     needs: schema_gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.deployment_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
-
-      - name: Pull Vercel Environment
+      - name: Vercel Pull
         run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      - name: Build Project
+      - name: Vercel Build
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      - name: Deploy to Staging
+      - name: Vercel Deploy
         id: deploy
         run: |
-          DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
-          
-          # Validate URL format (must be https:// with valid hostname)
-          if [[ ! "$DEPLOYMENT_URL" =~ ^https://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} ]]; then
-            echo "FAIL invalid_deployment_url_format"
-            exit 1
-          fi
-          
-          echo "deployment_url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
-          echo "Deployed to: $DEPLOYMENT_URL"
+          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$url" >> $GITHUB_OUTPUT
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-    outputs:
-      deployment_url: ${{ steps.deploy.outputs.deployment_url }}
+      - name: Validate URL format
+        run: |
+          echo "${{ steps.deploy.outputs.deployment_url }}" | grep -qE '^https://[a-z0-9-]+\.vercel\.app$'
+          if [ $? -ne 0 ]; then
+            echo "FAIL invalid_deployment_url_format"
+            exit 1
+          fi
+          echo "PASS url_validated"
 
   # =============================================================================
   # JOB 6: Healthz Gate (push to main only)
