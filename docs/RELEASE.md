@@ -13,22 +13,46 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
 | `migrate_staging` | Push to main | Runs database migrations on staging |
 | `deploy_staging` | Push to main | Deploys to Vercel staging |
-| `smoke_staging` | Push to main | Runs staging smoke tests |
+| `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
+| `auth_sanity` | Push to main | Verifies auth flow works (200 or 401) |
+| `smoke_staging` | Push to main | Runs full staging smoke tests |
 
-### Required GitHub Secrets
+### Pipeline Gates
+
+The pipeline has two gates that must pass before smoke tests run:
+
+#### Healthz Gate
+
+After deployment, the pipeline calls `GET /api/healthz` and fails if:
+- Response is not 200
+- This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
+
+#### Auth Sanity Gate
+
+Before full smoke tests, the pipeline runs `npm run auth:sanity` which:
+- Calls Decision endpoint with STAGING_AUTH_TOKEN
+- Expects either 200 (valid response) OR 401 (unauthorized)
+- Fails on unexpected responses
+- Prints only PASS/FAIL (no secrets leaked)
+
+---
+
+## Required GitHub Secrets (Canonical List)
 
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `DATABASE_URL_STAGING` | Yes | Postgres connection string for staging |
+| `DATABASE_URL_STAGING` | Yes | Postgres connection string (Supabase) |
 | `VERCEL_TOKEN` | Yes | Vercel deployment token |
 | `VERCEL_ORG_ID` | Yes | Vercel organization ID |
 | `VERCEL_PROJECT_ID` | Yes | Vercel project ID |
 | `STAGING_URL` | Yes | Deployed staging URL (e.g., `https://your-app.vercel.app`) |
-| `STAGING_AUTH_TOKEN` | Yes | Supabase JWT for authenticated smoke tests |
+| `STAGING_AUTH_TOKEN` | Yes | Supabase JWT for authenticated tests |
 
 ### How to Set Up Secrets
 
-1. **DATABASE_URL_STAGING**: Get from Supabase dashboard → Project Settings → Database → Connection string
+1. **DATABASE_URL_STAGING**: 
+   - Supabase dashboard → Project Settings → Database → Connection string
+   - Format: `postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres`
 
 2. **Vercel Secrets**:
    ```bash
@@ -37,33 +61,47 @@ The project uses GitHub Actions for continuous integration and deployment to sta
    vercel link
    ```
 
-3. **STAGING_URL**: Your Vercel deployment URL
+3. **STAGING_URL**: Your Vercel deployment URL (e.g., `https://fast-food-staging.vercel.app`)
 
-4. **STAGING_AUTH_TOKEN**: Generate a Supabase JWT:
-   - Create a test user in Supabase Auth
-   - Get their access token from Supabase dashboard or via API
-   - This token is used for authenticated smoke tests only
+4. **STAGING_AUTH_TOKEN**: Supabase JWT for a test user (see below)
 
 ### How to Rotate STAGING_AUTH_TOKEN
 
 1. Log into Supabase dashboard
 2. Go to Authentication → Users
-3. Find or create a staging test user
-4. Generate a new session/access token:
-   - Via SQL Editor: `SELECT * FROM auth.users WHERE email = 'staging-test@example.com'`
-   - Via Supabase client: Call `supabase.auth.signInWithPassword()` and get `session.access_token`
-5. Update the GitHub secret: Settings → Secrets → Actions → Update `STAGING_AUTH_TOKEN`
+3. Find or create a staging test user (e.g., `staging-test@example.com`)
+4. Generate a new access token:
+   ```javascript
+   // Via Supabase client
+   const { data } = await supabase.auth.signInWithPassword({
+     email: 'staging-test@example.com',
+     password: 'your-password'
+   });
+   console.log(data.session.access_token);
+   ```
+5. Update GitHub secret: Settings → Secrets → Actions → `STAGING_AUTH_TOKEN`
 
-### Vercel Environment Variables
+**Note**: Tokens expire. If auth_sanity fails with unexpected responses, rotate the token.
 
-Ensure these are set in Vercel project settings:
+---
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | Postgres connection string |
-| `NODE_ENV` | `production` |
-| `SUPABASE_JWT_SECRET` | JWT secret for auth verification |
-| `OCR_PROVIDER` | `none` (or `google_vision` if enabled) |
+## Required Vercel Environment Variables
+
+Set these in Vercel project settings (Settings → Environment Variables):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | Postgres connection string |
+| `NODE_ENV` | Yes | `production` |
+| `SUPABASE_JWT_SECRET` | Yes | JWT secret for auth verification |
+| `OCR_PROVIDER` | No | `none` or `google_vision` |
+| `OCR_API_KEY` | If OCR enabled | Google Vision API key |
+
+### How to Get SUPABASE_JWT_SECRET
+
+1. Supabase dashboard → Project Settings → API
+2. Copy "JWT Secret" (under "JWT Settings")
+3. Add to Vercel env vars
 
 ---
 
