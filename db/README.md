@@ -128,6 +128,64 @@ npm run db:migrate:staging
 
 This runs `db/migrate.ts` which executes all SQL files in `db/migrations/` in order.
 
+### Migration Verification
+
+The migration runner verifies:
+
+1. **Required Tables**: All core tables exist (user_profiles, meals, decision_events, etc.)
+2. **Required Columns**: Each table has all required columns (prevents schema drift)
+
+If verification fails, the migration exits with a non-zero code and clear error message:
+
+```
+ERROR: Missing required tables: households, household_members
+
+Table 'decision_events' missing columns: household_key, notes
+```
+
+### Troubleshooting Migration Failures
+
+#### Missing Tables
+
+If tables are missing, check:
+- Migrations ran in correct order
+- No migration failed silently
+- Database connection is correct
+
+Run migrations again - they are idempotent:
+```bash
+npm run db:migrate:staging
+```
+
+#### Missing Columns
+
+If columns are missing, you may need to:
+1. Check if a migration was skipped or failed
+2. Manually add the missing column(s)
+3. Update the `schema_migrations` table if a migration was partially applied
+
+Example manual fix:
+```sql
+ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS household_key TEXT;
+ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS notes TEXT;
+```
+
+#### Column Verification Reference
+
+The migration runner verifies these critical columns:
+
+| Table | Required Columns |
+|-------|------------------|
+| `user_profiles` | id, auth_user_id, created_at |
+| `households` | id, household_key, created_at |
+| `household_members` | household_id, user_profile_id, created_at |
+| `decision_events` | id, user_profile_id, household_key, user_action, actioned_at, decided_at, notes, decision_payload, decision_type, meal_id, context_hash |
+| `inventory_items` | id, household_key, item_name, remaining_qty, confidence, last_seen_at |
+| `receipt_imports` | id, household_key, status, created_at |
+| `taste_signals` | id, household_key, event_id, weight, created_at |
+| `taste_meal_scores` | id, household_key, meal_id, score, approvals, rejections, updated_at |
+| `schema_migrations` | filename, applied_at |
+
 ### 3. Seed Meals
 
 Ensure the `meals` table is populated with your meal catalog before using Decision OS.

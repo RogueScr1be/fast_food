@@ -10,7 +10,9 @@ import {
   getUnappliedMigrations,
   runMigrationsWithClient,
   verifyRequiredTables,
+  verifyRequiredColumns,
   REQUIRED_TABLES,
+  REQUIRED_COLUMNS,
   type MigrationFile,
   type DbClient,
 } from '../../../db/migrate';
@@ -290,6 +292,176 @@ describe('Migration Logic', () => {
 
     it('has at least 10 required tables', () => {
       expect(REQUIRED_TABLES.length).toBeGreaterThanOrEqual(10);
+    });
+  });
+
+  describe('verifyRequiredColumns', () => {
+    /**
+     * Mock DB client that simulates information_schema.columns responses
+     */
+    class ColumnVerifyMockClient implements DbClient {
+      private columns: Map<string, Set<string>>;
+
+      constructor(tableColumns: Record<string, string[]>) {
+        this.columns = new Map();
+        for (const [table, cols] of Object.entries(tableColumns)) {
+          this.columns.set(table, new Set(cols));
+        }
+      }
+
+      async query<T = unknown>(sql: string): Promise<{ rows: T[] }> {
+        if (sql.includes('information_schema.columns')) {
+          const rows: Array<{ table_name: string; column_name: string }> = [];
+          for (const [tableName, cols] of this.columns) {
+            for (const col of cols) {
+              rows.push({ table_name: tableName, column_name: col });
+            }
+          }
+          return { rows: rows as T[] };
+        }
+        return { rows: [] };
+      }
+
+      async end(): Promise<void> {}
+    }
+
+    it('passes when all required columns exist', async () => {
+      // Build a client with all required columns
+      const tableColumns: Record<string, string[]> = {};
+      for (const [table, cols] of REQUIRED_COLUMNS) {
+        tableColumns[table] = [...cols];
+      }
+      const client = new ColumnVerifyMockClient(tableColumns);
+
+      const result = await verifyRequiredColumns(client);
+
+      expect(result.valid).toBe(true);
+      expect(result.missingColumns.size).toBe(0);
+      expect(result.errors).toHaveLength(0);
+      expect(result.checkedTables.length).toBe(REQUIRED_COLUMNS.size);
+    });
+
+    it('fails when a column is missing', async () => {
+      // Build a client with most columns, but missing one
+      const tableColumns: Record<string, string[]> = {};
+      for (const [table, cols] of REQUIRED_COLUMNS) {
+        if (table === 'user_profiles') {
+          // Omit auth_user_id
+          tableColumns[table] = cols.filter(c => c !== 'auth_user_id');
+        } else {
+          tableColumns[table] = [...cols];
+        }
+      }
+      const client = new ColumnVerifyMockClient(tableColumns);
+
+      const result = await verifyRequiredColumns(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missingColumns.has('user_profiles')).toBe(true);
+      expect(result.missingColumns.get('user_profiles')).toContain('auth_user_id');
+      expect(result.errors.some(e => e.includes('user_profiles') && e.includes('auth_user_id'))).toBe(true);
+    });
+
+    it('reports multiple missing columns', async () => {
+      // Build a client with decision_events missing multiple columns
+      const tableColumns: Record<string, string[]> = {};
+      for (const [table, cols] of REQUIRED_COLUMNS) {
+        if (table === 'decision_events') {
+          // Only include id and user_profile_id
+          tableColumns[table] = ['id', 'user_profile_id'];
+        } else {
+          tableColumns[table] = [...cols];
+        }
+      }
+      const client = new ColumnVerifyMockClient(tableColumns);
+
+      const result = await verifyRequiredColumns(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missingColumns.has('decision_events')).toBe(true);
+      
+      const missingCols = result.missingColumns.get('decision_events')!;
+      expect(missingCols.length).toBeGreaterThan(1);
+      expect(missingCols).toContain('household_key');
+      expect(missingCols).toContain('user_action');
+      expect(missingCols).toContain('notes');
+    });
+
+    it('reports missing table separately', async () => {
+      // Build a client that is missing the households table entirely
+      const tableColumns: Record<string, string[]> = {};
+      for (const [table, cols] of REQUIRED_COLUMNS) {
+        if (table !== 'households') {
+          tableColumns[table] = [...cols];
+        }
+      }
+      const client = new ColumnVerifyMockClient(tableColumns);
+
+      const result = await verifyRequiredColumns(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes("'households'") && e.includes('does not exist'))).toBe(true);
+    });
+
+    it('works with custom REQUIRED_COLUMNS', async () => {
+      const customColumns = new Map<string, string[]>([
+        ['custom_table', ['col_a', 'col_b', 'col_c']],
+      ]);
+      
+      // Client has custom_table but missing col_c
+      const client = new ColumnVerifyMockClient({
+        custom_table: ['col_a', 'col_b'],
+      });
+
+      const result = await verifyRequiredColumns(client, customColumns);
+
+      expect(result.valid).toBe(false);
+      expect(result.missingColumns.has('custom_table')).toBe(true);
+      expect(result.missingColumns.get('custom_table')).toContain('col_c');
+      expect(result.checkedTables).toContain('custom_table');
+    });
+  });
+
+  describe('REQUIRED_COLUMNS constant', () => {
+    it('contains decision_events.user_action', () => {
+      expect(REQUIRED_COLUMNS.has('decision_events')).toBe(true);
+      expect(REQUIRED_COLUMNS.get('decision_events')).toContain('user_action');
+    });
+
+    it('contains decision_events.household_key', () => {
+      expect(REQUIRED_COLUMNS.has('decision_events')).toBe(true);
+      expect(REQUIRED_COLUMNS.get('decision_events')).toContain('household_key');
+    });
+
+    it('contains schema_migrations.filename and applied_at', () => {
+      expect(REQUIRED_COLUMNS.has('schema_migrations')).toBe(true);
+      expect(REQUIRED_COLUMNS.get('schema_migrations')).toContain('filename');
+      expect(REQUIRED_COLUMNS.get('schema_migrations')).toContain('applied_at');
+    });
+
+    it('has required columns for all core tables', () => {
+      const expectedTables = [
+        'user_profiles',
+        'households',
+        'household_members',
+        'decision_events',
+        'inventory_items',
+        'receipt_imports',
+        'taste_signals',
+        'taste_meal_scores',
+        'schema_migrations',
+      ];
+
+      for (const table of expectedTables) {
+        expect(REQUIRED_COLUMNS.has(table)).toBe(true);
+        expect(REQUIRED_COLUMNS.get(table)!.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('contains at least 3 columns per table', () => {
+      for (const [table, cols] of REQUIRED_COLUMNS) {
+        expect(cols.length).toBeGreaterThanOrEqual(2);
+      }
     });
   });
 });

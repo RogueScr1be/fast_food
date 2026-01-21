@@ -35,6 +35,35 @@ export const REQUIRED_TABLES = [
   'schema_migrations',
 ] as const;
 
+/**
+ * Required columns per table.
+ * Verification will fail if any columns are missing.
+ * This catches schema drift early and prevents runtime errors.
+ */
+export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
+  ['user_profiles', ['id', 'auth_user_id', 'created_at']],
+  ['households', ['id', 'household_key', 'created_at']],
+  ['household_members', ['household_id', 'user_profile_id', 'created_at']],
+  ['decision_events', [
+    'id',
+    'user_profile_id',
+    'household_key',
+    'user_action',
+    'actioned_at',
+    'decided_at',
+    'notes',
+    'decision_payload',
+    'decision_type',
+    'meal_id',
+    'context_hash',
+  ]],
+  ['inventory_items', ['id', 'household_key', 'item_name', 'remaining_qty', 'confidence', 'last_seen_at']],
+  ['receipt_imports', ['id', 'household_key', 'status', 'created_at']],
+  ['taste_signals', ['id', 'household_key', 'event_id', 'weight', 'created_at']],
+  ['taste_meal_scores', ['id', 'household_key', 'meal_id', 'score', 'approvals', 'rejections', 'updated_at']],
+  ['schema_migrations', ['filename', 'applied_at']],
+]);
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -172,6 +201,80 @@ export async function verifyRequiredTables(
 }
 
 /**
+ * Result of column verification
+ */
+export interface ColumnVerificationResult {
+  valid: boolean;
+  missingColumns: Map<string, string[]>;
+  checkedTables: string[];
+  errors: string[];
+}
+
+/**
+ * Verify required columns exist for each table.
+ * Only checks tables that exist (use verifyRequiredTables first for table check).
+ */
+export async function verifyRequiredColumns(
+  client: DbClient,
+  requiredColumns: Map<string, string[]> = REQUIRED_COLUMNS
+): Promise<ColumnVerificationResult> {
+  const result: ColumnVerificationResult = {
+    valid: true,
+    missingColumns: new Map(),
+    checkedTables: [],
+    errors: [],
+  };
+  
+  // Query all columns from information_schema
+  const columnsResult = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public'
+  `);
+  
+  // Build lookup: table -> Set<column>
+  const columnsByTable = new Map<string, Set<string>>();
+  for (const row of columnsResult.rows) {
+    if (!columnsByTable.has(row.table_name)) {
+      columnsByTable.set(row.table_name, new Set());
+    }
+    columnsByTable.get(row.table_name)!.add(row.column_name);
+  }
+  
+  // Check each required table's columns
+  for (const [tableName, requiredCols] of requiredColumns) {
+    result.checkedTables.push(tableName);
+    
+    const existingCols = columnsByTable.get(tableName);
+    
+    // If table doesn't exist, report it separately (skip column check)
+    if (!existingCols) {
+      result.errors.push(`Table '${tableName}' does not exist (cannot verify columns)`);
+      result.valid = false;
+      continue;
+    }
+    
+    // Check for missing columns
+    const missing: string[] = [];
+    for (const col of requiredCols) {
+      if (!existingCols.has(col)) {
+        missing.push(col);
+      }
+    }
+    
+    if (missing.length > 0) {
+      result.missingColumns.set(tableName, missing);
+      result.errors.push(
+        `Table '${tableName}' missing columns: ${missing.join(', ')}`
+      );
+      result.valid = false;
+    }
+  }
+  
+  return result;
+}
+
+/**
  * Run migrations using provided client
  */
 export async function runMigrationsWithClient(
@@ -294,22 +397,40 @@ async function main(): Promise<void> {
     // Verify required tables exist
     console.log('=== Verifying Required Tables ===\n');
     
-    const verification = await verifyRequiredTables(pool);
+    const tableVerification = await verifyRequiredTables(pool);
     
     console.log('Required tables:');
     for (const table of REQUIRED_TABLES) {
-      const status = verification.found.includes(table) ? '✓' : '✗';
+      const status = tableVerification.found.includes(table) ? '✓' : '✗';
       console.log(`  ${status} ${table}`);
     }
     
-    if (!verification.valid) {
-      console.error(`\nERROR: Missing required tables: ${verification.missing.join(', ')}`);
+    if (!tableVerification.valid) {
+      console.error(`\nERROR: Missing required tables: ${tableVerification.missing.join(', ')}`);
+      process.exit(1);
+    }
+    
+    // Verify required columns exist
+    console.log('\n=== Verifying Required Columns ===\n');
+    
+    const columnVerification = await verifyRequiredColumns(pool);
+    
+    if (columnVerification.valid) {
+      console.log(`✓ All required columns present in ${columnVerification.checkedTables.length} tables`);
+    } else {
+      console.log('Column verification FAILED:\n');
+      for (const error of columnVerification.errors) {
+        console.error(`  ✗ ${error}`);
+      }
+      console.error('\nMigration verification failed - schema is incomplete.');
+      console.error('Check your migrations or manually add the missing columns.');
       process.exit(1);
     }
     
     console.log('\n=== Migration Complete ===');
     console.log(`Applied: ${result.applied.length}, Skipped: ${result.skipped.length}`);
-    console.log(`Tables verified: ${verification.found.length}/${REQUIRED_TABLES.length}`);
+    console.log(`Tables verified: ${tableVerification.found.length}/${REQUIRED_TABLES.length}`);
+    console.log(`Columns verified: ${columnVerification.checkedTables.length} tables`);
     
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
