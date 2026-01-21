@@ -115,3 +115,68 @@ export interface ApprovalRateResult {
   total: number;
   eligible: boolean;
 }
+
+// =============================================================================
+// RECEIPT IMPORT TYPES
+// =============================================================================
+
+/**
+ * Receipt import status
+ */
+export type ReceiptImportStatus = 'received' | 'parsed' | 'failed';
+
+/**
+ * Receipt import response (API response shape - DO NOT CHANGE)
+ */
+export interface ReceiptImportResponse {
+  receiptImportId: string;
+  status: ReceiptImportStatus;
+}
+
+/**
+ * Receipt import request
+ */
+export interface ReceiptImportRequest {
+  imageBase64: string;
+  userProfileId: number;
+}
+
+/**
+ * Parsed item from receipt OCR
+ */
+export interface ParsedReceiptItem {
+  name: string;
+  price?: number;
+  quantity?: number;
+  confidence: number; // 0.0 to 1.0
+}
+
+/**
+ * Receipt import record (DB row)
+ */
+export interface ReceiptImportRecord {
+  id: string;
+  user_profile_id: number;
+  created_at: string;
+  status: ReceiptImportStatus;
+  raw_ocr_text?: string;
+  parsed_items?: ParsedReceiptItem[];
+  error_message?: string;
+  image_hash?: string; // For duplicate detection
+}
+
+/**
+ * Inventory item (for upsert after receipt parsing)
+ */
+export interface InventoryItem {
+  id: string;
+  user_profile_id: number;
+  name: string;
+  quantity: number;
+  unit?: string;
+  confidence: number;
+  source: 'receipt' | 'manual';
+  receipt_import_id?: string;
+  created_at: string;
+  updated_at: string;
+}
