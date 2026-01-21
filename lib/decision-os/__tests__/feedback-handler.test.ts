@@ -44,12 +44,38 @@ describe('createFeedbackCopy', () => {
     expect(copy.original_event_id).toBe('original-123');
   });
 
-  it('uses modified payload when provided', () => {
-    const modifiedPayload = { meal: 'burritos', recipe_id: 99 };
-    const copy = createFeedbackCopy(originalEvent, 'modified', modifiedPayload);
+  it('creates drm_triggered feedback copy', () => {
+    const copy = createFeedbackCopy(originalEvent, 'drm_triggered');
     
-    expect(copy.decision_payload).toEqual(modifiedPayload);
-    expect(copy.status).toBe('rejected'); // modified maps to rejected status
+    expect(copy.status).toBe('drm_triggered');
+    expect(copy.user_action).toBe('drm_triggered');
+    expect(copy.is_feedback_copy).toBe(true);
+    expect(copy.original_event_id).toBe('original-123');
+  });
+
+  it('sets user_action field correctly for all actions', () => {
+    const approvedCopy = createFeedbackCopy(originalEvent, 'approved');
+    expect(approvedCopy.user_action).toBe('approved');
+
+    const rejectedCopy = createFeedbackCopy(originalEvent, 'rejected');
+    expect(rejectedCopy.user_action).toBe('rejected');
+
+    const drmCopy = createFeedbackCopy(originalEvent, 'drm_triggered');
+    expect(drmCopy.user_action).toBe('drm_triggered');
+
+    const undoCopy = createFeedbackCopy(originalEvent, 'undo');
+    expect(undoCopy.user_action).toBe('undo');
+  });
+
+  it('sets is_autopilot=false for all feedback copies', () => {
+    const approvedCopy = createFeedbackCopy(originalEvent, 'approved');
+    expect(approvedCopy.is_autopilot).toBe(false);
+
+    const rejectedCopy = createFeedbackCopy(originalEvent, 'rejected');
+    expect(rejectedCopy.is_autopilot).toBe(false);
+
+    const undoCopy = createFeedbackCopy(originalEvent, 'undo');
+    expect(undoCopy.is_autopilot).toBe(false);
   });
 
   it('generates unique ID for feedback copy', () => {
@@ -323,7 +349,7 @@ describe('getTasteGraphWeight', () => {
     expect(getTasteGraphWeight(event)).toBe(1.0);
   });
 
-  it('returns -0.5 for rejected events', () => {
+  it('returns -1.0 for rejected events', () => {
     const event: DecisionEvent = {
       id: '1',
       user_profile_id: 1,
@@ -332,7 +358,31 @@ describe('getTasteGraphWeight', () => {
       decision_payload: {},
     };
     
+    expect(getTasteGraphWeight(event)).toBe(-1.0);
+  });
+
+  it('returns -0.5 for drm_triggered events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'drm_triggered',
+      decision_payload: {},
+    };
+    
     expect(getTasteGraphWeight(event)).toBe(-0.5);
+  });
+
+  it('returns -0.2 for expired events', () => {
+    const event: DecisionEvent = {
+      id: '1',
+      user_profile_id: 1,
+      decided_at: '2026-01-20T10:00:00Z',
+      status: 'expired',
+      decision_payload: {},
+    };
+    
+    expect(getTasteGraphWeight(event)).toBe(-0.2);
   });
 
   it('returns 0 for pending events', () => {
@@ -347,7 +397,7 @@ describe('getTasteGraphWeight', () => {
     expect(getTasteGraphWeight(event)).toBe(0);
   });
 
-  it('returns -0.5 for undo events (same as rejected)', () => {
+  it('returns -0.5 for undo events (autonomy penalty)', () => {
     const event: DecisionEvent = {
       id: '1',
       user_profile_id: 1,
@@ -357,6 +407,7 @@ describe('getTasteGraphWeight', () => {
       notes: 'undo_autopilot',
     };
     
+    // Undo is -0.5 autonomy penalty, NOT -1.0 taste rejection
     expect(getTasteGraphWeight(event)).toBe(-0.5);
   });
 });
@@ -528,7 +579,7 @@ describe('processUndo', () => {
   });
 
   describe('undo within window', () => {
-    it('inserts exactly ONE new decision_event row (append-only)', () => {
+    it('inserts exactly ONE new decision_event row (append-only) with correct columns', () => {
       const autopilotEvent = createAutopilotEvent(5); // 5 minutes ago
       
       const result = processUndo(autopilotEvent, []);
@@ -537,9 +588,14 @@ describe('processUndo', () => {
       expect(result.isDuplicate).toBe(false);
       expect(result.reason).toBe('success');
       expect(result.feedbackCopy).toBeDefined();
-      expect(result.feedbackCopy?.status).toBe('rejected');
+      
+      // Verify DB column values
+      expect(result.feedbackCopy?.user_action).toBe('undo'); // DB column
+      expect(result.feedbackCopy?.status).toBe('rejected'); // Internal status
       expect(result.feedbackCopy?.notes).toBe('undo_autopilot');
       expect(result.feedbackCopy?.is_feedback_copy).toBe(true);
+      expect(result.feedbackCopy?.is_autopilot).toBe(false); // Undo is NOT autopilot
+      expect(result.feedbackCopy?.actioned_at).toBeDefined();
     });
 
     it('undo is idempotent - multiple undos create only one copy', () => {

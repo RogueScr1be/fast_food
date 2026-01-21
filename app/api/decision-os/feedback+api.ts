@@ -4,8 +4,10 @@
  * Handles user feedback on decisions including:
  * - approved: User approves the decision
  * - rejected: User rejects the decision
- * - modified: User modifies the decision
+ * - drm_triggered: User explicitly triggers DRM (e.g., "Dinner changed")
  * - undo: User undoes an autopilot-approved decision (within 10-minute window)
+ * 
+ * BANNED: 'modified' action is not allowed.
  * 
  * Response shape is ALWAYS: { recorded: true }
  * This is intentional for simplicity and to avoid array responses.
@@ -17,14 +19,22 @@ import {
   processUndo,
   isAutopilotEvent,
   isWithinUndoWindow,
-  getTasteGraphWeight,
   shouldRunConsumption,
   shouldUpdateTasteGraph,
   shouldReverseConsumption,
 } from '../../../lib/decision-os/feedback/handler';
+import { computeTasteWeight } from '../../../lib/decision-os/taste/weights';
+
+/**
+ * Valid client-submitted actions.
+ * NOTE: 'modified' is BANNED - not in this list.
+ * NOTE: 'expired' and 'pending' are internal-only, not client actions.
+ */
+const VALID_CLIENT_ACTIONS = ['approved', 'rejected', 'drm_triggered', 'undo'] as const;
 
 /**
  * Validates the feedback request body.
+ * Returns null for invalid requests (including banned 'modified' action).
  */
 function validateRequest(body: unknown): FeedbackRequest | null {
   if (!body || typeof body !== 'object') {
@@ -37,21 +47,16 @@ function validateRequest(body: unknown): FeedbackRequest | null {
     return null;
   }
   
-  const validActions = ['approved', 'rejected', 'modified', 'undo'];
-  if (typeof req.userAction !== 'string' || !validActions.includes(req.userAction)) {
-    return null;
-  }
-  
-  // modifiedPayload is optional but must be an object if present
-  if (req.modifiedPayload !== undefined && 
-      (typeof req.modifiedPayload !== 'object' || req.modifiedPayload === null)) {
+  // Validate userAction against allowed client actions
+  // 'modified' is BANNED and will fail this check
+  if (typeof req.userAction !== 'string' || 
+      !VALID_CLIENT_ACTIONS.includes(req.userAction as typeof VALID_CLIENT_ACTIONS[number])) {
     return null;
   }
   
   return {
     eventId: req.eventId,
     userAction: req.userAction as FeedbackRequest['userAction'],
-    modifiedPayload: req.modifiedPayload as Record<string, unknown> | undefined,
   };
 }
 
@@ -90,9 +95,10 @@ async function insertTasteSignal(eventId: string, weight: number): Promise<void>
  * Request body:
  * {
  *   eventId: string,
- *   userAction: 'approved' | 'rejected' | 'modified' | 'undo',
- *   modifiedPayload?: Record<string, unknown>
+ *   userAction: 'approved' | 'rejected' | 'drm_triggered' | 'undo'
  * }
+ * 
+ * BANNED: 'modified' action is rejected.
  * 
  * Response:
  * { recorded: true }
@@ -100,8 +106,8 @@ async function insertTasteSignal(eventId: string, weight: number): Promise<void>
  * Undo behavior:
  * - Only allowed for autopilot-approved events
  * - Only allowed within 10-minute window
- * - Creates a new decision_event row with status='rejected' and notes='undo_autopilot'
- * - Inserts taste signal with -0.5 weight
+ * - Creates a new decision_event row with user_action='rejected' and notes='undo_autopilot'
+ * - Inserts taste signal with -0.5 weight (autonomy penalty, not taste rejection)
  * - Does NOT reverse consumption (v1 limitation)
  * - Idempotent: multiple undos create only one undo copy
  */
@@ -112,7 +118,7 @@ export async function POST(request: Request): Promise<Response> {
     
     if (!validatedRequest) {
       // Still return { recorded: true } to maintain response shape
-      // Invalid requests are no-ops
+      // Invalid requests (including banned 'modified') are no-ops
       return Response.json({ recorded: true } satisfies FeedbackResponse);
     }
     
@@ -135,7 +141,7 @@ export async function POST(request: Request): Promise<Response> {
       
       // Update taste graph if applicable
       if (shouldUpdateTasteGraph(result.feedbackCopy)) {
-        const weight = getTasteGraphWeight(result.feedbackCopy);
+        const weight = computeTasteWeight(result.feedbackCopy);
         await insertTasteSignal(result.feedbackCopy.id, weight);
       }
       

@@ -62,21 +62,38 @@ export function isAutopilotEvent(event: DecisionEvent): boolean {
 /**
  * Creates a feedback copy event from an original pending event.
  * 
+ * DB Column Mapping:
+ * - user_action: The client's submitted action (approved|rejected|drm_triggered|undo)
+ * - status: Internal status for DB queries (maps from user_action)
+ * - is_autopilot: false/omitted for undo (undo is NOT an autopilot action)
+ * - notes: 'undo_autopilot' for undo actions
+ * 
  * @param originalEvent - The original pending decision event
- * @param userAction - The user's action (approved, rejected, modified, undo)
- * @param modifiedPayload - Optional modified payload for 'modified' action
+ * @param userAction - The user's action (approved, rejected, drm_triggered, undo)
  * @returns New feedback copy event
  */
 export function createFeedbackCopy(
   originalEvent: DecisionEvent,
-  userAction: UserAction,
-  modifiedPayload?: Record<string, unknown>
+  userAction: UserAction
 ): DecisionEvent {
   const nowIso = new Date().toISOString();
   
-  // Determine status and notes based on action
+  // Determine internal status based on user action
+  // undo and rejected both map to 'rejected' status
+  // drm_triggered maps to 'drm_triggered' status
   const isUndo = userAction === 'undo';
-  const status = (userAction === 'approved') ? 'approved' : 'rejected';
+  const isDrmTriggered = userAction === 'drm_triggered';
+  
+  let status: DecisionEvent['status'];
+  if (userAction === 'approved') {
+    status = 'approved';
+  } else if (isDrmTriggered) {
+    status = 'drm_triggered';
+  } else {
+    // rejected and undo both map to 'rejected' status
+    status = 'rejected';
+  }
+  
   const notes = isUndo ? 'undo_autopilot' : undefined;
   
   return {
@@ -85,10 +102,16 @@ export function createFeedbackCopy(
     decided_at: originalEvent.decided_at,
     actioned_at: nowIso,
     status,
-    decision_payload: modifiedPayload ?? originalEvent.decision_payload,
+    user_action: userAction, // DB column: the client's submitted action
+    decision_payload: originalEvent.decision_payload,
     is_feedback_copy: true,
     original_event_id: originalEvent.id,
+    is_autopilot: false, // Undo is NOT an autopilot action; explicitly false
     notes,
+    // Copy additional fields from original event for append-only insert
+    decision_type: (originalEvent as Record<string, unknown>).decision_type as string | undefined,
+    meal_id: (originalEvent as Record<string, unknown>).meal_id as number | undefined,
+    context_hash: (originalEvent as Record<string, unknown>).context_hash as string | undefined,
   };
 }
 
@@ -260,8 +283,7 @@ export function processFeedback(
   // Create the feedback copy
   const feedbackCopy = createFeedbackCopy(
     originalEvent,
-    request.userAction,
-    request.modifiedPayload
+    request.userAction
   );
   
   return {
@@ -308,24 +330,33 @@ export function shouldUpdateTasteGraph(event: DecisionEvent): boolean {
 /**
  * Gets the taste graph weight for a feedback event.
  * 
- * Weight mapping:
- * - approved: +1.0
- * - rejected (manual): -0.5
- * - undo (autopilot): -0.5 (same as rejected, treat undo as mild rejection)
+ * @deprecated Use computeTasteWeight from lib/decision-os/taste/weights.ts instead.
+ *             This function is kept for backwards compatibility.
  * 
- * Note: Undo is treated as a mild rejection signal. We use -0.5 (not -1.0)
- * because the user may not strongly dislike the choice, just didn't want it
- * auto-applied this time.
+ * Basic weight mapping (without stress multiplier):
+ * - approved: +1.0
+ * - rejected: -1.0
+ * - drm_triggered: -0.5
+ * - expired: -0.2
+ * - undo: -0.5 (autonomy penalty, NOT taste rejection)
  * 
  * @param event - The decision event
- * @returns Weight multiplier (positive for approved, negative for rejected)
+ * @returns Weight multiplier (positive for approved, negative for rejected/undo)
  */
 export function getTasteGraphWeight(event: DecisionEvent): number {
+  // Check for undo first (notes='undo_autopilot')
+  if (event.notes === 'undo_autopilot') {
+    return -0.5; // Autonomy penalty
+  }
+  
   if (event.status === 'approved') {
     return 1.0;
   } else if (event.status === 'rejected') {
-    // Both manual rejection and undo (notes='undo_autopilot') get -0.5
+    return -1.0;
+  } else if (event.status === 'drm_triggered') {
     return -0.5;
+  } else if (event.status === 'expired') {
+    return -0.2;
   }
   return 0;
 }
