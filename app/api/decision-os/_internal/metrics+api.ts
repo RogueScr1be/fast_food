@@ -10,7 +10,9 @@
  * Response (CANONICAL CONTRACT):
  * {
  *   ok: boolean,
- *   counters: { [metricName]: number }
+ *   counters: { [metricName]: number },
+ *   last_flush_at: string | null,    // ISO timestamp of last DB flush attempt
+ *   db_flush_ok: boolean | null      // true if last flush succeeded, false if failed, null if never attempted
  * }
  * 
  * Error Response (401):
@@ -22,7 +24,7 @@
  * - No user IDs, tokens, meal names, or sensitive data
  */
 
-import { getSnapshot } from '../../../../lib/decision-os/monitoring/metrics';
+import { getSnapshot, getLastFlushAt, getLastFlushOk } from '../../../../lib/decision-os/monitoring/metrics';
 import { validateInternalMetricsResponse, validateErrorResponse } from '../../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
 
@@ -39,16 +41,30 @@ function buildErrorResponse(error: string): Response {
 }
 
 /**
- * Build success response
+ * Build success response with flush status
  */
-function buildSuccessResponse(counters: Record<string, number>): Response {
-  const response = { ok: true, counters };
+function buildSuccessResponse(
+  counters: Record<string, number>,
+  lastFlushAt: string | null,
+  dbFlushOk: boolean | null
+): Response {
+  const response = { 
+    ok: true, 
+    counters,
+    last_flush_at: lastFlushAt,
+    db_flush_ok: dbFlushOk,
+  };
   
   // Validate before returning
   const validation = validateInternalMetricsResponse(response);
   if (!validation.valid) {
     console.error('Internal metrics response validation failed:', validation.errors);
-    return Response.json({ ok: false, counters: {} }, { status: 200 });
+    return Response.json({ 
+      ok: false, 
+      counters: {}, 
+      last_flush_at: null, 
+      db_flush_ok: null 
+    }, { status: 200 });
   }
   
   return Response.json(response, { status: 200 });
@@ -91,5 +107,9 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
   
-  return buildSuccessResponse(counters);
+  // Get flush status
+  const lastFlushAt = getLastFlushAt();
+  const dbFlushOk = getLastFlushOk();
+  
+  return buildSuccessResponse(counters, lastFlushAt, dbFlushOk);
 }

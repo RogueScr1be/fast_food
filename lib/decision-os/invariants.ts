@@ -312,7 +312,12 @@ export function validateHealthzResponse(response: unknown): ValidationResult {
 /**
  * Allowed fields for internal metrics responses
  */
-export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set(['ok', 'counters']);
+export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set([
+  'ok', 
+  'counters', 
+  'last_flush_at', 
+  'db_flush_ok'
+]);
 
 /**
  * Validates an internal metrics endpoint response.
@@ -320,6 +325,8 @@ export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set(['ok', 'counters
  * CANONICAL CONTRACT:
  * - ok: boolean (required)
  * - counters: object with string keys and number values only (required)
+ * - last_flush_at: string | null (required) - ISO timestamp of last DB flush attempt
+ * - db_flush_ok: boolean | null (required) - true if last flush succeeded, false if failed
  * 
  * REJECTS:
  * - any unknown fields
@@ -363,6 +370,28 @@ export function validateInternalMetricsResponse(response: unknown): ValidationRe
         });
       }
     }
+  }
+
+  // last_flush_at: required, must be string or null
+  if (!('last_flush_at' in resp)) {
+    errors.push({ field: 'last_flush_at', message: 'last_flush_at is required' });
+  } else if (resp.last_flush_at !== null && typeof resp.last_flush_at !== 'string') {
+    errors.push({ 
+      field: 'last_flush_at', 
+      message: 'last_flush_at must be a string or null', 
+      value: resp.last_flush_at 
+    });
+  }
+
+  // db_flush_ok: required, must be boolean or null
+  if (!('db_flush_ok' in resp)) {
+    errors.push({ field: 'db_flush_ok', message: 'db_flush_ok is required' });
+  } else if (resp.db_flush_ok !== null && typeof resp.db_flush_ok !== 'boolean') {
+    errors.push({ 
+      field: 'db_flush_ok', 
+      message: 'db_flush_ok must be a boolean or null', 
+      value: resp.db_flush_ok 
+    });
   }
 
   // No arrays anywhere

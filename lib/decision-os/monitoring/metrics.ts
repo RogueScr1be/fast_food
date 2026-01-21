@@ -59,11 +59,29 @@ const counters: Map<MetricName, number> = new Map();
 // Optional DB client for persistent metrics
 let dbClient: MetricsDbClient | null = null;
 
+// Track last DB flush status
+let lastFlushAt: string | null = null;
+let lastFlushOk: boolean | null = null;
+
 /**
  * Set the DB client for persistent metrics
  */
 export function setMetricsDbClient(client: MetricsDbClient | null): void {
   dbClient = client;
+}
+
+/**
+ * Get the last flush timestamp (ISO string) or null if never flushed
+ */
+export function getLastFlushAt(): string | null {
+  return lastFlushAt;
+}
+
+/**
+ * Get whether the last flush was successful (null if never attempted)
+ */
+export function getLastFlushOk(): boolean | null {
+  return lastFlushOk;
 }
 
 /**
@@ -99,7 +117,15 @@ async function flushToDb(name: MetricName): Promise<void> {
          updated_at = NOW()`,
       [today, name]
     );
+    
+    // Track successful flush
+    lastFlushAt = new Date().toISOString();
+    lastFlushOk = true;
   } catch {
+    // Track failed flush
+    lastFlushAt = new Date().toISOString();
+    lastFlushOk = false;
+    
     // Fail silently - increment local counter only
     // Avoid recursion by not calling record() here
     const current = counters.get('metrics_db_failed') ?? 0;
@@ -139,10 +165,12 @@ export function getSnapshot(): MetricsSnapshot {
 }
 
 /**
- * Reset all counters (for testing only)
+ * Reset all counters and flush tracking (for testing only)
  */
 export function reset(): void {
   counters.clear();
+  lastFlushAt = null;
+  lastFlushOk = null;
 }
 
 /**

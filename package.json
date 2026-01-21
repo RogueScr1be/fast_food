@@ -26,6 +26,7 @@
     "db:migrate:staging": "npx ts-node db/migrate.ts",
     "db:verify:staging": "npx ts-node scripts/db-verify-staging.ts",
     "metrics:prune": "npx ts-node scripts/metrics-prune.ts",
+    "metrics:health": "npx ts-node scripts/metrics-health.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "type-check": "tsc --noEmit",
     "eas:build:dev": "eas build --profile development --platform ios",

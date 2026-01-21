@@ -684,21 +684,28 @@ describe('Modified Action Ban Invariant', () => {
 
 describe('validateInternalMetricsResponse', () => {
   describe('valid responses', () => {
-    it('passes with ok:true and empty counters', () => {
-      const response = { ok: true, counters: {} };
+    it('passes with all fields present and null flush values', () => {
+      const response = { 
+        ok: true, 
+        counters: {}, 
+        last_flush_at: null, 
+        db_flush_ok: null 
+      };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
-    it('passes with ok:true and numeric counters', () => {
+    it('passes with numeric counters and flush timestamp', () => {
       const response = { 
         ok: true, 
         counters: { 
           decision_called: 5, 
           receipt_called: 3, 
           healthz_hit: 10 
-        } 
+        },
+        last_flush_at: '2025-01-20T12:00:00.000Z',
+        db_flush_ok: true
       };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(true);
@@ -706,14 +713,36 @@ describe('validateInternalMetricsResponse', () => {
     });
 
     it('passes with ok:false and counters', () => {
-      const response = { ok: false, counters: { error_count: 1 } };
+      const response = { 
+        ok: false, 
+        counters: { error_count: 1 },
+        last_flush_at: '2025-01-20T12:00:00.000Z',
+        db_flush_ok: false
+      };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
     it('passes with zero values in counters', () => {
-      const response = { ok: true, counters: { decision_called: 0 } };
+      const response = { 
+        ok: true, 
+        counters: { decision_called: 0 },
+        last_flush_at: null,
+        db_flush_ok: null
+      };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with db_flush_ok:false (last flush failed)', () => {
+      const response = { 
+        ok: true, 
+        counters: {},
+        last_flush_at: '2025-01-20T12:00:00.000Z',
+        db_flush_ok: false
+      };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -722,42 +751,61 @@ describe('validateInternalMetricsResponse', () => {
 
   describe('invalid responses', () => {
     it('FAILS without ok field', () => {
-      const response = { counters: {} };
+      const response = { counters: {}, last_flush_at: null, db_flush_ok: null };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'ok' && e.message.includes('required'))).toBe(true);
     });
 
     it('FAILS without counters field', () => {
-      const response = { ok: true };
+      const response = { ok: true, last_flush_at: null, db_flush_ok: null };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'counters' && e.message.includes('required'))).toBe(true);
     });
 
+    it('FAILS without last_flush_at field', () => {
+      const response = { ok: true, counters: {}, db_flush_ok: null };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'last_flush_at' && e.message.includes('required'))).toBe(true);
+    });
+
+    it('FAILS without db_flush_ok field', () => {
+      const response = { ok: true, counters: {}, last_flush_at: null };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'db_flush_ok' && e.message.includes('required'))).toBe(true);
+    });
+
     it('FAILS with ok not boolean (string)', () => {
-      const response = { ok: 'true', counters: {} };
+      const response = { ok: 'true', counters: {}, last_flush_at: null, db_flush_ok: null };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'ok' && e.message.includes('boolean'))).toBe(true);
     });
 
     it('FAILS with counters as array', () => {
-      const response = { ok: true, counters: [1, 2, 3] };
+      const response = { ok: true, counters: [1, 2, 3], last_flush_at: null, db_flush_ok: null };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'counters' && e.message.includes('object'))).toBe(true);
     });
 
     it('FAILS with counters as null', () => {
-      const response = { ok: true, counters: null };
+      const response = { ok: true, counters: null, last_flush_at: null, db_flush_ok: null };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'counters' && e.message.includes('object'))).toBe(true);
     });
 
     it('FAILS with non-numeric values in counters', () => {
-      const response = { ok: true, counters: { decision_called: 'five' } };
+      const response = { 
+        ok: true, 
+        counters: { decision_called: 'five' },
+        last_flush_at: null,
+        db_flush_ok: null
+      };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => 
@@ -765,21 +813,35 @@ describe('validateInternalMetricsResponse', () => {
       )).toBe(true);
     });
 
+    it('FAILS with last_flush_at as number', () => {
+      const response = { ok: true, counters: {}, last_flush_at: 12345, db_flush_ok: null };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'last_flush_at' && e.message.includes('string or null'))).toBe(true);
+    });
+
+    it('FAILS with db_flush_ok as string', () => {
+      const response = { ok: true, counters: {}, last_flush_at: null, db_flush_ok: 'true' };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'db_flush_ok' && e.message.includes('boolean or null'))).toBe(true);
+    });
+
     it('FAILS with unknown fields', () => {
-      const response = { ok: true, counters: {}, extra: 'field' };
+      const response = { ok: true, counters: {}, last_flush_at: null, db_flush_ok: null, extra: 'field' };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'extra')).toBe(true);
     });
 
     it('FAILS with arrays in response', () => {
-      const response = { ok: true, counters: {}, list: [1, 2, 3] };
+      const response = { ok: true, counters: {}, last_flush_at: null, db_flush_ok: null, list: [1, 2, 3] };
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
     });
 
     it('FAILS with response as array', () => {
-      const response = [{ ok: true, counters: {} }];
+      const response = [{ ok: true, counters: {}, last_flush_at: null, db_flush_ok: null }];
       const result = validateInternalMetricsResponse(response);
       expect(result.valid).toBe(false);
     });
@@ -791,10 +853,12 @@ describe('validateInternalMetricsResponse', () => {
   });
 
   describe('ALLOWED_FIELDS constant', () => {
-    it('contains only ok and counters', () => {
-      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.size).toBe(2);
+    it('contains all required fields', () => {
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.size).toBe(4);
       expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('ok')).toBe(true);
       expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('counters')).toBe(true);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('last_flush_at')).toBe(true);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('db_flush_ok')).toBe(true);
     });
 
     it('does not contain banned fields', () => {

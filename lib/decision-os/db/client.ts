@@ -322,33 +322,102 @@ class InMemoryAdapter implements DbAdapter {
 // =============================================================================
 
 /**
- * SQL statement types that are blocked in readonly mode
+ * DML/DDL tokens that indicate a write operation.
+ * Must reject SQL containing these even in CTEs or subqueries.
  */
-const WRITE_STATEMENTS = ['INSERT', 'UPDATE', 'DELETE', 'ALTER', 'CREATE', 'DROP', 'TRUNCATE'];
+const WRITE_TOKENS = /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/i;
 
 /**
- * Check if SQL statement is a write operation
+ * Strip leading SQL comments from a string.
+ * Handles both line comments (--) and block comments (slash-star ... star-slash).
+ * Repeats until no more leading comments found.
  */
-function isWriteStatement(sql: string): boolean {
-  const normalizedSql = sql.trim().toUpperCase();
-  // Check for common write statement prefixes
-  // Also handle CTEs: WITH ... INSERT/UPDATE/DELETE
-  const firstWord = normalizedSql.split(/\s+/)[0];
+function stripLeadingComments(sql: string): string {
+  let prev = '';
+  let current = sql;
   
-  if (WRITE_STATEMENTS.includes(firstWord)) {
-    return true;
-  }
-  
-  // Check for CTEs that end with write operations
-  if (firstWord === 'WITH') {
-    for (const stmt of WRITE_STATEMENTS) {
-      if (normalizedSql.includes(` ${stmt} `)) {
-        return true;
+  while (prev !== current) {
+    prev = current;
+    
+    // Remove leading whitespace
+    current = current.trimStart();
+    
+    // Remove line comments: --...newline
+    while (current.startsWith('--')) {
+      const newlineIdx = current.indexOf('\n');
+      if (newlineIdx === -1) {
+        current = '';
+      } else {
+        current = current.substring(newlineIdx + 1).trimStart();
+      }
+    }
+    
+    // Remove block comments: /*...*/
+    while (current.startsWith('/*')) {
+      const endIdx = current.indexOf('*/');
+      if (endIdx === -1) {
+        // Unclosed block comment - treat entire string as comment
+        current = '';
+      } else {
+        current = current.substring(endIdx + 2).trimStart();
       }
     }
   }
   
-  return false;
+  return current;
+}
+
+/**
+ * Check if SQL statement is read-only (safe to execute in readonly mode).
+ * 
+ * Rules:
+ * 1. Strip leading whitespace and SQL comments (line and block)
+ * 2. Reject if contains ';' anywhere (multi-statement)
+ * 3. Allow only statements starting with SELECT or WITH (case-insensitive)
+ * 4. Reject if contains any DML/DDL tokens (INSERT/UPDATE/DELETE/ALTER/CREATE/DROP/TRUNCATE)
+ *    even inside CTEs or subqueries
+ * 
+ * @param sql - SQL statement to check
+ * @returns true if the SQL is read-only safe, false otherwise
+ */
+export function isReadOnlySql(sql: string): boolean {
+  // Strip leading comments and whitespace
+  const stripped = stripLeadingComments(sql);
+  
+  // Reject empty SQL
+  if (stripped.length === 0) {
+    return false;
+  }
+  
+  // Reject multi-statement SQL (contains semicolon)
+  if (stripped.includes(';')) {
+    return false;
+  }
+  
+  // Check the first keyword (case-insensitive)
+  const upperSql = stripped.toUpperCase();
+  const firstWord = upperSql.split(/\s+/)[0];
+  
+  // Only allow SELECT or WITH
+  if (firstWord !== 'SELECT' && firstWord !== 'WITH') {
+    return false;
+  }
+  
+  // Scan for any DML/DDL tokens anywhere in the SQL
+  // This catches CTEs with write operations: WITH x AS (UPDATE ...) SELECT ...
+  if (WRITE_TOKENS.test(stripped)) {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Check if SQL statement is a write operation.
+ * Inverse of isReadOnlySql for backwards compatibility.
+ */
+function isWriteStatement(sql: string): boolean {
+  return !isReadOnlySql(sql);
 }
 
 /**

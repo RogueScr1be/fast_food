@@ -5,7 +5,7 @@
  * Postgres adapter is tested via integration/smoke tests.
  */
 
-import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError } from '../db/client';
+import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql } from '../db/client';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -409,6 +409,183 @@ describe('Database Client', () => {
       expect(isReadonlyModeError(null)).toBe(false);
       expect(isReadonlyModeError(undefined)).toBe(false);
       expect(isReadonlyModeError(42)).toBe(false);
+    });
+  });
+
+  describe('isReadOnlySql', () => {
+    describe('allows valid SELECT statements', () => {
+      it('allows simple SELECT', () => {
+        expect(isReadOnlySql('SELECT 1')).toBe(true);
+      });
+
+      it('allows SELECT with leading whitespace', () => {
+        expect(isReadOnlySql('   SELECT 1')).toBe(true);
+      });
+
+      it('allows SELECT with leading line comment', () => {
+        expect(isReadOnlySql('-- hi\nSELECT 1')).toBe(true);
+      });
+
+      it('allows SELECT with leading block comment', () => {
+        expect(isReadOnlySql('/*x*/SELECT 1')).toBe(true);
+      });
+
+      it('allows SELECT with multiple leading comments', () => {
+        expect(isReadOnlySql('-- comment 1\n/* comment 2 */\nSELECT 1')).toBe(true);
+      });
+
+      it('allows SELECT with complex FROM clause', () => {
+        expect(isReadOnlySql('SELECT * FROM users WHERE id = 1')).toBe(true);
+      });
+
+      it('allows SELECT with subquery', () => {
+        expect(isReadOnlySql('SELECT * FROM (SELECT id FROM users) sub')).toBe(true);
+      });
+
+      it('allows lowercase select', () => {
+        expect(isReadOnlySql('select 1')).toBe(true);
+      });
+
+      it('allows mixed case SELECT', () => {
+        expect(isReadOnlySql('SeLeCt 1')).toBe(true);
+      });
+    });
+
+    describe('allows valid WITH (CTE) statements', () => {
+      it('allows simple WITH...SELECT', () => {
+        expect(isReadOnlySql('WITH x AS (SELECT 1) SELECT * FROM x')).toBe(true);
+      });
+
+      it('allows WITH with leading whitespace', () => {
+        expect(isReadOnlySql('   WITH x AS (SELECT 1) SELECT * FROM x')).toBe(true);
+      });
+
+      it('allows WITH with multiple CTEs', () => {
+        expect(isReadOnlySql('WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b')).toBe(true);
+      });
+
+      it('allows lowercase with', () => {
+        expect(isReadOnlySql('with x as (select 1) select * from x')).toBe(true);
+      });
+    });
+
+    describe('rejects write operations', () => {
+      it('rejects INSERT', () => {
+        expect(isReadOnlySql('INSERT INTO users (name) VALUES (\'test\')')).toBe(false);
+      });
+
+      it('rejects UPDATE', () => {
+        expect(isReadOnlySql('UPDATE users SET name = \'test\'')).toBe(false);
+      });
+
+      it('rejects DELETE', () => {
+        expect(isReadOnlySql('DELETE FROM users')).toBe(false);
+      });
+
+      it('rejects ALTER', () => {
+        expect(isReadOnlySql('ALTER TABLE users ADD COLUMN foo TEXT')).toBe(false);
+      });
+
+      it('rejects CREATE', () => {
+        expect(isReadOnlySql('CREATE TABLE foo (id INT)')).toBe(false);
+      });
+
+      it('rejects DROP', () => {
+        expect(isReadOnlySql('DROP TABLE users')).toBe(false);
+      });
+
+      it('rejects TRUNCATE', () => {
+        expect(isReadOnlySql('TRUNCATE users')).toBe(false);
+      });
+
+      it('rejects UPDATE with leading comment', () => {
+        expect(isReadOnlySql('-- hi\nUPDATE runtime_flags SET enabled=true')).toBe(false);
+      });
+
+      it('rejects lowercase update', () => {
+        expect(isReadOnlySql('update users set name = \'test\'')).toBe(false);
+      });
+    });
+
+    describe('rejects multi-statement SQL', () => {
+      it('rejects SELECT followed by INSERT', () => {
+        expect(isReadOnlySql('SELECT 1; INSERT INTO runtime_flags (key) VALUES (\'x\')')).toBe(false);
+      });
+
+      it('rejects SELECT with trailing semicolon and INSERT', () => {
+        expect(isReadOnlySql('SELECT 1;INSERT INTO users VALUES (1)')).toBe(false);
+      });
+
+      it('rejects semicolon anywhere in SQL', () => {
+        expect(isReadOnlySql('SELECT 1; --')).toBe(false);
+      });
+    });
+
+    describe('rejects DML/DDL tokens in CTEs', () => {
+      it('rejects WITH containing INSERT', () => {
+        expect(isReadOnlySql('WITH x AS (INSERT INTO users VALUES (1) RETURNING *) SELECT * FROM x')).toBe(false);
+      });
+
+      it('rejects WITH containing UPDATE', () => {
+        expect(isReadOnlySql('WITH x AS (UPDATE users SET name = \'foo\' RETURNING *) SELECT * FROM x')).toBe(false);
+      });
+
+      it('rejects WITH containing DELETE', () => {
+        expect(isReadOnlySql('WITH x AS (DELETE FROM users RETURNING *) SELECT * FROM x')).toBe(false);
+      });
+
+      it('rejects UPDATE inside nested CTE', () => {
+        expect(isReadOnlySql('WITH a AS (SELECT 1), b AS (UPDATE foo SET x=1 RETURNING *) SELECT * FROM a,b')).toBe(false);
+      });
+    });
+
+    describe('rejects DML/DDL tokens in subqueries', () => {
+      it('rejects INSERT in subquery (theoretical)', () => {
+        // This is invalid SQL but we should still reject it
+        expect(isReadOnlySql('SELECT * FROM (INSERT INTO foo VALUES (1)) x')).toBe(false);
+      });
+
+      it('rejects SQL containing DML keywords even in string literals (defense-in-depth)', () => {
+        // Defense-in-depth: We reject SQL containing DML keywords even in string literals.
+        // This is intentionally over-cautious - it's better to reject safe queries
+        // than to allow unsafe ones through clever SQL injection.
+        // Applications that need to select string values containing 'update', 'delete', etc.
+        // should use parameterized queries instead.
+        expect(isReadOnlySql('SELECT * FROM users WHERE action = \'update\'')).toBe(false);
+        expect(isReadOnlySql('SELECT * FROM logs WHERE message LIKE \'%DELETE%\'')).toBe(false);
+      });
+    });
+
+    describe('edge cases', () => {
+      it('rejects empty SQL', () => {
+        expect(isReadOnlySql('')).toBe(false);
+      });
+
+      it('rejects SQL with only whitespace', () => {
+        expect(isReadOnlySql('   ')).toBe(false);
+      });
+
+      it('rejects SQL with only comments', () => {
+        expect(isReadOnlySql('-- just a comment')).toBe(false);
+      });
+
+      it('rejects SQL with only block comment', () => {
+        expect(isReadOnlySql('/* nothing here */')).toBe(false);
+      });
+
+      it('allows SELECT with comment inside', () => {
+        expect(isReadOnlySql('SELECT /* inline */ 1')).toBe(true);
+      });
+
+      it('handles unclosed block comment', () => {
+        expect(isReadOnlySql('/* unclosed comment')).toBe(false);
+      });
+
+      it('rejects non-SELECT/WITH statements', () => {
+        expect(isReadOnlySql('EXPLAIN SELECT 1')).toBe(false); // EXPLAIN not allowed
+        expect(isReadOnlySql('SET search_path = public')).toBe(false);
+        expect(isReadOnlySql('SHOW all')).toBe(false);
+      });
     });
   });
 });
