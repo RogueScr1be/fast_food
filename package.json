@@ -20,7 +20,12 @@
     "db:migrate": "npx ts-node db/migrate.ts",
     "db:migrate:staging": "npx ts-node db/migrate.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "eas:build:dev": "eas build --profile development --platform ios",
+    "eas:build:preview": "eas build --profile preview --platform ios",
+    "eas:build:prod": "eas build --profile production --platform ios",
+    "eas:submit:prod": "eas submit --platform ios --latest",
+    "release:testflight": "eas build --profile production --platform ios --auto-submit"
   },
   "dependencies": {
     "expo": "~52.0.30",
@@ -62,6 +67,9 @@
     "react-native-animatable": "^1.4.0",
     "lucide-react-native": "^0.454.0",
     "@expo-google-fonts/inter": "^0.2.3"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

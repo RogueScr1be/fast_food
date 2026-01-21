@@ -3,24 +3,53 @@ import { Platform } from 'react-native';
 /**
  * API Service with Authentication Support
  * 
+ * Environment Variables (all EXPO_PUBLIC_ prefixed for client bundling):
+ * 
+ * - EXPO_PUBLIC_DECISION_OS_BASE_URL: Base URL for Decision OS API
+ *   - dev: http://localhost:8081 (default)
+ *   - preview: Vercel staging URL (set in eas.json secrets)
+ *   - production: Vercel staging URL (set in eas.json secrets)
+ * 
+ * - EXPO_PUBLIC_STAGING_AUTH_TOKEN: Auth token for preview builds ONLY
+ *   - NEVER set for production builds
+ *   - Used for internal QA testing
+ * 
+ * - EXPO_PUBLIC_APP_VARIANT: Build variant (development|preview|production)
+ *   - Used for conditional behavior
+ * 
  * Authentication:
  * - Set authToken via setAuthToken() method
- * - Or set EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN env var for dev
+ * - Or set EXPO_PUBLIC_STAGING_AUTH_TOKEN env var for preview builds
  * - All requests to /api/decision-os/* will include Authorization header
+ * - Production builds ship without baked-in token (will get 401 until login UI added)
  */
 class ApiService {
   private baseUrl: string;
+  private decisionOsBaseUrl: string;
   private authToken: string | null = null;
+  private appVariant: string;
 
   constructor() {
+    // Determine app variant
+    this.appVariant = process.env.EXPO_PUBLIC_APP_VARIANT || 'development';
+    
     // Use environment variable or fallback based on platform
     this.baseUrl = process.env.EXPO_PUBLIC_API_URL || this.getDefaultBaseUrl();
     
-    // Check for dev auth token in environment
-    const envToken = process.env.EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN;
-    if (envToken) {
-      this.authToken = envToken;
+    // Single source of truth for Decision OS API base URL
+    // In preview/production, this should be set via EAS secrets
+    this.decisionOsBaseUrl = process.env.EXPO_PUBLIC_DECISION_OS_BASE_URL || this.baseUrl;
+    
+    // Auth token injection:
+    // - EXPO_PUBLIC_STAGING_AUTH_TOKEN: For preview builds ONLY (internal QA)
+    // - Production builds must NOT have a baked-in token
+    if (this.appVariant === 'preview') {
+      const stagingToken = process.env.EXPO_PUBLIC_STAGING_AUTH_TOKEN;
+      if (stagingToken) {
+        this.authToken = stagingToken;
+      }
     }
+    // Note: For production, authToken stays null until user logs in (future login UI)
   }
 
   /**
@@ -60,13 +89,37 @@ class ApiService {
     }
   }
 
+  /**
+   * Get the app variant (development, preview, production)
+   */
+  getAppVariant(): string {
+    return this.appVariant;
+  }
+
+  /**
+   * Get Decision OS base URL (for debugging)
+   */
+  getDecisionOsBaseUrl(): string {
+    return this.decisionOsBaseUrl;
+  }
+
   private async request<T>(
     endpoint: string, 
     options: RequestInit = {}
   ): Promise<T> {
-    // For local API routes, use relative paths
+    // Determine which base URL to use
+    const isDecisionOsEndpoint = endpoint.startsWith('/api/decision-os/');
     const isApiRoute = endpoint.startsWith('/api/') || endpoint.startsWith('/health');
-    const url = isApiRoute ? `${this.baseUrl}${endpoint}` : `${this.baseUrl}/api/v1${endpoint}`;
+    
+    let url: string;
+    if (isDecisionOsEndpoint) {
+      // Use Decision OS specific base URL (single source of truth)
+      url = `${this.decisionOsBaseUrl}${endpoint}`;
+    } else if (isApiRoute) {
+      url = `${this.baseUrl}${endpoint}`;
+    } else {
+      url = `${this.baseUrl}/api/v1${endpoint}`;
+    }
     
     const defaultHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -74,7 +127,6 @@ class ApiService {
     };
 
     // Add Authorization header for Decision OS endpoints if token is available
-    const isDecisionOsEndpoint = endpoint.startsWith('/api/decision-os/');
     if (isDecisionOsEndpoint && this.authToken) {
       defaultHeaders['Authorization'] = `Bearer ${this.authToken}`;
     }
@@ -89,6 +141,13 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
+      
+      // Handle 401 gracefully (expected in production until login UI is added)
+      if (response.status === 401 && isDecisionOsEndpoint) {
+        const errorData = await response.json().catch(() => ({ error: 'unauthorized' }));
+        // Don't crash - just throw a clean error that callers can handle
+        throw new Error(errorData.error || 'unauthorized');
+      }
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
