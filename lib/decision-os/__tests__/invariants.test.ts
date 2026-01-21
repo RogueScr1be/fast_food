@@ -4,11 +4,13 @@ import {
   validateFeedbackResponse,
   validateReceiptImportResponse,
   validateHealthzResponse,
+  validateInternalMetricsResponse,
   DECISION_RESPONSE_ALLOWED_FIELDS,
   DRM_RESPONSE_ALLOWED_FIELDS,
   FEEDBACK_RESPONSE_ALLOWED_FIELDS,
   RECEIPT_RESPONSE_ALLOWED_FIELDS,
   HEALTHZ_RESPONSE_ALLOWED_FIELDS,
+  INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS,
 } from '../invariants';
 import { createFeedbackCopy, createAutopilotApproval, NOTES } from '../feedback/handler';
 import { processReceiptImport, clearReceiptStores } from '../receipt/handler';
@@ -672,6 +674,133 @@ describe('Modified Action Ban Invariant', () => {
     validActions.forEach(action => {
       const copy = createFeedbackCopy(baseEvent, action);
       expect(copy.user_action).not.toBe('modified');
+    });
+  });
+});
+
+// =============================================================================
+// INTERNAL METRICS RESPONSE VALIDATION
+// =============================================================================
+
+describe('validateInternalMetricsResponse', () => {
+  describe('valid responses', () => {
+    it('passes with ok:true and empty counters', () => {
+      const response = { ok: true, counters: {} };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with ok:true and numeric counters', () => {
+      const response = { 
+        ok: true, 
+        counters: { 
+          decision_called: 5, 
+          receipt_called: 3, 
+          healthz_hit: 10 
+        } 
+      };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with ok:false and counters', () => {
+      const response = { ok: false, counters: { error_count: 1 } };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with zero values in counters', () => {
+      const response = { ok: true, counters: { decision_called: 0 } };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe('invalid responses', () => {
+    it('FAILS without ok field', () => {
+      const response = { counters: {} };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'ok' && e.message.includes('required'))).toBe(true);
+    });
+
+    it('FAILS without counters field', () => {
+      const response = { ok: true };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'counters' && e.message.includes('required'))).toBe(true);
+    });
+
+    it('FAILS with ok not boolean (string)', () => {
+      const response = { ok: 'true', counters: {} };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'ok' && e.message.includes('boolean'))).toBe(true);
+    });
+
+    it('FAILS with counters as array', () => {
+      const response = { ok: true, counters: [1, 2, 3] };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'counters' && e.message.includes('object'))).toBe(true);
+    });
+
+    it('FAILS with counters as null', () => {
+      const response = { ok: true, counters: null };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'counters' && e.message.includes('object'))).toBe(true);
+    });
+
+    it('FAILS with non-numeric values in counters', () => {
+      const response = { ok: true, counters: { decision_called: 'five' } };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => 
+        e.field === 'counters.decision_called' && e.message.includes('number')
+      )).toBe(true);
+    });
+
+    it('FAILS with unknown fields', () => {
+      const response = { ok: true, counters: {}, extra: 'field' };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'extra')).toBe(true);
+    });
+
+    it('FAILS with arrays in response', () => {
+      const response = { ok: true, counters: {}, list: [1, 2, 3] };
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+    });
+
+    it('FAILS with response as array', () => {
+      const response = [{ ok: true, counters: {} }];
+      const result = validateInternalMetricsResponse(response);
+      expect(result.valid).toBe(false);
+    });
+
+    it('FAILS with response as null', () => {
+      const result = validateInternalMetricsResponse(null);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe('ALLOWED_FIELDS constant', () => {
+    it('contains only ok and counters', () => {
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.size).toBe(2);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('ok')).toBe(true);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('counters')).toBe(true);
+    });
+
+    it('does not contain banned fields', () => {
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('error')).toBe(false);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('data')).toBe(false);
+      expect(INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS.has('metrics')).toBe(false);
     });
   });
 });

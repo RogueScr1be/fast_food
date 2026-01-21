@@ -20,6 +20,7 @@
     "auth:sanity": "npx ts-node scripts/auth-sanity.ts",
     "auth:sanity:require401": "npx ts-node scripts/auth-sanity-require401.ts",
     "auth:sanity:require200": "npx ts-node scripts/auth-sanity-require200.ts",
+    "flags:proof": "npx ts-node scripts/runtime-flag-proof.ts",
     "db:migrate": "npx ts-node db/migrate.ts",
     "db:migrate:staging": "npx ts-node db/migrate.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",

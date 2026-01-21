@@ -16,6 +16,7 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
 | `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
 | `auth_works_gate` | Push to main | Verifies endpoints return 200 WITH token |
+| `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
 | `smoke_staging` | Push to main | Runs full staging smoke tests |
 
 ### Pipeline Gates
@@ -64,7 +65,32 @@ npm run auth:sanity:require200
 # PASS drm_200
 ```
 
-#### 4. Smoke Staging
+#### 4. Runtime Flags Gate
+
+Proves that DB-backed runtime flags actually change live behavior:
+
+1. Sets `decision_drm_enabled = false` in staging DB
+2. Calls DRM endpoint → expects `{ drmActivated: false }` (forced by flag)
+3. Sets `decision_drm_enabled = true` in staging DB
+4. Calls DRM endpoint → expects canonical response (not forced false)
+5. Restores flag to `true` (cleanup)
+
+```bash
+npm run flags:proof
+# Expected output:
+# PASS env_vars_present
+# PASS db_connected
+# PASS set_flag_false
+# PASS drm_returns_false_when_disabled
+# PASS set_flag_true
+# PASS drm_returns_canonical_when_enabled
+# PASS flag_restored
+# === RUNTIME FLAG PROOF PASSED ===
+```
+
+This gate proves that ops can flip flags from Supabase UI to immediately disable features without redeploying.
+
+#### 5. Smoke Staging
 
 Full integration test of all Decision OS flows with authenticated requests.
 
@@ -167,6 +193,71 @@ DECISION_OS_ENABLED=false
 ```
 
 **Cascade behavior**: Feature flags (`autopilot`, `ocr`, `drm`) are only effective when `DECISION_OS_ENABLED=true`. If master is disabled, all features are disabled regardless of their individual settings.
+
+### Runtime Flags (DB-backed Kill Switches)
+
+In addition to ENV flags, Decision OS supports DB-backed runtime flags that can be flipped instantly from Supabase UI without redeploying.
+
+**How it works**:
+1. Set `RUNTIME_FLAGS_ENABLED=true` in Vercel env vars
+2. DB flags are AND'd with ENV flags (both must be `true` for feature to be enabled)
+3. Flags are cached for 30 seconds per process
+4. If DB read fails in production, all features are disabled (fail-closed)
+
+**How to flip runtime flags from Supabase UI**:
+
+1. Open Supabase dashboard → Table Editor → `runtime_flags`
+2. Find the flag you want to change (e.g., `decision_drm_enabled`)
+3. Toggle the `enabled` column to `true` or `false`
+4. Click Save
+5. Changes take effect within 30 seconds (cache TTL)
+
+| Flag Key | Controls |
+|----------|----------|
+| `decision_os_enabled` | Master switch (all endpoints) |
+| `decision_autopilot_enabled` | Autopilot feature |
+| `decision_ocr_enabled` | OCR/receipt scanning |
+| `decision_drm_enabled` | Dinner Rescue Mode |
+
+**Note**: ENV flags take precedence. If ENV says `false`, DB cannot override to `true`.
+
+### Internal Metrics Endpoint (Dev/Staging Only)
+
+View runtime metrics at:
+```
+GET /api/decision-os/_internal/metrics
+```
+
+**Security**:
+- Production: Always returns 401 (blocked completely)
+- Dev/Staging: Requires auth if `SUPABASE_JWT_SECRET` is set
+
+**Response**:
+```json
+{
+  "ok": true,
+  "counters": {
+    "decision_called": 42,
+    "receipt_called": 10,
+    "healthz_hit": 100
+  }
+}
+```
+
+**Available metrics**:
+| Metric | Description |
+|--------|-------------|
+| `healthz_hit` | Health check endpoint calls |
+| `decision_called` | Decision endpoint calls |
+| `decision_unauthorized` | Unauthorized decision attempts |
+| `receipt_called` | Receipt import calls |
+| `feedback_called` | Feedback endpoint calls |
+| `drm_called` | DRM endpoint calls |
+| `autopilot_inserted` | Autopilot approvals created |
+| `undo_received` | Undo actions received |
+| `ocr_provider_failed` | OCR failures |
+
+**Privacy**: Metrics are counters only - no user IDs, tokens, meal names, or sensitive data.
 
 ### How to Get SUPABASE_JWT_SECRET
 

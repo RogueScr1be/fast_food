@@ -306,6 +306,72 @@ export function validateHealthzResponse(response: unknown): ValidationResult {
 }
 
 // =============================================================================
+// INTERNAL METRICS RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Allowed fields for internal metrics responses
+ */
+export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set(['ok', 'counters']);
+
+/**
+ * Validates an internal metrics endpoint response.
+ * 
+ * CANONICAL CONTRACT:
+ * - ok: boolean (required)
+ * - counters: object with string keys and number values only (required)
+ * 
+ * REJECTS:
+ * - any unknown fields
+ * - any arrays
+ * - non-numeric values in counters
+ */
+export function validateInternalMetricsResponse(response: unknown): ValidationResult {
+  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
+
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
+    return { valid: false, errors };
+  }
+
+  const resp = response as Record<string, unknown>;
+
+  // Check for unknown fields
+  errors.push(...checkUnknownFields(resp, INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS, 'internalMetrics'));
+
+  // ok: required boolean
+  if (!('ok' in resp)) {
+    errors.push({ field: 'ok', message: 'ok is required' });
+  } else if (typeof resp.ok !== 'boolean') {
+    errors.push({ field: 'ok', message: 'ok must be a boolean', value: resp.ok });
+  }
+
+  // counters: required object with number values
+  if (!('counters' in resp)) {
+    errors.push({ field: 'counters', message: 'counters is required' });
+  } else if (resp.counters === null || typeof resp.counters !== 'object' || Array.isArray(resp.counters)) {
+    errors.push({ field: 'counters', message: 'counters must be a non-null object', value: resp.counters });
+  } else {
+    // Validate all counter values are numbers
+    const counters = resp.counters as Record<string, unknown>;
+    for (const [key, value] of Object.entries(counters)) {
+      if (typeof value !== 'number') {
+        errors.push({ 
+          field: `counters.${key}`, 
+          message: `counters.${key} must be a number`, 
+          value 
+        });
+      }
+    }
+  }
+
+  // No arrays anywhere
+  errors.push(...assertNoArraysDeep(resp, 'response'));
+
+  return { valid: errors.length === 0, errors };
+}
+
+// =============================================================================
 // ERROR RESPONSE VALIDATION
 // =============================================================================
 
