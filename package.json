@@ -16,6 +16,9 @@
     "test:coverage": "jest --coverage",
     "test:ci": "jest --coverage --watchAll=false --passWithNoTests",
     "smoke:mvp": "jest --testPathPattern=smoke-production-mvp --verbose",
+    "smoke:staging": "npx ts-node scripts/smoke-staging.ts",
+    "db:migrate": "npx ts-node db/migrate.ts",
+    "db:migrate:staging": "npx ts-node db/migrate.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "type-check": "tsc --noEmit"
   },

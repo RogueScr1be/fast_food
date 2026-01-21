@@ -2,12 +2,90 @@
 
 This document describes the database schema, migrations, and setup steps for the Decision OS system.
 
-## Production Setup Steps
+## Staging Database: Supabase (Recommended)
 
-### 1. Create Schema
+Decision OS uses **Supabase Postgres** for staging and production.
+
+### Why Supabase?
+
+- Free tier sufficient for staging
+- Managed Postgres with automatic backups
+- Built-in connection pooling
+- No infrastructure management required
+
+### How to Provision the Staging DB
+
+1. **Create Supabase Account**: Go to [supabase.com](https://supabase.com) and sign up
+2. **Create New Project**: 
+   - Choose a project name (e.g., `decision-os-staging`)
+   - Set a strong database password (save it!)
+   - Select a region close to your deployment target
+3. **Get Connection String**:
+   - Go to Project Settings → Database
+   - Copy the "Connection string" (URI format)
+   - It looks like: `postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres`
+
+### How to Set Environment Variables
+
+Create a `.env.staging` file (never commit to git):
+
+```bash
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+NODE_ENV=production
+OCR_PROVIDER=none
+STAGING_URL=https://your-app.vercel.app
+```
+
+### How to Run Migrations
+
+```bash
+# Set DATABASE_URL first
+export DATABASE_URL="postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres"
+
+# Run migrations
+npm run db:migrate:staging
+```
+
+### How to Verify Tables Exist
+
+After running migrations, verify in Supabase:
+
+1. Go to Database → Tables in Supabase dashboard
+2. You should see these tables:
+   - `user_profiles`
+   - `meals`
+   - `decision_events`
+   - `taste_signals`
+   - `taste_meal_scores`
+   - `receipt_imports`
+   - `inventory_items`
+
+Or run this SQL in Supabase SQL Editor:
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS decision_os;
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+```
+
+## Alternative: Neon Postgres
+
+If you prefer Neon over Supabase:
+
+1. Create account at [neon.tech](https://neon.tech)
+2. Create a project
+3. Copy the connection string
+4. Use the same migration process
+
+## Production Setup Steps
+
+### 1. Create Schema (Optional)
+
+Supabase uses the default `public` schema. No need to create a separate schema:
+
+```sql
+-- Not needed for Supabase, but available if you want isolation:
+-- CREATE SCHEMA IF NOT EXISTS decision_os;
 ```
 
 ### 2. Run Migrations
@@ -22,8 +100,15 @@ Migrations are numbered sequentially and must be run in order.
 | 004 | Create `taste_signals` table |
 | 005 | Create `taste_meal_scores` table |
 | 006 | Create `receipt_imports` + `inventory_items` tables |
+| 007 | Seed initial data (test user + meals) |
 
-Run migrations using your preferred migration tool (e.g., `psql`, `flyway`, `dbmate`).
+**Run all migrations:**
+
+```bash
+npm run db:migrate:staging
+```
+
+This runs `db/migrate.ts` which executes all SQL files in `db/migrations/` in order.
 
 ### 3. Seed Meals
 
@@ -39,12 +124,22 @@ INSERT INTO meals (id, name, category, prep_time_minutes) VALUES
 
 ### 4. Required Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `OCR_PROVIDER` | No | OCR provider: `google_vision` or `none` |
-| `OCR_API_KEY` | If OCR_PROVIDER=google_vision | Google Cloud Vision API key |
-| `OCR_ENDPOINT` | No | Custom OCR endpoint (defaults to Google) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Staging/Prod | - | PostgreSQL connection string |
+| `NODE_ENV` | No | `development` | Environment: `test`, `development`, `production` |
+| `OCR_PROVIDER` | No | `none` | OCR provider: `google_vision` or `none` |
+| `OCR_API_KEY` | If google_vision | - | Google Cloud Vision API key |
+| `OCR_ENDPOINT` | No | Google default | Custom OCR endpoint |
+| `STAGING_URL` | For smoke tests | - | Base URL for staging smoke tests |
+
+### 5. Verify Deployment
+
+Run the staging smoke test:
+
+```bash
+STAGING_URL=https://your-app.vercel.app npm run smoke:staging
+```
 
 ## Schema Overview
 
