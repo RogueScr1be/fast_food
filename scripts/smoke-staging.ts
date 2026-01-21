@@ -2,17 +2,23 @@
 /**
  * Staging Smoke Test Runner for Decision OS
  * 
+ * AUTHENTICATION:
+ * - If STAGING_AUTH_TOKEN is set, attaches it to all requests
+ * - If not set in production mode, warns and runs dev scenario (no auth)
+ * 
  * Verifies CANONICAL response shapes:
  * 1. Receipt import: { receiptImportId: string, status: string }
  * 2. Decision: { decision: object|null, drmRecommended: boolean, reason?: string, autopilot?: boolean }
  * 3. Feedback: { recorded: true }
  * 4. DRM: { drmActivated: boolean }
  * 
+ * Error responses (401): { error: 'unauthorized' }
+ * 
  * NOTE: decisionEventId is NOT in the canonical contract, so feedback test uses
  * a synthetic eventId (server handles gracefully as no-op for unknown IDs).
  * 
  * Usage:
- *   STAGING_URL=https://your-app.vercel.app npm run smoke:staging
+ *   STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=<jwt> npm run smoke:staging
  * 
  * Exit codes:
  *   0 = All tests passed
@@ -20,6 +26,7 @@
  */
 
 const STAGING_URL = process.env.STAGING_URL || 'http://localhost:8081';
+const STAGING_AUTH_TOKEN = process.env.STAGING_AUTH_TOKEN;
 
 // Canonical allowed fields (must match invariants.ts)
 const DECISION_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
@@ -44,10 +51,20 @@ function log(name: string, passed: boolean, detail?: string): void {
 
 async function fetchJson<T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> {
   const url = `${STAGING_URL}${path}`;
+  
+  // Build headers with auth if available
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  
+  if (STAGING_AUTH_TOKEN) {
+    headers['Authorization'] = `Bearer ${STAGING_AUTH_TOKEN}`;
+  }
+  
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...headers,
       ...options.headers,
     },
   });
@@ -260,7 +277,16 @@ async function testDrmEndpoint(): Promise<void> {
 
 async function runSmokeTests(): Promise<void> {
   console.log('=== Staging Smoke Tests (Canonical Contract Validation) ===');
-  console.log(`Target: ${STAGING_URL}\n`);
+  console.log(`Target: ${STAGING_URL}`);
+  
+  // Auth warning
+  if (STAGING_AUTH_TOKEN) {
+    console.log('Auth: Token provided (production mode)');
+  } else {
+    console.log('Auth: No token provided (dev mode fallback)');
+    console.log('      Set STAGING_AUTH_TOKEN for production testing\n');
+  }
+  console.log('');
   
   // Step 1: Receipt Import
   await testReceiptImport();

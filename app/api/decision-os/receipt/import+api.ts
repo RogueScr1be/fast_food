@@ -3,31 +3,45 @@
  * 
  * POST /api/decision-os/receipt/import
  * 
+ * AUTHENTICATION:
+ * - Production: Requires valid Supabase JWT in Authorization header
+ * - Dev/Test: Falls back to default household if no auth
+ * 
  * Request body:
  * {
- *   imageBase64: string,    // Base64 encoded image
- *   userProfileId: number   // User's profile ID
+ *   imageBase64: string    // Base64 encoded image
  * }
  * 
- * Response (DO NOT CHANGE SHAPE):
+ * NOTE: userProfileId is derived from auth, NOT from client input (production)
+ * 
+ * Response (CANONICAL CONTRACT - DO NOT CHANGE SHAPE):
  * {
  *   receiptImportId: string,
  *   status: 'received' | 'parsed' | 'failed'
  * }
  * 
+ * Error Response (401):
+ * { error: 'unauthorized' }
+ * 
  * INVARIANTS:
- * - Always returns 200 OK (best-effort)
+ * - Always returns 200 OK for success (best-effort)
  * - OCR failures return status='failed', not 500
  * - No arrays exposed in response
  */
 
 import { processReceiptImport } from '../../../../lib/decision-os/receipt/handler';
-import type { ReceiptImportRequest, ReceiptImportResponse } from '../../../../types/decision-os';
+import { validateReceiptImportResponse, validateErrorResponse } from '../../../../lib/decision-os/invariants';
+import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
+import type { ReceiptImportResponse } from '../../../../types/decision-os';
+
+interface ReceiptRequest {
+  imageBase64: string;
+}
 
 /**
  * Validate request body
  */
-function validateRequest(body: unknown): ReceiptImportRequest | null {
+function validateRequest(body: unknown): ReceiptRequest | null {
   if (!body || typeof body !== 'object') {
     return null;
   }
@@ -38,14 +52,33 @@ function validateRequest(body: unknown): ReceiptImportRequest | null {
     return null;
   }
   
-  if (typeof req.userProfileId !== 'number' || req.userProfileId <= 0) {
-    return null;
-  }
-  
   return {
     imageBase64: req.imageBase64,
-    userProfileId: req.userProfileId,
   };
+}
+
+/**
+ * Build error response (401 Unauthorized)
+ */
+function buildErrorResponse(error: string): Response {
+  const response = { error };
+  const validation = validateErrorResponse(response);
+  if (!validation.valid) {
+    console.error('Error response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 401 });
+}
+
+/**
+ * Build success response
+ */
+function buildSuccessResponse(receiptImportId: string, status: ReceiptImportResponse['status']): Response {
+  const response: ReceiptImportResponse = { receiptImportId, status };
+  const validation = validateReceiptImportResponse(response);
+  if (!validation.valid) {
+    console.error('Receipt import response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 200 });
 }
 
 /**
@@ -53,31 +86,35 @@ function validateRequest(body: unknown): ReceiptImportRequest | null {
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // Authenticate request
+    const authHeader = request.headers.get('Authorization');
+    const authResult = await authenticateRequest(authHeader);
+    
+    if (!authResult.success) {
+      return buildErrorResponse('unauthorized');
+    }
+    
+    const authContext = authResult.context;
+    const userProfileId = authContext.userProfileId;
+    
     const body = await request.json();
     const validatedRequest = validateRequest(body);
     
     if (!validatedRequest) {
       // Invalid request - return failed status (best-effort, no 400)
-      const response: ReceiptImportResponse = {
-        receiptImportId: '',
-        status: 'failed',
-      };
-      return Response.json(response, { status: 200 });
+      return buildSuccessResponse('', 'failed');
     }
     
     // Process the receipt import
     const result = await processReceiptImport(
       validatedRequest.imageBase64,
-      validatedRequest.userProfileId
+      userProfileId
     );
     
-    return Response.json(result, { status: 200 });
+    return buildSuccessResponse(result.receiptImportId, result.status);
   } catch (error) {
     // Best-effort: return failed status, never 500
-    const response: ReceiptImportResponse = {
-      receiptImportId: '',
-      status: 'failed',
-    };
-    return Response.json(response, { status: 200 });
+    console.error('Receipt import error:', error);
+    return buildSuccessResponse('', 'failed');
   }
 }

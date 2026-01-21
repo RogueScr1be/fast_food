@@ -256,3 +256,47 @@ export function validateReceiptImportResponse(response: unknown): ValidationResu
 
   return { valid: errors.length === 0, errors };
 }
+
+// =============================================================================
+// ERROR RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Allowed fields for error responses
+ */
+export const ERROR_RESPONSE_ALLOWED_FIELDS = new Set(['error']);
+
+/**
+ * Validates an error response.
+ * 
+ * Error responses are NOT required to match success contracts,
+ * but must be minimal and have no arrays.
+ * 
+ * CANONICAL CONTRACT:
+ * - error: string (required)
+ */
+export function validateErrorResponse(response: unknown): ValidationResult {
+  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
+
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
+    return { valid: false, errors };
+  }
+
+  const resp = response as Record<string, unknown>;
+
+  // Check for unknown fields
+  errors.push(...checkUnknownFields(resp, ERROR_RESPONSE_ALLOWED_FIELDS, 'error'));
+
+  // error: required string
+  if (!('error' in resp)) {
+    errors.push({ field: 'error', message: 'error is required' });
+  } else if (typeof resp.error !== 'string') {
+    errors.push({ field: 'error', message: 'error must be a string', value: resp.error });
+  }
+
+  // No arrays
+  errors.push(...assertNoArraysDeep(resp, 'response'));
+
+  return { valid: errors.length === 0, errors };
+}

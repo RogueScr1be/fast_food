@@ -25,6 +25,9 @@ import type {
 export interface DbAdapter {
   name: string;
   
+  // Generic query (for auth and custom queries)
+  query<T>(sql: string, params?: unknown[]): Promise<T[]>;
+  
   // Decision events (APPEND-ONLY - no update/delete methods)
   insertDecisionEvent(event: DecisionEventInsert): Promise<void>;
   getDecisionEventsByUserId(userId: number, limit?: number): Promise<DecisionEvent[]>;
@@ -85,6 +88,98 @@ class InMemoryAdapter implements DbAdapter {
   private inventoryItems: Map<string, InventoryItem> = new Map();
   private tasteSignals: Map<string, TasteSignal> = new Map();
   private tasteMealScores: Map<string, TasteMealScore> = new Map();
+  
+  // In-memory stores for auth (households, members, user profiles with auth)
+  private households: Map<string, { id: string; household_key: string }> = new Map([
+    ['default', { id: '00000000-0000-0000-0000-000000000000', household_key: 'default' }],
+  ]);
+  private householdMembers: Map<number, { id: string; household_id: string; user_profile_id: number; role: string }> = new Map([
+    [1, { id: '00000000-0000-0000-0000-000000000001', household_id: '00000000-0000-0000-0000-000000000000', user_profile_id: 1, role: 'owner' }],
+  ]);
+  private userProfiles: Map<number, { id: number; auth_user_id?: string }> = new Map([
+    [1, { id: 1 }],
+  ]);
+  private nextUserProfileId = 2;
+  
+  /**
+   * Generic query support for InMemory adapter.
+   * Implements a subset of SQL needed for auth operations.
+   */
+  async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+    const normalizedSql = sql.toLowerCase().trim();
+    
+    // SELECT id FROM user_profiles WHERE auth_user_id = $1
+    if (normalizedSql.includes('select') && normalizedSql.includes('user_profiles') && normalizedSql.includes('auth_user_id')) {
+      const authUserId = params[0] as string;
+      for (const user of this.userProfiles.values()) {
+        if (user.auth_user_id === authUserId) {
+          return [{ id: user.id }] as T[];
+        }
+      }
+      return [];
+    }
+    
+    // INSERT INTO user_profiles (auth_user_id) VALUES ($1) RETURNING id
+    if (normalizedSql.includes('insert') && normalizedSql.includes('user_profiles') && normalizedSql.includes('auth_user_id')) {
+      const authUserId = params[0] as string;
+      const newId = this.nextUserProfileId++;
+      this.userProfiles.set(newId, { id: newId, auth_user_id: authUserId });
+      return [{ id: newId }] as T[];
+    }
+    
+    // SELECT id FROM households WHERE household_key = $1
+    if (normalizedSql.includes('select') && normalizedSql.includes('households') && normalizedSql.includes('household_key')) {
+      const householdKey = params[0] as string;
+      const household = this.households.get(householdKey);
+      if (household) {
+        return [{ id: household.id }] as T[];
+      }
+      return [];
+    }
+    
+    // INSERT INTO households (household_key) VALUES ($1) RETURNING id
+    if (normalizedSql.includes('insert') && normalizedSql.includes('households') && normalizedSql.includes('household_key')) {
+      const householdKey = params[0] as string;
+      const newId = `hh-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      this.households.set(householdKey, { id: newId, household_key: householdKey });
+      return [{ id: newId }] as T[];
+    }
+    
+    // SELECT id FROM household_members WHERE user_profile_id = $1
+    if (normalizedSql.includes('select') && normalizedSql.includes('household_members') && normalizedSql.includes('user_profile_id')) {
+      const userProfileId = params[0] as number;
+      const member = this.householdMembers.get(userProfileId);
+      if (member) {
+        return [{ id: member.id }] as T[];
+      }
+      return [];
+    }
+    
+    // INSERT INTO household_members (household_id, user_profile_id, role)
+    if (normalizedSql.includes('insert') && normalizedSql.includes('household_members')) {
+      const householdId = params[0] as string;
+      const userProfileId = params[1] as number;
+      if (!this.householdMembers.has(userProfileId)) {
+        const newId = `hm-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        this.householdMembers.set(userProfileId, {
+          id: newId,
+          household_id: householdId,
+          user_profile_id: userProfileId,
+          role: 'owner',
+        });
+      }
+      return [];
+    }
+    
+    // SELECT 1 (ping)
+    if (normalizedSql === 'select 1') {
+      return [{ '?column?': 1 }] as T[];
+    }
+    
+    // Fallback: return empty array
+    console.warn('[InMemoryAdapter] Unhandled query:', sql.substring(0, 100));
+    return [];
+  }
   
   async insertDecisionEvent(event: DecisionEventInsert): Promise<void> {
     this.decisionEvents.set(event.id, {
@@ -164,6 +259,15 @@ class InMemoryAdapter implements DbAdapter {
     this.inventoryItems.clear();
     this.tasteSignals.clear();
     this.tasteMealScores.clear();
+    
+    // Reset auth-related stores to defaults
+    this.households.clear();
+    this.households.set('default', { id: '00000000-0000-0000-0000-000000000000', household_key: 'default' });
+    this.householdMembers.clear();
+    this.householdMembers.set(1, { id: '00000000-0000-0000-0000-000000000001', household_id: '00000000-0000-0000-0000-000000000000', user_profile_id: 1, role: 'owner' });
+    this.userProfiles.clear();
+    this.userProfiles.set(1, { id: 1 });
+    this.nextUserProfileId = 2;
   }
 }
 
@@ -183,11 +287,9 @@ class PostgresAdapter implements DbAdapter {
   
   constructor(connectionString: string) {
     this.connectionString = connectionString;
-    // Note: In a real implementation, we'd use 'pg' package
-    // For now, we'll implement a REST-based approach for Supabase
   }
   
-  private async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+  async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     // Dynamic import to avoid bundling pg in client code
     try {
       const pg = await import('pg');

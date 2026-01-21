@@ -34,7 +34,22 @@ DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:543
 NODE_ENV=production
 OCR_PROVIDER=none
 STAGING_URL=https://your-app.vercel.app
+STAGING_AUTH_TOKEN=<optional-jwt-for-smoke-tests>
 ```
+
+### How to Enable Supabase Auth
+
+1. **Enable Auth in Supabase Dashboard**:
+   - Go to Authentication → Providers
+   - Enable Email provider (for testing)
+   - Optionally enable social providers (Google, Apple, etc.)
+
+2. **Get Auth Config**:
+   - Copy your Supabase URL and anon key from Project Settings → API
+   
+3. **For Client Testing** (dev only):
+   - Set `EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN` in your `.env.local`
+   - This token will be attached to all Decision OS API requests
 
 ### How to Run Migrations
 
@@ -101,6 +116,9 @@ Migrations are numbered sequentially and must be run in order.
 | 005 | Create `taste_meal_scores` table |
 | 006 | Create `receipt_imports` + `inventory_items` tables |
 | 007 | Seed initial data (test user + meals) |
+| 008 | Add `auth_user_id` column to `user_profiles` |
+| 009 | Create `households` table |
+| 010 | Create `household_members` join table |
 
 **Run all migrations:**
 
@@ -142,6 +160,44 @@ STAGING_URL=https://your-app.vercel.app npm run smoke:staging
 ```
 
 ## Schema Overview
+
+### `user_profiles`
+
+User profiles for Decision OS users.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL PK | Auto-incrementing user ID |
+| `external_id` | TEXT | Legacy external identifier |
+| `auth_user_id` | TEXT UNIQUE | Supabase Auth user ID (sub claim) |
+| `created_at` | TIMESTAMP | Profile creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+
+### `households`
+
+Household groups for multi-user support.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Household UUID |
+| `household_key` | TEXT UNIQUE | Household key (partition key) |
+| `name` | TEXT | Household name (optional) |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+
+### `household_members`
+
+Join table linking users to households.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Membership UUID |
+| `household_id` | UUID FK | Foreign key to households |
+| `user_profile_id` | INTEGER FK | Foreign key to user_profiles |
+| `role` | TEXT | `owner` or `member` |
+| `created_at` | TIMESTAMP | Membership creation time |
+
+**Constraint**: Each user can only belong to one household (MVP).
 
 ### `decision_events` (Append-Only Event Log)
 
@@ -236,6 +292,46 @@ When a user undoes an autopilot decision:
 
 4. Autopilot is throttled for 72 hours after any undo
 
+## Authentication
+
+Decision OS uses **Supabase Auth** for authentication.
+
+### Production Mode (NODE_ENV=production)
+
+- All Decision OS endpoints require a valid JWT in `Authorization: Bearer <token>`
+- Missing or invalid tokens return `401 { error: 'unauthorized' }`
+- `userProfileId` is derived from the JWT's `sub` claim, NOT from client input
+
+### Dev Mode (NODE_ENV !== production)
+
+- Requests without auth fall back to the default household (`household_key='default'`)
+- Valid tokens are still processed if provided
+- This allows local development without auth setup
+
+### Auth Flow
+
+1. Client sends request with `Authorization: Bearer <jwt>` header
+2. Server decodes JWT, extracts `sub` (user ID)
+3. Server upserts `user_profile` with `auth_user_id = sub`
+4. Server creates household + membership if user is new
+5. Server derives `household_key` from user's household
+6. Endpoint uses derived `household_key` for all queries
+
+### Protected Endpoints
+
+- `POST /api/decision-os/decision`
+- `POST /api/decision-os/feedback`
+- `POST /api/decision-os/drm`
+- `POST /api/decision-os/receipt/import`
+
+### Error Response (401)
+
+```json
+{ "error": "unauthorized" }
+```
+
+This is a minimal error response - does NOT match success contracts (intentional).
+
 ## Invariants
 
 - Decision events are append-only (no UPDATE/DELETE)
@@ -243,3 +339,4 @@ When a user undoes an autopilot decision:
 - `modified` action is banned (never used)
 - Receipt import always returns `{ receiptImportId, status }`
 - Decision response may include optional `autopilot: boolean`
+- Error responses use `{ error: string }` format

@@ -3,11 +3,16 @@
  * 
  * POST /api/decision-os/decision
  * 
+ * AUTHENTICATION:
+ * - Production: Requires valid Supabase JWT in Authorization header
+ * - Dev/Test: Falls back to default household if no auth
+ * 
  * Request body:
  * {
- *   userProfileId: number,
  *   context?: { time?: string, dayOfWeek?: string, ... }
  * }
+ * 
+ * NOTE: userProfileId is derived from auth, NOT from client input (production)
  * 
  * Response (CANONICAL CONTRACT - DO NOT ADD FIELDS):
  * {
@@ -16,6 +21,9 @@
  *   reason?: string,
  *   autopilot?: boolean
  * }
+ * 
+ * Error Response (401):
+ * { error: 'unauthorized' }
  * 
  * BANNED FIELDS: decisionEventId, message
  * 
@@ -29,11 +37,11 @@
 import { getDb } from '../../../lib/decision-os/db/client';
 import { checkAutopilotEligibility } from '../../../lib/decision-os/autopilot/policy';
 import { createAutopilotApproval, hasAutopilotApproval } from '../../../lib/decision-os/feedback/handler';
-import { validateDecisionResponse } from '../../../lib/decision-os/invariants';
+import { validateDecisionResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
+import { authenticateRequest, type AuthContext } from '../../../lib/decision-os/auth/helper';
 import type { DecisionResponse, DecisionEvent } from '../../../types/decision-os';
 
 interface DecisionRequest {
-  userProfileId: number;
   context?: Record<string, unknown>;
 }
 
@@ -47,14 +55,21 @@ function validateRequest(body: unknown): DecisionRequest | null {
   
   const req = body as Record<string, unknown>;
   
-  if (typeof req.userProfileId !== 'number' || req.userProfileId <= 0) {
-    return null;
-  }
-  
   return {
-    userProfileId: req.userProfileId,
     context: req.context as Record<string, unknown> | undefined,
   };
+}
+
+/**
+ * Build error response (401 Unauthorized)
+ */
+function buildErrorResponse(error: string): Response {
+  const response = { error };
+  const validation = validateErrorResponse(response);
+  if (!validation.valid) {
+    console.error('Error response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 401 });
 }
 
 /**
@@ -149,6 +164,17 @@ function buildResponse(
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // Authenticate request
+    const authHeader = request.headers.get('Authorization');
+    const authResult = await authenticateRequest(authHeader);
+    
+    if (!authResult.success) {
+      return buildErrorResponse('unauthorized');
+    }
+    
+    const authContext = authResult.context;
+    const userProfileId = authContext.userProfileId;
+    
     const body = await request.json();
     const validatedRequest = validateRequest(body);
     
@@ -158,7 +184,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     const db = getDb();
-    const { userProfileId, context } = validatedRequest;
+    const { context } = validatedRequest;
     
     // Get user's decision history
     const userEvents = await db.getDecisionEventsByUserId(userProfileId, 100);

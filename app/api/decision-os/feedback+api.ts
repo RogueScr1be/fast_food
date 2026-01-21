@@ -1,6 +1,10 @@
 /**
  * Decision OS Feedback API Endpoint
  * 
+ * AUTHENTICATION:
+ * - Production: Requires valid Supabase JWT in Authorization header
+ * - Dev/Test: Falls back to default household if no auth
+ * 
  * Handles user feedback on decisions including:
  * - approved: User approves the decision
  * - rejected: User rejects the decision
@@ -9,7 +13,12 @@
  * 
  * BANNED: 'modified' action is not allowed.
  * 
- * Response shape is ALWAYS: { recorded: true }
+ * Response (CANONICAL CONTRACT):
+ * { recorded: true }
+ * 
+ * Error Response (401):
+ * { error: 'unauthorized' }
+ * 
  * This is intentional for simplicity and to avoid array responses.
  */
 
@@ -24,6 +33,8 @@ import {
   shouldReverseConsumption,
 } from '../../../lib/decision-os/feedback/handler';
 import { computeTasteWeight } from '../../../lib/decision-os/taste/weights';
+import { validateFeedbackResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
+import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
 
 /**
  * Valid client-submitted actions.
@@ -88,6 +99,30 @@ async function insertTasteSignal(eventId: string, weight: number): Promise<void>
 }
 
 /**
+ * Build error response (401 Unauthorized)
+ */
+function buildErrorResponse(error: string): Response {
+  const response = { error };
+  const validation = validateErrorResponse(response);
+  if (!validation.valid) {
+    console.error('Error response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 401 });
+}
+
+/**
+ * Build success response
+ */
+function buildSuccessResponse(): Response {
+  const response: FeedbackResponse = { recorded: true };
+  const validation = validateFeedbackResponse(response);
+  if (!validation.valid) {
+    console.error('Feedback response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 200 });
+}
+
+/**
  * POST /api/decision-os/feedback
  * 
  * Processes user feedback on a decision.
@@ -113,20 +148,28 @@ async function insertTasteSignal(eventId: string, weight: number): Promise<void>
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // Authenticate request
+    const authHeader = request.headers.get('Authorization');
+    const authResult = await authenticateRequest(authHeader);
+    
+    if (!authResult.success) {
+      return buildErrorResponse('unauthorized');
+    }
+    
     const body = await request.json();
     const validatedRequest = validateRequest(body);
     
     if (!validatedRequest) {
       // Still return { recorded: true } to maintain response shape
       // Invalid requests (including banned 'modified') are no-ops
-      return Response.json({ recorded: true } satisfies FeedbackResponse);
+      return buildSuccessResponse();
     }
     
     // Get the original event
     const originalEvent = await getEventById(validatedRequest.eventId);
     if (!originalEvent) {
       // Event not found - no-op, return success
-      return Response.json({ recorded: true } satisfies FeedbackResponse);
+      return buildSuccessResponse();
     }
     
     // Get existing feedback copies
@@ -157,11 +200,11 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     // Always return { recorded: true } - maintains simple response shape
-    return Response.json({ recorded: true } satisfies FeedbackResponse);
+    return buildSuccessResponse();
   } catch (error) {
     // Even on error, return { recorded: true } to maintain response shape
     // Errors are logged but don't change the response
     console.error('Feedback processing error:', error);
-    return Response.json({ recorded: true } satisfies FeedbackResponse);
+    return buildSuccessResponse();
   }
 }

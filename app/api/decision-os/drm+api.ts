@@ -3,16 +3,24 @@
  * 
  * POST /api/decision-os/drm
  * 
+ * AUTHENTICATION:
+ * - Production: Requires valid Supabase JWT in Authorization header
+ * - Dev/Test: Falls back to default household if no auth
+ * 
  * Request body:
  * {
- *   userProfileId: number,
  *   reason: 'handle_it' | 'dinner_changed' | 'not_hungry' | string
  * }
+ * 
+ * NOTE: userProfileId is derived from auth, NOT from client input (production)
  * 
  * Response (CANONICAL CONTRACT - DO NOT ADD FIELDS):
  * {
  *   drmActivated: boolean
  * }
+ * 
+ * Error Response (401):
+ * { error: 'unauthorized' }
  * 
  * BANNED FIELDS: rescueActivated, rescueType, message, recorded
  * 
@@ -23,11 +31,11 @@
  */
 
 import { getDb } from '../../../lib/decision-os/db/client';
-import { validateDrmResponse } from '../../../lib/decision-os/invariants';
+import { validateDrmResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
+import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
 import type { DecisionEventInsert, DrmResponse } from '../../../types/decision-os';
 
 interface DrmRequest {
-  userProfileId: number;
   reason: string;
 }
 
@@ -41,18 +49,25 @@ function validateRequest(body: unknown): DrmRequest | null {
   
   const req = body as Record<string, unknown>;
   
-  if (typeof req.userProfileId !== 'number' || req.userProfileId <= 0) {
-    return null;
-  }
-  
   if (typeof req.reason !== 'string' || !req.reason) {
     return null;
   }
   
   return {
-    userProfileId: req.userProfileId,
     reason: req.reason,
   };
+}
+
+/**
+ * Build error response (401 Unauthorized)
+ */
+function buildErrorResponse(error: string): Response {
+  const response = { error };
+  const validation = validateErrorResponse(response);
+  if (!validation.valid) {
+    console.error('Error response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 401 });
 }
 
 /**
@@ -86,6 +101,17 @@ function buildResponse(drmActivated: boolean): DrmResponse {
  */
 export async function POST(request: Request): Promise<Response> {
   try {
+    // Authenticate request
+    const authHeader = request.headers.get('Authorization');
+    const authResult = await authenticateRequest(authHeader);
+    
+    if (!authResult.success) {
+      return buildErrorResponse('unauthorized');
+    }
+    
+    const authContext = authResult.context;
+    const userProfileId = authContext.userProfileId;
+    
     const body = await request.json();
     const validatedRequest = validateRequest(body);
     
@@ -95,7 +121,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     const db = getDb();
-    const { userProfileId, reason } = validatedRequest;
+    const { reason } = validatedRequest;
     const nowIso = new Date().toISOString();
     
     // Create DRM event (append-only, internal)

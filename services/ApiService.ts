@@ -1,11 +1,47 @@
 import { Platform } from 'react-native';
 
+/**
+ * API Service with Authentication Support
+ * 
+ * Authentication:
+ * - Set authToken via setAuthToken() method
+ * - Or set EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN env var for dev
+ * - All requests to /api/decision-os/* will include Authorization header
+ */
 class ApiService {
   private baseUrl: string;
+  private authToken: string | null = null;
 
   constructor() {
     // Use environment variable or fallback based on platform
     this.baseUrl = process.env.EXPO_PUBLIC_API_URL || this.getDefaultBaseUrl();
+    
+    // Check for dev auth token in environment
+    const envToken = process.env.EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN;
+    if (envToken) {
+      this.authToken = envToken;
+    }
+  }
+
+  /**
+   * Set the authentication token for API requests
+   */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+  }
+
+  /**
+   * Get current auth token (for debugging)
+   */
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  /**
+   * Check if authenticated
+   */
+  isAuthenticated(): boolean {
+    return this.authToken !== null;
   }
 
   private getDefaultBaseUrl(): string {
@@ -32,10 +68,16 @@ class ApiService {
     const isApiRoute = endpoint.startsWith('/api/') || endpoint.startsWith('/health');
     const url = isApiRoute ? `${this.baseUrl}${endpoint}` : `${this.baseUrl}/api/v1${endpoint}`;
     
-    const defaultHeaders = {
+    const defaultHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
+
+    // Add Authorization header for Decision OS endpoints if token is available
+    const isDecisionOsEndpoint = endpoint.startsWith('/api/decision-os/');
+    if (isDecisionOsEndpoint && this.authToken) {
+      defaultHeaders['Authorization'] = `Bearer ${this.authToken}`;
+    }
 
     const config: RequestInit = {
       ...options,
@@ -50,7 +92,7 @@ class ApiService {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(errorData.detail || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       return await response.json();
