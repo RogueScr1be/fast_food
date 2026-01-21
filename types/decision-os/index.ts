@@ -46,6 +46,7 @@ export interface DecisionEvent {
   // === DB COLUMNS ===
   id: string;
   user_profile_id: number;
+  household_key: string; // Partition key for multi-tenant isolation
   decided_at: string; // ISO timestamp
   actioned_at?: string; // ISO timestamp when user acted
   user_action?: PersistedUserAction; // DB column: 'approved' | 'rejected' | 'drm_triggered'
@@ -75,12 +76,13 @@ export interface FeedbackRequest {
 export interface DecisionEventInsert {
   id: string;
   user_profile_id: number;
+  household_key: string; // Required partition key
   decided_at: string;
   actioned_at: string;
   user_action: PersistedUserAction;
   notes?: string;
   decision_payload: Record<string, unknown>;
-  decision_type?: string;
+  decision_type: string; // Required - e.g., 'meal_decision'
   meal_id?: number;
   context_hash?: string;
 }
@@ -190,6 +192,7 @@ export interface ParsedReceiptItem {
 export interface ReceiptImportRecord {
   id: string;
   user_profile_id: number;
+  household_key: string; // Partition key for multi-tenant isolation
   created_at: string;
   status: ReceiptImportStatus;
   raw_ocr_text?: string;
@@ -200,16 +203,28 @@ export interface ReceiptImportRecord {
 
 /**
  * Inventory item (for upsert after receipt parsing)
+ * 
+ * DB CANONICAL COLUMNS:
+ * - item_name (not 'name')
+ * - remaining_qty (not 'quantity')
+ * - last_seen_at (not 'updated_at')
+ * - household_key (required)
  */
 export interface InventoryItem {
   id: string;
   user_profile_id: number;
-  name: string;
-  quantity: number;
-  unit?: string;
+  household_key: string; // Partition key for multi-tenant isolation
+  // Canonical columns (migration 019 normalizes these)
+  item_name: string;
+  remaining_qty: number;
   confidence: number;
-  source: 'receipt' | 'manual';
+  last_seen_at: string;
+  // Legacy columns (kept for backward compatibility)
+  name?: string; // Deprecated: use item_name
+  quantity?: number; // Deprecated: use remaining_qty
+  unit?: string;
+  source?: 'receipt' | 'manual';
   receipt_import_id?: string;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string; // Deprecated: use last_seen_at
 }

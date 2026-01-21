@@ -225,10 +225,11 @@ export async function POST(request: Request): Promise<Response> {
       ? checkAutopilotEligibility(userEvents)
       : { eligible: false, reason: 'autopilot_disabled' };
     
-    // Create pending event
+    // Create pending event (with household_key from auth context)
     const pendingEvent: DecisionEvent = {
       id: eventId,
       user_profile_id: userProfileId,
+      household_key: authContext.householdKey,
       decided_at: nowIso,
       decision_payload: {
         ...mealSuggestion,
@@ -236,6 +237,7 @@ export async function POST(request: Request): Promise<Response> {
       },
       meal_id: mealSuggestion.mealId as number,
       context_hash: contextHash,
+      decision_type: 'meal_decision',
     };
     
     // READONLY MODE: Skip all DB writes but return valid response
@@ -267,9 +269,10 @@ export async function POST(request: Request): Promise<Response> {
         await db.insertTasteSignal({
           id: `ts-${autopilotCopy.id}`,
           user_profile_id: userProfileId,
+          household_key: authContext.householdKey,
           meal_id: mealSuggestion.mealId as number,
           weight: 1.0,
-          decision_event_id: autopilotCopy.id,
+          event_id: autopilotCopy.id,
           created_at: nowIso,
         });
       }

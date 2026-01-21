@@ -39,13 +39,121 @@ jobs:
         run: npm run smoke:mvp
 
   # =============================================================================
-  # JOB 2: Deploy Freeze Gate (push to main only)
+  # JOB 2: Ephemeral Postgres Migration Test (always runs)
+  # Spins up Postgres, runs migrations, verifies schema, tests writes
+  # This catches migration/schema drift before pushing to staging
+  # =============================================================================
+  db_migration_test:
+    name: DB Migration Test
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: decision_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/decision_os_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U test; do
+            echo "Waiting for Postgres..."
+            sleep 1
+          done
+          echo "PASS postgres_ready"
+
+      - name: Run migrations
+        run: |
+          npm run db:migrate
+          echo "PASS migrations_applied"
+
+      - name: Verify schema (tables, columns, types, constraints)
+        run: |
+          # Use the same verify script but point to ephemeral DB
+          npx ts-node scripts/db-verify-staging.ts
+          echo "PASS schema_verified"
+
+      - name: DB write smoke test
+        run: |
+          # Simple test: Insert a user_profile, decision_event, read it back
+          npx ts-node -e "
+          const { Client } = require('pg');
+          async function test() {
+            const client = new Client({ connectionString: process.env.DATABASE_URL });
+            await client.connect();
+            
+            // Insert user profile
+            await client.query(\`
+              INSERT INTO user_profiles (id, auth_user_id, created_at)
+              VALUES (999, 'test-auth-user', NOW())
+              ON CONFLICT (id) DO NOTHING
+            \`);
+            console.log('PASS insert_user_profile');
+            
+            // Insert household
+            await client.query(\`
+              INSERT INTO households (id, household_key, created_at)
+              VALUES ('test-hh-id', 'test-household-key', NOW())
+              ON CONFLICT (household_key) DO NOTHING
+            \`);
+            console.log('PASS insert_household');
+            
+            // Insert decision event with canonical columns
+            await client.query(\`
+              INSERT INTO decision_events (
+                id, user_profile_id, household_key, decided_at, actioned_at,
+                user_action, decision_type, notes, decision_payload, context_hash
+              ) VALUES (
+                'test-event-id', 999, 'test-household-key', NOW(), NOW(),
+                'approved', 'meal_decision', 'test', '{}', 'test-hash'
+              )
+            \`);
+            console.log('PASS insert_decision_event');
+            
+            // Read it back
+            const res = await client.query('SELECT * FROM decision_events WHERE id = \$1', ['test-event-id']);
+            if (res.rows.length === 1 && res.rows[0].household_key === 'test-household-key') {
+              console.log('PASS read_decision_event');
+            } else {
+              console.log('FAIL read_decision_event');
+              process.exit(1);
+            }
+            
+            await client.end();
+          }
+          test().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+          "
+
+  # =============================================================================
+  # JOB 3: Deploy Freeze Gate (push to main only)
   # Emergency brake - set STAGING_DEPLOY_ENABLED=false in GitHub secrets to freeze
   # =============================================================================
   deploy_freeze_gate:
     name: Deploy Freeze Gate
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, db_migration_test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Check deploy freeze status

@@ -154,7 +154,8 @@ export async function POST(request: Request): Promise<Response> {
     // Process the receipt import
     const result = await processReceiptImport(
       validatedRequest.imageBase64,
-      userProfileId
+      userProfileId,
+      authContext.householdKey
     );
     
     // Track OCR failures

@@ -66,19 +66,23 @@ export interface DbAdapter {
 export interface TasteSignal {
   id: string;
   user_profile_id: number;
+  household_key: string; // Partition key for multi-tenant isolation
   meal_id: number;
   weight: number;
-  decision_event_id?: string;
+  event_id: string; // Canonical column (alias for decision_event_id)
+  decision_event_id?: string; // Legacy column (kept for backward compatibility)
   created_at: string;
 }
 
 export interface TasteMealScore {
   id: string;
   user_profile_id: number;
+  household_key: string; // Partition key for multi-tenant isolation
   meal_id: number;
   score: number;
   approvals: number;
   rejections: number;
+  updated_at?: string;
 }
 
 // =============================================================================
@@ -486,17 +490,18 @@ class PostgresAdapter implements DbAdapter {
   async insertDecisionEvent(event: DecisionEventInsert): Promise<void> {
     await this.query(
       `INSERT INTO decision_events 
-       (id, user_profile_id, decided_at, actioned_at, user_action, notes, decision_payload, decision_type, meal_id, context_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (id, user_profile_id, household_key, decided_at, actioned_at, user_action, notes, decision_payload, decision_type, meal_id, context_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         event.id,
         event.user_profile_id,
+        event.household_key,
         event.decided_at,
         event.actioned_at,
         event.user_action,
         event.notes || null,
         JSON.stringify(event.decision_payload),
-        event.decision_type || null,
+        event.decision_type,
         event.meal_id || null,
         event.context_hash || null,
       ]
@@ -528,11 +533,12 @@ class PostgresAdapter implements DbAdapter {
   async insertReceiptImport(record: ReceiptImportRecord): Promise<void> {
     await this.query(
       `INSERT INTO receipt_imports 
-       (id, user_profile_id, created_at, status, raw_ocr_text, error_message, image_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       (id, user_profile_id, household_key, created_at, status, raw_ocr_text, error_message, image_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         record.id,
         record.user_profile_id,
+        record.household_key,
         record.created_at,
         record.status,
         record.raw_ocr_text || null,
@@ -566,25 +572,33 @@ class PostgresAdapter implements DbAdapter {
   }
   
   async upsertInventoryItem(item: InventoryItem): Promise<void> {
+    // Use canonical columns (item_name, remaining_qty, last_seen_at) with household_key
+    // Also write to legacy columns for backward compatibility
     await this.query(
       `INSERT INTO inventory_items 
-       (id, user_profile_id, name, quantity, unit, confidence, source, receipt_import_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, user_profile_id, household_key, item_name, remaining_qty, confidence, last_seen_at, name, quantity, unit, source, receipt_import_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (id) DO UPDATE SET
+         remaining_qty = EXCLUDED.remaining_qty,
          quantity = EXCLUDED.quantity,
          confidence = EXCLUDED.confidence,
+         last_seen_at = EXCLUDED.last_seen_at,
          updated_at = EXCLUDED.updated_at`,
       [
         item.id,
         item.user_profile_id,
-        item.name,
-        item.quantity,
-        item.unit || null,
+        item.household_key,
+        item.item_name, // Canonical column
+        item.remaining_qty, // Canonical column
         item.confidence,
-        item.source,
+        item.last_seen_at, // Canonical column
+        item.item_name, // Legacy 'name' column (same value)
+        item.remaining_qty, // Legacy 'quantity' column (same value)
+        item.unit || null,
+        item.source || 'receipt',
         item.receipt_import_id || null,
-        item.created_at,
-        item.updated_at,
+        item.created_at || new Date().toISOString(),
+        item.last_seen_at, // Legacy 'updated_at' (same as last_seen_at)
       ]
     );
   }
@@ -599,14 +613,16 @@ class PostgresAdapter implements DbAdapter {
   async insertTasteSignal(signal: TasteSignal): Promise<void> {
     await this.query(
       `INSERT INTO taste_signals 
-       (id, user_profile_id, meal_id, weight, decision_event_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+       (id, user_profile_id, household_key, meal_id, weight, event_id, decision_event_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         signal.id,
         signal.user_profile_id,
+        signal.household_key,
         signal.meal_id,
         signal.weight,
-        signal.decision_event_id || null,
+        signal.event_id, // Canonical column
+        signal.event_id, // Also write to legacy decision_event_id for backward compat
         signal.created_at,
       ]
     );
@@ -623,8 +639,8 @@ class PostgresAdapter implements DbAdapter {
   async upsertTasteMealScore(score: TasteMealScore): Promise<void> {
     await this.query(
       `INSERT INTO taste_meal_scores 
-       (id, user_profile_id, meal_id, score, approvals, rejections)
-       VALUES ($1, $2, $3, $4, $5, $6)
+       (id, user_profile_id, household_key, meal_id, score, approvals, rejections)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_profile_id, meal_id) DO UPDATE SET
          score = EXCLUDED.score,
          approvals = EXCLUDED.approvals,
@@ -633,6 +649,7 @@ class PostgresAdapter implements DbAdapter {
       [
         score.id,
         score.user_profile_id,
+        score.household_key,
         score.meal_id,
         score.score,
         score.approvals,

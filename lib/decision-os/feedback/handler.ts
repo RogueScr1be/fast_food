@@ -156,12 +156,13 @@ export function createFeedbackCopy(
   return {
     id: generateFeedbackCopyId(originalEvent.id, clientAction),
     user_profile_id: originalEvent.user_profile_id,
+    household_key: originalEvent.household_key, // Partition key from original event
     decided_at: originalEvent.decided_at,
     actioned_at: nowIso,
     user_action: persistedAction,
     notes,
     decision_payload: originalEvent.decision_payload,
-    decision_type: originalEvent.decision_type,
+    decision_type: originalEvent.decision_type || 'meal_decision', // Required
     meal_id: originalEvent.meal_id,
     context_hash: originalEvent.context_hash,
   };

@@ -186,11 +186,13 @@ export function getInventoryItemByName(
  * 
  * @param imageBase64 - Base64 encoded image
  * @param userProfileId - User's profile ID
+ * @param householdKey - Household partition key (required)
  * @returns ReceiptImportResponse with receiptImportId and status
  */
 export async function processReceiptImport(
   imageBase64: string,
-  userProfileId: number
+  userProfileId: number,
+  householdKey: string = 'default'
 ): Promise<ReceiptImportResponse> {
   const nowIso = new Date().toISOString();
   const receiptImportId = generateReceiptImportId();
@@ -215,6 +217,7 @@ export async function processReceiptImport(
   const record: ReceiptImportRecord = {
     id: receiptImportId,
     user_profile_id: userProfileId,
+    household_key: householdKey, // Partition key for multi-tenant isolation
     created_at: nowIso,
     status: 'received',
     image_hash: imageHash,
@@ -248,6 +251,7 @@ export async function processReceiptImport(
   // Upsert inventory items
   const inventoryUpdated = upsertInventoryFromReceipt(
     userProfileId,
+    householdKey,
     parsedItems,
     receiptImportId,
     nowIso
@@ -279,6 +283,7 @@ export async function processReceiptImport(
  */
 function upsertInventoryFromReceipt(
   userProfileId: number,
+  householdKey: string,
   parsedItems: ParsedReceiptItem[],
   receiptImportId: string,
   nowIso: string
@@ -292,22 +297,30 @@ function upsertInventoryFromReceipt(
     const existingItem = getInventoryItemByName(userProfileId, item.name);
     
     if (existingItem) {
-      // Update existing item quantity
-      existingItem.quantity += item.quantity || 1;
-      existingItem.updated_at = nowIso;
+      // Update existing item using canonical columns
+      existingItem.remaining_qty = (existingItem.remaining_qty || existingItem.quantity || 0) + (item.quantity || 1);
+      existingItem.quantity = existingItem.remaining_qty; // Legacy column
+      existingItem.last_seen_at = nowIso;
+      existingItem.updated_at = nowIso; // Legacy column
       // Keep higher confidence
       if (item.confidence > existingItem.confidence) {
         existingItem.confidence = item.confidence;
       }
       inventoryItemsStore.set(existingItem.id, existingItem);
     } else {
-      // Create new inventory item
+      // Create new inventory item using canonical columns
       const newItem: InventoryItem = {
         id: `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`,
         user_profile_id: userProfileId,
+        household_key: householdKey, // Partition key
+        // Canonical columns
+        item_name: item.name,
+        remaining_qty: item.quantity || 1,
+        confidence: item.confidence,
+        last_seen_at: nowIso,
+        // Legacy columns (for backward compatibility)
         name: item.name,
         quantity: item.quantity || 1,
-        confidence: item.confidence,
         source: 'receipt',
         receipt_import_id: receiptImportId,
         created_at: nowIso,

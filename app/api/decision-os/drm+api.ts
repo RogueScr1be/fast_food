@@ -162,6 +162,7 @@ export async function POST(request: Request): Promise<Response> {
     const drmEvent: DecisionEventInsert = {
       id: eventId,
       user_profile_id: userProfileId,
+      household_key: authContext.householdKey,
       decided_at: nowIso,
       actioned_at: nowIso,
       user_action: 'drm_triggered',
@@ -170,6 +171,7 @@ export async function POST(request: Request): Promise<Response> {
         reason,
         triggered_at: nowIso,
       },
+      decision_type: 'drm',
     };
     
     // Insert event (append-only)
@@ -179,9 +181,10 @@ export async function POST(request: Request): Promise<Response> {
     await db.insertTasteSignal({
       id: `ts-${eventId}`,
       user_profile_id: userProfileId,
+      household_key: authContext.householdKey,
       meal_id: 0, // No specific meal
       weight: -0.5, // DRM weight
-      decision_event_id: eventId,
+      event_id: eventId,
       created_at: nowIso,
     });
     

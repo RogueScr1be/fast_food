@@ -11,6 +11,7 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | Job | Trigger | Description |
 |-----|---------|-------------|
 | `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
+| `db_migration_test` | All PRs and pushes | Ephemeral Postgres: runs migrations + schema verify + write smoke |
 | `deploy_freeze_gate` | Push to main | Checks if deploys are frozen (emergency brake) |
 | `migrate_staging` | Push to main | Runs database migrations on staging |
 | `schema_gate` | Push to main | Verifies DB schema matches required structure |
@@ -47,6 +48,36 @@ This is the first gate after tests pass. If `STAGING_DEPLOY_ENABLED` secret is s
 2. Deploys will resume on the next push to main
 
 **Note:** If the secret is not set, deploys are enabled by default.
+
+#### 0a. DB Migration Test (CI Truth Gate)
+
+**Runs on all PRs and pushes** - catches migration/schema drift before it reaches staging.
+
+This gate spins up an **ephemeral Postgres 15** service container and:
+
+1. **Runs migrations** (`npm run db:migrate`) against a fresh database
+2. **Verifies schema** - tables, columns, types, NOT NULL constraints, CHECK constraints
+3. **Tests DB writes** - inserts and reads back a user_profile, household, and decision_event
+
+**Why this matters:**
+- Migrations may apply correctly to staging (existing data) but fail on a fresh DB
+- Schema verification catches column/type mismatches before deploy
+- Write test catches constraint violations that unit tests might miss
+
+**If this gate fails:**
+- Check the migration files for syntax errors
+- Verify REQUIRED_TABLES, REQUIRED_COLUMNS, REQUIRED_COLUMN_TYPES match actual migrations
+- Run migrations locally against a fresh Postgres to reproduce
+
+**Local testing:**
+```bash
+# Start local Postgres (e.g., via Docker)
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:15
+
+# Set DATABASE_URL and run migrations
+DATABASE_URL=postgresql://postgres:test@localhost:5432/postgres npm run db:migrate
+npm run db:verify:staging
+```
 
 #### 1. Schema Gate (Pre-Deploy)
 
