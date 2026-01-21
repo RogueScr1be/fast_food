@@ -34,7 +34,7 @@
  * - validateDecisionResponse() must pass before returning
  */
 
-import { getDb } from '../../../lib/decision-os/db/client';
+import { getDb, isReadonlyModeError } from '../../../lib/decision-os/db/client';
 import { checkAutopilotEligibility } from '../../../lib/decision-os/autopilot/policy';
 import { createAutopilotApproval, hasAutopilotApproval } from '../../../lib/decision-os/feedback/handler';
 import { validateDecisionResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
@@ -286,6 +286,14 @@ export async function POST(request: Request): Promise<Response> {
     
     return Response.json(response, { status: 200 });
   } catch (error) {
+    // Handle readonly_mode error from DB layer (hard backstop)
+    if (isReadonlyModeError(error)) {
+      record('readonly_hit');
+      // Return canonical response - readonly is not an error from client perspective
+      const response = buildResponse(null, false, undefined);
+      return Response.json(response, { status: 200 });
+    }
+    
     console.error('Decision processing error:', error);
     
     // Best-effort canonical response

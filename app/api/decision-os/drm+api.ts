@@ -30,7 +30,7 @@
  * - validateDrmResponse() must pass before returning
  */
 
-import { getDb } from '../../../lib/decision-os/db/client';
+import { getDb, isReadonlyModeError } from '../../../lib/decision-os/db/client';
 import { validateDrmResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
 import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
@@ -189,6 +189,14 @@ export async function POST(request: Request): Promise<Response> {
     const response = buildResponse(true);
     return Response.json(response, { status: 200 });
   } catch (error) {
+    // Handle readonly_mode error from DB layer (hard backstop)
+    if (isReadonlyModeError(error)) {
+      record('readonly_hit');
+      // Return canonical response - DRM "activated" in readonly mode (no actual write)
+      const response = buildResponse(true);
+      return Response.json(response, { status: 200 });
+    }
+    
     console.error('DRM processing error:', error);
     
     // Best-effort canonical response

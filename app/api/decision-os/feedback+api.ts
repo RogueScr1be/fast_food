@@ -37,7 +37,7 @@ import { validateFeedbackResponse, validateErrorResponse } from '../../../lib/de
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
 import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
 import { record } from '../../../lib/decision-os/monitoring/metrics';
-import { getDb } from '../../../lib/decision-os/db/client';
+import { getDb, isReadonlyModeError } from '../../../lib/decision-os/db/client';
 
 /**
  * Valid client-submitted actions.
@@ -233,6 +233,13 @@ export async function POST(request: Request): Promise<Response> {
     // Always return { recorded: true } - maintains simple response shape
     return buildSuccessResponse();
   } catch (error) {
+    // Handle readonly_mode error from DB layer (hard backstop)
+    if (isReadonlyModeError(error)) {
+      record('readonly_hit');
+      // Return success - readonly is transparent to client
+      return buildSuccessResponse();
+    }
+    
     // Even on error, return { recorded: true } to maintain response shape
     // Errors are logged but don't change the response
     console.error('Feedback processing error:', error);

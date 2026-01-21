@@ -12,6 +12,7 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 |-----|---------|-------------|
 | `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
 | `migrate_staging` | Push to main | Runs database migrations on staging |
+| `schema_gate` | Push to main | Verifies DB schema matches required structure |
 | `deploy_staging` | Push to main | Deploys to Vercel staging |
 | `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
 | `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
@@ -19,18 +20,40 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
 | `readonly_gate` | Push to main | Proves readonly mode prevents DB writes |
 | `smoke_staging` | Push to main | Runs full staging smoke tests |
+| `metrics_prune` | Weekly (Sunday 03:00 UTC) | Deletes old metrics to prevent unbounded growth |
 
 ### Pipeline Gates
 
-The pipeline has four gates that must pass in sequence:
+The pipeline has multiple gates that must pass in sequence:
 
-#### 1. Healthz Gate
+#### 1. Schema Gate (Pre-Deploy)
+
+After migrations, verifies the staging DB schema matches required structure:
+- Required tables exist (user_profiles, decision_events, runtime_flags, etc.)
+- Required columns exist per table
+- Column types are correct (runtime_flags.enabled is boolean, etc.)
+- NOT NULL constraints are in place
+
+```bash
+npm run db:verify:staging
+# Expected output:
+# PASS db_connected
+# PASS tables_verified (12 tables)
+# PASS columns_verified (11 tables checked)
+# PASS column_types_verified (5 columns)
+# PASS not_null_verified (3 columns)
+# === SCHEMA VERIFICATION PASSED ===
+```
+
+This gate runs BEFORE deployment to catch schema drift early.
+
+#### 2. Healthz Gate
 
 After deployment, the pipeline calls `GET /api/healthz` and fails if:
 - Response is not 200
 - This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
 
-#### 2. Auth Required Gate (401)
+#### 3. Auth Required Gate (401)
 
 Verifies protected endpoints correctly REJECT unauthenticated requests:
 - Calls all Decision OS endpoints WITHOUT auth token
@@ -47,7 +70,7 @@ npm run auth:sanity:require401
 # PASS drm_401
 ```
 
-#### 3. Auth Works Gate (200)
+#### 4. Auth Works Gate (200)
 
 Verifies protected endpoints correctly ACCEPT authenticated requests:
 - **Preflight**: Decodes JWT and fails if token expires within 5 minutes
@@ -66,7 +89,7 @@ npm run auth:sanity:require200
 # PASS drm_200
 ```
 
-#### 4. Runtime Flags Gate
+#### 5. Runtime Flags Gate
 
 Proves that DB-backed runtime flags actually change live behavior:
 
@@ -91,7 +114,7 @@ npm run flags:proof
 
 This gate proves that ops can flip flags from Supabase UI to immediately disable features without redeploying.
 
-#### 5. Readonly Gate
+#### 6. Readonly Gate
 
 Proves that readonly mode (emergency freeze) prevents all DB writes:
 
@@ -121,9 +144,29 @@ npm run readonly:proof
 # === READONLY PROOF PASSED ===
 ```
 
-#### 6. Smoke Staging
+#### 7. Smoke Staging
 
 Full integration test of all Decision OS flows with authenticated requests.
+
+### Weekly Metrics Prune
+
+A scheduled job runs weekly (Sunday at 03:00 UTC) to delete old metrics:
+
+```bash
+METRICS_RETENTION_DAYS=90 npm run metrics:prune
+# Expected output:
+# === Metrics Prune ===
+# Retention: 90 days
+# PASS db_connected
+# PASS pruned X rows older than YYYY-MM-DD
+# PASS total_rows: Y (was Z)
+# === METRICS PRUNE COMPLETED ===
+```
+
+**Configuration**:
+- `METRICS_RETENTION_DAYS`: Number of days to retain (default: 90 for staging, 365 for production)
+- Runs automatically via GitHub Actions schedule
+- Prevents unbounded growth of `runtime_metrics_daily` table
 
 ---
 
@@ -272,6 +315,23 @@ When `decision_os_readonly=true` in the `runtime_flags` table:
 | `/api/decision-os/receipt/import` | `{ receiptImportId, status: 'received' }` | **Skipped** |
 
 **Important**: Readonly mode requires `decision_os_enabled=true` (AND logic). It doesn't bypass auth.
+
+**DB-Layer Enforcement (Hard Backstop)**:
+
+Readonly mode is enforced at two levels:
+1. **API Layer**: Endpoints check `flags.readonlyMode` and skip DB writes
+2. **DB Client Layer**: The database adapter blocks all write operations (INSERT/UPDATE/DELETE) and throws `Error('readonly_mode')`
+
+This double-layer protection ensures writes cannot accidentally occur even if API-layer checks are bypassed:
+
+```typescript
+// DB adapter blocks writes when readonly
+if (this._readonlyMode && isWriteStatement(sql)) {
+  throw new Error('readonly_mode');
+}
+```
+
+Endpoints catch this error gracefully and return canonical responses (no crashes, no shape drift).
 
 ### Internal Metrics Endpoint (Dev/Staging Only)
 

@@ -24,6 +24,8 @@
     "readonly:proof": "npx ts-node scripts/readonly-proof.ts",
     "db:migrate": "npx ts-node db/migrate.ts",
     "db:migrate:staging": "npx ts-node db/migrate.ts",
+    "db:verify:staging": "npx ts-node scripts/db-verify-staging.ts",
+    "metrics:prune": "npx ts-node scripts/metrics-prune.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "type-check": "tsc --noEmit",
     "eas:build:dev": "eas build --profile development --platform ios",

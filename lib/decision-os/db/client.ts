@@ -9,6 +9,11 @@
  * - NODE_ENV=test: Always InMemory
  * - DATABASE_URL present: Postgres
  * - Otherwise: InMemory with warning
+ * 
+ * Readonly Mode:
+ * - When readonlyMode=true, only SELECT queries are allowed
+ * - INSERT/UPDATE/DELETE/ALTER/CREATE/DROP are blocked at the DB layer
+ * - Throws Error('readonly_mode') for blocked operations
  */
 
 import type {
@@ -101,12 +106,47 @@ class InMemoryAdapter implements DbAdapter {
   ]);
   private nextUserProfileId = 2;
   
+  // Readonly mode support
+  private _readonlyMode: boolean = false;
+  
+  /**
+   * Set readonly mode
+   */
+  setReadonlyMode(enabled: boolean): void {
+    this._readonlyMode = enabled;
+  }
+  
+  /**
+   * Get current readonly mode status
+   */
+  isReadonly(): boolean {
+    return this._readonlyMode;
+  }
+  
+  /**
+   * Check if operation should be blocked in readonly mode
+   */
+  private checkReadonly(): void {
+    if (this._readonlyMode) {
+      throw new Error('readonly_mode');
+    }
+  }
+  
   /**
    * Generic query support for InMemory adapter.
    * Implements a subset of SQL needed for auth operations.
+   * Respects readonly mode for write operations.
    */
   async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const normalizedSql = sql.toLowerCase().trim();
+    const isWriteOp = normalizedSql.startsWith('insert') || 
+                      normalizedSql.startsWith('update') || 
+                      normalizedSql.startsWith('delete');
+    
+    // Block write operations in readonly mode
+    if (this._readonlyMode && isWriteOp) {
+      throw new Error('readonly_mode');
+    }
     
     // SELECT id FROM user_profiles WHERE auth_user_id = $1
     if (normalizedSql.includes('select') && normalizedSql.includes('user_profiles') && normalizedSql.includes('auth_user_id')) {
@@ -182,6 +222,7 @@ class InMemoryAdapter implements DbAdapter {
   }
   
   async insertDecisionEvent(event: DecisionEventInsert): Promise<void> {
+    this.checkReadonly();
     this.decisionEvents.set(event.id, {
       ...event,
     });
@@ -204,10 +245,12 @@ class InMemoryAdapter implements DbAdapter {
   }
   
   async insertReceiptImport(record: ReceiptImportRecord): Promise<void> {
+    this.checkReadonly();
     this.receiptImports.set(record.id, record);
   }
   
   async updateReceiptImportStatus(id: string, status: string, errorMessage?: string): Promise<void> {
+    this.checkReadonly();
     const existing = this.receiptImports.get(id);
     if (existing) {
       existing.status = status as ReceiptImportRecord['status'];
@@ -227,6 +270,7 @@ class InMemoryAdapter implements DbAdapter {
   }
   
   async upsertInventoryItem(item: InventoryItem): Promise<void> {
+    this.checkReadonly();
     this.inventoryItems.set(item.id, item);
   }
   
@@ -236,6 +280,7 @@ class InMemoryAdapter implements DbAdapter {
   }
   
   async insertTasteSignal(signal: TasteSignal): Promise<void> {
+    this.checkReadonly();
     this.tasteSignals.set(signal.id, signal);
   }
   
@@ -245,6 +290,7 @@ class InMemoryAdapter implements DbAdapter {
   }
   
   async upsertTasteMealScore(score: TasteMealScore): Promise<void> {
+    this.checkReadonly();
     const key = `${score.user_profile_id}-${score.meal_id}`;
     this.tasteMealScores.set(key, score);
   }
@@ -276,20 +322,73 @@ class InMemoryAdapter implements DbAdapter {
 // =============================================================================
 
 /**
+ * SQL statement types that are blocked in readonly mode
+ */
+const WRITE_STATEMENTS = ['INSERT', 'UPDATE', 'DELETE', 'ALTER', 'CREATE', 'DROP', 'TRUNCATE'];
+
+/**
+ * Check if SQL statement is a write operation
+ */
+function isWriteStatement(sql: string): boolean {
+  const normalizedSql = sql.trim().toUpperCase();
+  // Check for common write statement prefixes
+  // Also handle CTEs: WITH ... INSERT/UPDATE/DELETE
+  const firstWord = normalizedSql.split(/\s+/)[0];
+  
+  if (WRITE_STATEMENTS.includes(firstWord)) {
+    return true;
+  }
+  
+  // Check for CTEs that end with write operations
+  if (firstWord === 'WITH') {
+    for (const stmt of WRITE_STATEMENTS) {
+      if (normalizedSql.includes(` ${stmt} `)) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Postgres adapter using native fetch to Supabase REST API
  * or direct pg connection if available
+ * 
+ * Supports readonlyMode which blocks all write operations at the adapter level
  */
 class PostgresAdapter implements DbAdapter {
   name = 'postgres';
   
   private connectionString: string;
   private pool: unknown = null;
+  private _readonlyMode: boolean = false;
   
-  constructor(connectionString: string) {
+  constructor(connectionString: string, readonlyMode: boolean = false) {
     this.connectionString = connectionString;
+    this._readonlyMode = readonlyMode;
+  }
+  
+  /**
+   * Set readonly mode (can be changed after construction)
+   */
+  setReadonlyMode(enabled: boolean): void {
+    this._readonlyMode = enabled;
+  }
+  
+  /**
+   * Get current readonly mode status
+   */
+  isReadonly(): boolean {
+    return this._readonlyMode;
   }
   
   async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+    // READONLY MODE: Block write operations at the DB layer
+    if (this._readonlyMode && isWriteStatement(sql)) {
+      throw new Error('readonly_mode');
+    }
+    
     // Dynamic import to avoid bundling pg in client code
     try {
       const pg = await import('pg');
@@ -304,6 +403,10 @@ class PostgresAdapter implements DbAdapter {
       const result = await (this.pool as pg.Pool).query(sql, params);
       return result.rows as T[];
     } catch (error) {
+      // Re-throw readonly_mode error as-is
+      if (error instanceof Error && error.message === 'readonly_mode') {
+        throw error;
+      }
       // If pg not available, log and throw
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.error('[DB] Query failed:', message);
@@ -561,4 +664,34 @@ export function requireRealDb(): void {
       'Set DATABASE_URL to a PostgreSQL connection string.'
     );
   }
+}
+
+/**
+ * Set readonly mode on the DB adapter.
+ * When enabled, all write operations (INSERT/UPDATE/DELETE) are blocked.
+ * Throws Error('readonly_mode') for blocked operations.
+ */
+export function setDbReadonly(enabled: boolean): void {
+  const db = getDb();
+  if ('setReadonlyMode' in db && typeof db.setReadonlyMode === 'function') {
+    (db as InMemoryAdapter | PostgresAdapter).setReadonlyMode(enabled);
+  }
+}
+
+/**
+ * Check if DB is in readonly mode
+ */
+export function isDbReadonly(): boolean {
+  const db = getDb();
+  if ('isReadonly' in db && typeof db.isReadonly === 'function') {
+    return (db as InMemoryAdapter | PostgresAdapter).isReadonly();
+  }
+  return false;
+}
+
+/**
+ * Check if error is a readonly_mode error
+ */
+export function isReadonlyModeError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'readonly_mode';
 }

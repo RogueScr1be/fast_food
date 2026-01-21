@@ -5,7 +5,7 @@
  * Postgres adapter is tested via integration/smoke tests.
  */
 
-import { getDb, resetDb, clearDb, isRealDb } from '../db/client';
+import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError } from '../db/client';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -207,6 +207,208 @@ describe('Database Client', () => {
 
       const events = await db.getDecisionEventsByUserId(1);
       expect(events.length).toBe(0);
+    });
+  });
+
+  describe('readonly mode', () => {
+    const testEvent: DecisionEventInsert = {
+      id: 'readonly-test-event',
+      user_profile_id: 1,
+      decided_at: new Date().toISOString(),
+      actioned_at: new Date().toISOString(),
+      user_action: 'approved',
+      notes: 'test',
+      decision_payload: { meal: 'Test Meal' },
+      meal_id: 1,
+      context_hash: 'readonly-hash',
+    };
+
+    afterEach(() => {
+      // Always reset readonly mode after tests
+      setDbReadonly(false);
+    });
+
+    it('defaults to readonly mode disabled', () => {
+      expect(isDbReadonly()).toBe(false);
+    });
+
+    it('can enable and disable readonly mode', () => {
+      setDbReadonly(true);
+      expect(isDbReadonly()).toBe(true);
+      
+      setDbReadonly(false);
+      expect(isDbReadonly()).toBe(false);
+    });
+
+    it('allows SELECT queries in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      // These should work in readonly mode
+      const events = await db.getDecisionEventsByUserId(1);
+      expect(events).toEqual([]);
+      
+      const event = await db.getDecisionEventById('non-existent');
+      expect(event).toBeNull();
+    });
+
+    it('blocks INSERT in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      try {
+        await db.insertDecisionEvent(testEvent);
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+        expect((error as Error).message).toBe('readonly_mode');
+      }
+    });
+
+    it('blocks insertReceiptImport in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      try {
+        await db.insertReceiptImport({
+          id: 'receipt-readonly',
+          user_profile_id: 1,
+          created_at: new Date().toISOString(),
+          status: 'received',
+        });
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+      }
+    });
+
+    it('blocks updateReceiptImportStatus in readonly mode', async () => {
+      const db = getDb();
+      
+      // First insert while writable
+      await db.insertReceiptImport({
+        id: 'receipt-update-test',
+        user_profile_id: 1,
+        created_at: new Date().toISOString(),
+        status: 'received',
+      });
+      
+      // Then try to update in readonly mode
+      setDbReadonly(true);
+      
+      try {
+        await db.updateReceiptImportStatus('receipt-update-test', 'parsed');
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+      }
+    });
+
+    it('blocks upsertInventoryItem in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      try {
+        await db.upsertInventoryItem({
+          id: 'item-readonly',
+          user_profile_id: 1,
+          name: 'Chicken',
+          quantity: 2,
+          confidence: 0.95,
+          source: 'receipt',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+      }
+    });
+
+    it('blocks insertTasteSignal in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      try {
+        await db.insertTasteSignal({
+          id: 'ts-readonly',
+          user_profile_id: 1,
+          meal_id: 42,
+          weight: 1.0,
+          created_at: new Date().toISOString(),
+        });
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+      }
+    });
+
+    it('blocks upsertTasteMealScore in readonly mode', async () => {
+      const db = getDb();
+      setDbReadonly(true);
+      
+      try {
+        await db.upsertTasteMealScore({
+          id: 'score-readonly',
+          user_profile_id: 1,
+          meal_id: 42,
+          score: 0.8,
+          approvals: 5,
+          rejections: 1,
+        });
+        fail('Expected readonly_mode error');
+      } catch (error) {
+        expect(isReadonlyModeError(error)).toBe(true);
+      }
+    });
+
+    it('allows writes when readonly mode is disabled', async () => {
+      const db = getDb();
+      
+      // Enable then disable readonly
+      setDbReadonly(true);
+      setDbReadonly(false);
+      
+      // Should work now
+      await db.insertDecisionEvent(testEvent);
+      
+      const event = await db.getDecisionEventById(testEvent.id);
+      expect(event).not.toBeNull();
+      expect(event?.id).toBe(testEvent.id);
+    });
+
+    it('data persists from before readonly mode was enabled', async () => {
+      const db = getDb();
+      
+      // Insert while writable
+      await db.insertDecisionEvent(testEvent);
+      
+      // Enable readonly
+      setDbReadonly(true);
+      
+      // Should still be able to read
+      const event = await db.getDecisionEventById(testEvent.id);
+      expect(event).not.toBeNull();
+      expect(event?.id).toBe(testEvent.id);
+    });
+  });
+
+  describe('isReadonlyModeError', () => {
+    it('returns true for readonly_mode error', () => {
+      const error = new Error('readonly_mode');
+      expect(isReadonlyModeError(error)).toBe(true);
+    });
+
+    it('returns false for other errors', () => {
+      const error = new Error('some other error');
+      expect(isReadonlyModeError(error)).toBe(false);
+    });
+
+    it('returns false for non-Error values', () => {
+      expect(isReadonlyModeError('string')).toBe(false);
+      expect(isReadonlyModeError(null)).toBe(false);
+      expect(isReadonlyModeError(undefined)).toBe(false);
+      expect(isReadonlyModeError(42)).toBe(false);
     });
   });
 });

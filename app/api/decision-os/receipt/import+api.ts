@@ -34,7 +34,7 @@ import { validateReceiptImportResponse, validateErrorResponse } from '../../../.
 import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
 import { resolveFlags, getFlags } from '../../../../lib/decision-os/config/flags';
 import { record } from '../../../../lib/decision-os/monitoring/metrics';
-import { getDb } from '../../../../lib/decision-os/db/client';
+import { getDb, isReadonlyModeError } from '../../../../lib/decision-os/db/client';
 import type { ReceiptImportResponse } from '../../../../types/decision-os';
 
 interface ReceiptRequest {
@@ -164,6 +164,14 @@ export async function POST(request: Request): Promise<Response> {
     
     return buildSuccessResponse(result.receiptImportId, result.status);
   } catch (error) {
+    // Handle readonly_mode error from DB layer (hard backstop)
+    if (isReadonlyModeError(error)) {
+      record('readonly_hit');
+      // Return success with 'received' status - readonly is transparent to client
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'received');
+    }
+    
     // Best-effort: return failed status, never 500
     console.error('Receipt import error:', error);
     record('ocr_provider_failed');
