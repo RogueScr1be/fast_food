@@ -3,10 +3,12 @@ import {
   validateDrmResponse,
   validateFeedbackResponse,
   validateReceiptImportResponse,
+  validateHealthzResponse,
   DECISION_RESPONSE_ALLOWED_FIELDS,
   DRM_RESPONSE_ALLOWED_FIELDS,
   FEEDBACK_RESPONSE_ALLOWED_FIELDS,
   RECEIPT_RESPONSE_ALLOWED_FIELDS,
+  HEALTHZ_RESPONSE_ALLOWED_FIELDS,
 } from '../invariants';
 import { createFeedbackCopy, createAutopilotApproval, NOTES } from '../feedback/handler';
 import { processReceiptImport, clearReceiptStores } from '../receipt/handler';
@@ -506,6 +508,96 @@ describe('Undo Markers Invariant', () => {
     expect(undoCopy).toHaveProperty('actioned_at');
     expect(undoCopy).toHaveProperty('user_action');
     expect(undoCopy).toHaveProperty('notes');
+  });
+});
+
+// =============================================================================
+// HEALTHZ RESPONSE VALIDATION
+// =============================================================================
+
+describe('validateHealthzResponse', () => {
+  describe('valid responses', () => {
+    it('passes with ok:true', () => {
+      const response = { ok: true };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with ok:false', () => {
+      const response = { ok: false };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe('invalid responses', () => {
+    it('FAILS without ok field', () => {
+      const response = {};
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'ok' && e.message.includes('required'))).toBe(true);
+    });
+
+    it('FAILS with ok not boolean (string)', () => {
+      const response = { ok: 'true' };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'ok' && e.message.includes('boolean'))).toBe(true);
+    });
+
+    it('FAILS with ok not boolean (number)', () => {
+      const response = { ok: 1 };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'ok' && e.message.includes('boolean'))).toBe(true);
+    });
+
+    it('FAILS with ok as array', () => {
+      const response = { ok: [true] };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      // Should fail either for not being boolean or for being an array
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it('FAILS with unknown field', () => {
+      const response = { ok: true, status: 'healthy' };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'status')).toBe(true);
+    });
+
+    it('FAILS with error field (banned)', () => {
+      const response = { ok: false, error: 'database down' };
+      const result = validateHealthzResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'error')).toBe(true);
+    });
+
+    it('FAILS with null response', () => {
+      const result = validateHealthzResponse(null);
+      expect(result.valid).toBe(false);
+    });
+
+    it('FAILS with array response', () => {
+      const result = validateHealthzResponse([{ ok: true }]);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe('ALLOWED_FIELDS constant', () => {
+    it('contains only ok', () => {
+      expect(HEALTHZ_RESPONSE_ALLOWED_FIELDS.size).toBe(1);
+      expect(HEALTHZ_RESPONSE_ALLOWED_FIELDS.has('ok')).toBe(true);
+    });
+
+    it('does not contain error, status, or message', () => {
+      expect(HEALTHZ_RESPONSE_ALLOWED_FIELDS.has('error')).toBe(false);
+      expect(HEALTHZ_RESPONSE_ALLOWED_FIELDS.has('status')).toBe(false);
+      expect(HEALTHZ_RESPONSE_ALLOWED_FIELDS.has('message')).toBe(false);
+    });
   });
 });
 

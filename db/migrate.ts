@@ -18,6 +18,23 @@ import * as path from 'path';
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
+/**
+ * Required tables that must exist after migrations.
+ * Verification will fail if any are missing.
+ */
+export const REQUIRED_TABLES = [
+  'user_profiles',
+  'meals',
+  'decision_events',
+  'taste_signals',
+  'taste_meal_scores',
+  'receipt_imports',
+  'inventory_items',
+  'households',
+  'household_members',
+  'schema_migrations',
+] as const;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -119,6 +136,39 @@ async function recordMigration(client: DbClient, filename: string): Promise<void
     'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
     [filename]
   );
+}
+
+/**
+ * Verify required tables exist in database
+ */
+export async function verifyRequiredTables(
+  client: DbClient,
+  requiredTables: readonly string[] = REQUIRED_TABLES
+): Promise<{ valid: boolean; missing: string[]; found: string[] }> {
+  const result = await client.query<{ table_name: string }>(`
+    SELECT table_name 
+    FROM information_schema.tables 
+    WHERE table_schema = 'public' 
+    AND table_type = 'BASE TABLE'
+  `);
+  
+  const existingTables = new Set(result.rows.map(r => r.table_name));
+  const found: string[] = [];
+  const missing: string[] = [];
+  
+  for (const table of requiredTables) {
+    if (existingTables.has(table)) {
+      found.push(table);
+    } else {
+      missing.push(table);
+    }
+  }
+  
+  return {
+    valid: missing.length === 0,
+    missing,
+    found,
+  };
 }
 
 /**
@@ -241,24 +291,25 @@ async function main(): Promise<void> {
       console.log('All migrations already applied.\n');
     }
     
-    // Verify tables exist
-    console.log('=== Verifying Tables ===\n');
+    // Verify required tables exist
+    console.log('=== Verifying Required Tables ===\n');
     
-    const tablesResult = await pool.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-      AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-    `);
+    const verification = await verifyRequiredTables(pool);
     
-    console.log('Tables in database:');
-    for (const row of tablesResult.rows as { table_name: string }[]) {
-      console.log(`  - ${row.table_name}`);
+    console.log('Required tables:');
+    for (const table of REQUIRED_TABLES) {
+      const status = verification.found.includes(table) ? '✓' : '✗';
+      console.log(`  ${status} ${table}`);
+    }
+    
+    if (!verification.valid) {
+      console.error(`\nERROR: Missing required tables: ${verification.missing.join(', ')}`);
+      process.exit(1);
     }
     
     console.log('\n=== Migration Complete ===');
     console.log(`Applied: ${result.applied.length}, Skipped: ${result.skipped.length}`);
+    console.log(`Tables verified: ${verification.found.length}/${REQUIRED_TABLES.length}`);
     
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

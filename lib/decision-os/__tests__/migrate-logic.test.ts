@@ -9,6 +9,8 @@ import {
   getMigrationFiles,
   getUnappliedMigrations,
   runMigrationsWithClient,
+  verifyRequiredTables,
+  REQUIRED_TABLES,
   type MigrationFile,
   type DbClient,
 } from '../../../db/migrate';
@@ -215,6 +217,79 @@ describe('Migration Logic', () => {
       expect(result1.applied).toEqual(['001_first.sql']);
       expect(result2.applied).toEqual([]);
       expect(result2.skipped).toEqual(['001_first.sql']);
+    });
+  });
+
+  describe('verifyRequiredTables', () => {
+    class TableVerifyMockClient implements DbClient {
+      private tables: Set<string>;
+
+      constructor(existingTables: string[]) {
+        this.tables = new Set(existingTables);
+      }
+
+      async query<T = unknown>(sql: string): Promise<{ rows: T[] }> {
+        if (sql.includes('information_schema.tables')) {
+          const rows = Array.from(this.tables).map(t => ({ table_name: t }));
+          return { rows: rows as T[] };
+        }
+        return { rows: [] };
+      }
+
+      async end(): Promise<void> {}
+    }
+
+    it('returns valid when all required tables exist', async () => {
+      const client = new TableVerifyMockClient([...REQUIRED_TABLES]);
+      const result = await verifyRequiredTables(client);
+
+      expect(result.valid).toBe(true);
+      expect(result.missing).toEqual([]);
+      expect(result.found).toHaveLength(REQUIRED_TABLES.length);
+    });
+
+    it('returns invalid when tables are missing', async () => {
+      // Only include some tables
+      const client = new TableVerifyMockClient(['user_profiles', 'meals']);
+      const result = await verifyRequiredTables(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing.length).toBeGreaterThan(0);
+      expect(result.missing).toContain('decision_events');
+      expect(result.found).toContain('user_profiles');
+      expect(result.found).toContain('meals');
+    });
+
+    it('returns all missing when no tables exist', async () => {
+      const client = new TableVerifyMockClient([]);
+      const result = await verifyRequiredTables(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing).toEqual([...REQUIRED_TABLES]);
+      expect(result.found).toEqual([]);
+    });
+
+    it('works with custom required tables list', async () => {
+      const client = new TableVerifyMockClient(['custom_table']);
+      const result = await verifyRequiredTables(client, ['custom_table', 'other_table']);
+
+      expect(result.valid).toBe(false);
+      expect(result.found).toEqual(['custom_table']);
+      expect(result.missing).toEqual(['other_table']);
+    });
+  });
+
+  describe('REQUIRED_TABLES constant', () => {
+    it('contains expected core tables', () => {
+      expect(REQUIRED_TABLES).toContain('user_profiles');
+      expect(REQUIRED_TABLES).toContain('decision_events');
+      expect(REQUIRED_TABLES).toContain('meals');
+      expect(REQUIRED_TABLES).toContain('households');
+      expect(REQUIRED_TABLES).toContain('schema_migrations');
+    });
+
+    it('has at least 10 required tables', () => {
+      expect(REQUIRED_TABLES.length).toBeGreaterThanOrEqual(10);
     });
   });
 });

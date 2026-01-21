@@ -13,10 +13,30 @@
  * 3. Can connect to Postgres and run SELECT 1
  * 
  * Response has ONLY the 'ok' field. No error strings to prevent information leakage.
+ * Validated by validateHealthzResponse() before returning.
  */
+
+import { validateHealthzResponse } from '../../lib/decision-os/invariants';
 
 interface HealthResponse {
   ok: boolean;
+}
+
+/**
+ * Build and validate healthz response
+ */
+function buildResponse(ok: boolean, status: number): Response {
+  const response: HealthResponse = { ok };
+  
+  // Validate before returning (fail-fast on contract violation)
+  const validation = validateHealthzResponse(response);
+  if (!validation.valid) {
+    console.error('Healthz response validation failed:', validation.errors);
+    // Return minimal valid response
+    return Response.json({ ok: false }, { status: 500 });
+  }
+  
+  return Response.json(response, { status });
 }
 
 /**
@@ -68,18 +88,15 @@ export async function GET(): Promise<Response> {
   // Check 1: Environment variables
   const envOk = checkEnvVars();
   if (!envOk) {
-    const response: HealthResponse = { ok: false };
-    return Response.json(response, { status: 500 });
+    return buildResponse(false, 500);
   }
   
   // Check 2: Database connectivity
   const dbOk = await checkDatabase();
   if (!dbOk) {
-    const response: HealthResponse = { ok: false };
-    return Response.json(response, { status: 500 });
+    return buildResponse(false, 500);
   }
   
   // All checks passed
-  const response: HealthResponse = { ok: true };
-  return Response.json(response, { status: 200 });
+  return buildResponse(true, 200);
 }

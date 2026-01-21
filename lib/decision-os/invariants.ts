@@ -258,6 +258,54 @@ export function validateReceiptImportResponse(response: unknown): ValidationResu
 }
 
 // =============================================================================
+// HEALTHZ RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Allowed fields for healthz responses
+ */
+export const HEALTHZ_RESPONSE_ALLOWED_FIELDS = new Set(['ok']);
+
+/**
+ * Validates a healthz endpoint response.
+ * 
+ * CANONICAL CONTRACT:
+ * - ok: boolean (required)
+ * 
+ * REJECTS:
+ * - any unknown fields
+ * - any arrays
+ * - ok not boolean
+ */
+export function validateHealthzResponse(response: unknown): ValidationResult {
+  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
+
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
+    return { valid: false, errors };
+  }
+
+  const resp = response as Record<string, unknown>;
+
+  // Check for unknown fields
+  errors.push(...checkUnknownFields(resp, HEALTHZ_RESPONSE_ALLOWED_FIELDS, 'healthz'));
+
+  // ok: required boolean
+  if (!('ok' in resp)) {
+    errors.push({ field: 'ok', message: 'ok is required' });
+  } else if (typeof resp.ok !== 'boolean') {
+    errors.push({ field: 'ok', message: 'ok must be a boolean', value: resp.ok });
+  } else if (Array.isArray(resp.ok)) {
+    errors.push({ field: 'ok', message: 'ok must not be an array', value: resp.ok });
+  }
+
+  // No arrays anywhere
+  errors.push(...assertNoArraysDeep(resp, 'response'));
+
+  return { valid: errors.length === 0, errors };
+}
+
+// =============================================================================
 // ERROR RESPONSE VALIDATION
 // =============================================================================
 
