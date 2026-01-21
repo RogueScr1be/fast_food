@@ -211,7 +211,8 @@ describe('GoogleVisionProvider', () => {
     const result = await provider.extractText('image');
     
     expect(result.rawText).toBe('');
-    expect(result.error).toContain('403');
+    // Production guard: error message is constant, does not expose status code
+    expect(result.error).toBe('OCR API request failed');
   });
 
   it('handles response-level error', async () => {
@@ -228,7 +229,8 @@ describe('GoogleVisionProvider', () => {
     const result = await provider.extractText('image');
     
     expect(result.rawText).toBe('');
-    expect(result.error).toBe('Image too large');
+    // Production guard: error message is constant, does not expose internal details
+    expect(result.error).toBe('OCR API processing error');
   });
 
   it('handles network exception', async () => {
@@ -238,7 +240,21 @@ describe('GoogleVisionProvider', () => {
     const result = await provider.extractText('image');
     
     expect(result.rawText).toBe('');
-    expect(result.error).toBe('Network error');
+    // Production guard: error message is constant, does not expose exception details
+    expect(result.error).toBe('OCR request failed');
+  });
+
+  it('handles timeout (AbortError)', async () => {
+    // Simulate AbortError from timeout
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    global.fetch = jest.fn().mockRejectedValue(abortError);
+    
+    const provider = new GoogleVisionProvider('test-key');
+    const result = await provider.extractText('image');
+    
+    expect(result.rawText).toBe('');
+    expect(result.error).toBe('OCR request timed out');
   });
 });
 

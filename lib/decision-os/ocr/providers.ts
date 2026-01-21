@@ -196,6 +196,12 @@ export class StubOcrProvider implements OcrProvider {
 // =============================================================================
 
 /**
+ * Hard timeout for OCR requests (8 seconds)
+ * Fail closed: if timeout exceeded, return error, never throw.
+ */
+export const OCR_TIMEOUT_MS = 8000;
+
+/**
  * Google Cloud Vision API response types
  */
 interface GoogleVisionResponse {
@@ -216,7 +222,29 @@ interface GoogleVisionResponse {
 }
 
 /**
+ * Create an AbortController with timeout.
+ * Returns both controller and a cleanup function.
+ */
+function createTimeoutController(timeoutMs: number): {
+  controller: AbortController;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    controller,
+    cleanup: () => clearTimeout(timeoutId),
+  };
+}
+
+/**
  * Real OCR provider using Google Cloud Vision API.
+ * 
+ * Production guards:
+ * - Hard timeout of 8 seconds
+ * - Fail closed: returns error, never throws
+ * - Never logs API key
+ * - Logs only constant messages in dev mode
  * 
  * Requires:
  * - OCR_API_KEY environment variable
@@ -227,13 +255,17 @@ export class GoogleVisionProvider implements OcrProvider {
   
   private apiKey: string;
   private endpoint: string;
+  private timeoutMs: number;
   
-  constructor(apiKey: string, endpoint?: string) {
+  constructor(apiKey: string, endpoint?: string, timeoutMs: number = OCR_TIMEOUT_MS) {
     this.apiKey = apiKey;
     this.endpoint = endpoint || 'https://vision.googleapis.com/v1/images:annotate';
+    this.timeoutMs = timeoutMs;
   }
   
   async extractText(imageBase64: string): Promise<OcrResult> {
+    const { controller, cleanup } = createTimeoutController(this.timeoutMs);
+    
     try {
       // Build request body
       const requestBody = {
@@ -252,7 +284,8 @@ export class GoogleVisionProvider implements OcrProvider {
         ],
       };
       
-      // Make API call
+      // Make API call with timeout
+      // SECURITY: Never log API key. URL is constructed without logging.
       const url = `${this.endpoint}?key=${this.apiKey}`;
       const response = await fetch(url, {
         method: 'POST',
@@ -260,16 +293,19 @@ export class GoogleVisionProvider implements OcrProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
+        signal: controller.signal,
       });
       
+      cleanup();
+      
       if (!response.ok) {
-        // Dev-only log (single line, no text contents)
+        // Dev-only log (constant message, no secrets, no raw text)
         if (process.env.NODE_ENV === 'development') {
-          console.log(`[OCR] Google Vision API error: ${response.status}`);
+          console.log('[OCR] API returned non-OK status');
         }
         return {
           rawText: '',
-          error: `Google Vision API error: ${response.status}`,
+          error: 'OCR API request failed',
         };
       }
       
@@ -277,17 +313,23 @@ export class GoogleVisionProvider implements OcrProvider {
       
       // Check for API-level error
       if (data.error) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[OCR] API returned error response');
+        }
         return {
           rawText: '',
-          error: data.error.message || 'Unknown Google Vision error',
+          error: 'OCR API returned error',
         };
       }
       
       // Check for response-level error
       if (data.responses?.[0]?.error) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[OCR] API returned response-level error');
+        }
         return {
           rawText: '',
-          error: data.responses[0].error.message || 'Unknown error in response',
+          error: 'OCR API processing error',
         };
       }
       
@@ -299,17 +341,28 @@ export class GoogleVisionProvider implements OcrProvider {
         rawText: sanitizeRawText(fullText),
       };
     } catch (error) {
-      // Best-effort: return error, don't throw
-      const message = error instanceof Error ? error.message : 'Unknown OCR error';
+      cleanup();
       
-      // Dev-only log
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[OCR] Exception: ${message.substring(0, 100)}`);
+      // Fail closed: return error, never throw
+      let errorMessage = 'OCR request failed';
+      
+      // Check for timeout/abort
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          errorMessage = 'OCR request timed out';
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[OCR] Request timed out');
+          }
+        } else {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[OCR] Request exception');
+          }
+        }
       }
       
       return {
         rawText: '',
-        error: message,
+        error: errorMessage,
       };
     }
   }
