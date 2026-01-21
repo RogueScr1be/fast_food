@@ -351,6 +351,7 @@ describe('Metrics', () => {
     it('tracks all expected metrics', () => {
       const expectedMetrics: MetricName[] = [
         'healthz_hit',
+        'healthz_ok_false',
         'decision_called',
         'decision_unauthorized',
         'receipt_called',

@@ -25,6 +25,7 @@
  */
 export type MetricName =
   | 'healthz_hit'
+  | 'healthz_ok_false'
   | 'decision_called'
   | 'decision_unauthorized'
   | 'receipt_called'

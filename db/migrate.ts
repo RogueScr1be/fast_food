@@ -304,6 +304,84 @@ export const NOT_NULL_COLUMNS: string[] = [
 ];
 
 /**
+ * Required CHECK constraints on tables.
+ * Format: 'table_name.constraint_name'
+ */
+export const REQUIRED_CONSTRAINTS: Map<string, string[]> = new Map([
+  ['decision_events', [
+    'decision_events_user_action_check',
+    'decision_events_household_key_check',
+    'decision_events_decision_type_check',
+    'decision_events_timestamps_check',
+  ]],
+]);
+
+/**
+ * Result of constraint verification
+ */
+export interface ConstraintVerificationResult {
+  valid: boolean;
+  missing: Array<{ table: string; constraint: string }>;
+  errors: string[];
+}
+
+/**
+ * Verify required CHECK constraints exist on tables.
+ * Queries pg_constraint to check if constraints are present.
+ */
+export async function verifyRequiredConstraints(
+  client: DbClient,
+  requiredConstraints: Map<string, string[]> = REQUIRED_CONSTRAINTS
+): Promise<ConstraintVerificationResult> {
+  const result: ConstraintVerificationResult = {
+    valid: true,
+    missing: [],
+    errors: [],
+  };
+  
+  // Query existing CHECK constraints from pg_constraint
+  const constraintsResult = await client.query<{
+    table_name: string;
+    constraint_name: string;
+  }>(`
+    SELECT 
+      c.relname AS table_name,
+      con.conname AS constraint_name
+    FROM pg_constraint con
+    JOIN pg_class c ON con.conrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND con.contype = 'c'  -- CHECK constraints only
+  `);
+  
+  // Build lookup: table_name -> Set<constraint_name>
+  const existingConstraints = new Map<string, Set<string>>();
+  for (const row of constraintsResult.rows) {
+    if (!existingConstraints.has(row.table_name)) {
+      existingConstraints.set(row.table_name, new Set());
+    }
+    existingConstraints.get(row.table_name)!.add(row.constraint_name);
+  }
+  
+  // Check each required constraint
+  for (const [tableName, constraints] of requiredConstraints) {
+    const tableConstraints = existingConstraints.get(tableName) || new Set();
+    
+    for (const constraintName of constraints) {
+      if (!tableConstraints.has(constraintName)) {
+        result.missing.push({ table: tableName, constraint: constraintName });
+        result.errors.push(
+          `Missing CHECK constraint '${constraintName}' on table '${tableName}'`
+        );
+        result.valid = false;
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
  * Result of column type verification
  */
 export interface TypeVerificationResult {

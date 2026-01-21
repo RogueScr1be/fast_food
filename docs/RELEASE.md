@@ -11,10 +11,13 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | Job | Trigger | Description |
 |-----|---------|-------------|
 | `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
+| `deploy_freeze_gate` | Push to main | Checks if deploys are frozen (emergency brake) |
 | `migrate_staging` | Push to main | Runs database migrations on staging |
 | `schema_gate` | Push to main | Verifies DB schema matches required structure |
 | `deploy_staging` | Push to main | Deploys to Vercel staging |
 | `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
+| `metrics_gate` | Push to main | Verifies runtime_metrics_daily table is healthy |
+| `alerts_gate` | Push to main | Checks durable metrics for alert thresholds |
 | `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
 | `auth_works_gate` | Push to main | Verifies endpoints return 200 WITH token |
 | `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
@@ -25,6 +28,23 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 ### Pipeline Gates
 
 The pipeline has multiple gates that must pass in sequence:
+
+#### 0. Deploy Freeze Gate
+
+**Emergency brake for all deployments.**
+
+This is the first gate after tests pass. If `STAGING_DEPLOY_ENABLED` secret is set to anything other than `"true"`, all deployments will halt.
+
+**To freeze deploys:**
+1. Go to GitHub repo → Settings → Secrets and variables → Actions
+2. Set `STAGING_DEPLOY_ENABLED` to `"false"`
+3. All subsequent pushes to main will fail at the deploy freeze gate
+
+**To unfreeze deploys:**
+1. Set `STAGING_DEPLOY_ENABLED` back to `"true"` (or delete the secret)
+2. Deploys will resume on the next push to main
+
+**Note:** If the secret is not set, deploys are enabled by default.
 
 #### 1. Schema Gate (Pre-Deploy)
 
@@ -53,7 +73,41 @@ After deployment, the pipeline calls `GET /api/healthz` and fails if:
 - Response is not 200
 - This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
 
-#### 3. Auth Required Gate (401)
+#### 3. Metrics Health Gate
+
+Verifies the `runtime_metrics_daily` table exists and is queryable:
+
+```bash
+npm run metrics:health
+# Expected output:
+# PASS db_connected
+# PASS table_exists
+# PASS query_succeeded (N metrics for today)
+```
+
+This ensures metrics persistence is working before checking alert thresholds.
+
+#### 4. Alerts Gate
+
+Reads today's metrics from `runtime_metrics_daily` and fails if alert thresholds are exceeded:
+
+| Metric | Threshold | Meaning |
+|--------|-----------|---------|
+| `healthz_ok_false` | > 0 | Healthz returned false at least once today |
+| `metrics_db_failed` | >= 1 | Metrics DB write failed |
+| `ocr_provider_failed` | >= 5 | OCR provider failed multiple times |
+
+```bash
+npm run metrics:alerts
+# Expected output:
+# PASS healthz_ok_false (count=0, threshold=0)
+# PASS metrics_db_failed (count=0, threshold=1)
+# PASS ocr_provider_failed (count=2, threshold=5)
+```
+
+This catches infrastructure issues before they escalate.
+
+#### 5. Auth Required Gate (401)
 
 Verifies protected endpoints correctly REJECT unauthenticated requests:
 - Calls all Decision OS endpoints WITHOUT auth token
@@ -70,7 +124,7 @@ npm run auth:sanity:require401
 # PASS drm_401
 ```
 
-#### 4. Auth Works Gate (200)
+#### 6. Auth Works Gate (200)
 
 Verifies protected endpoints correctly ACCEPT authenticated requests:
 - **Preflight**: Decodes JWT and fails if token expires within 5 minutes
@@ -89,7 +143,7 @@ npm run auth:sanity:require200
 # PASS drm_200
 ```
 
-#### 5. Runtime Flags Gate
+#### 7. Runtime Flags Gate
 
 Proves that DB-backed runtime flags actually change live behavior:
 
@@ -114,7 +168,7 @@ npm run flags:proof
 
 This gate proves that ops can flip flags from Supabase UI to immediately disable features without redeploying.
 
-#### 6. Readonly Gate
+#### 8. Readonly Gate
 
 Proves that readonly mode (emergency freeze) prevents all DB writes:
 
@@ -144,7 +198,7 @@ npm run readonly:proof
 # === READONLY PROOF PASSED ===
 ```
 
-#### 7. Smoke Staging
+#### 9. Smoke Staging
 
 Full integration test of all Decision OS flows with authenticated requests.
 
@@ -723,3 +777,50 @@ eas secret:create --scope project --name VAR_NAME --value "value"
 3. **Use EAS secrets** for all sensitive values
 4. **Review secrets periodically** and rotate if needed
 5. **Production app requires login** - users will see 401 until they authenticate (login UI is a future feature)
+
+---
+
+## Emergency Procedures
+
+### Emergency: Freeze Deploys
+
+**When to use:** Infrastructure issues, security incidents, or when you need to halt all deployments immediately.
+
+**To freeze all staging deployments:**
+
+1. Go to GitHub repo → Settings → Secrets and variables → Actions
+2. Add or update secret: `STAGING_DEPLOY_ENABLED` = `false`
+3. All subsequent pushes to `main` will fail at the `deploy_freeze_gate` job
+4. Error message: "Deploys frozen by STAGING_DEPLOY_ENABLED"
+
+**To unfreeze:**
+
+1. Set `STAGING_DEPLOY_ENABLED` = `true` (or delete the secret)
+2. Deploys resume on the next push to `main`
+
+**Notes:**
+- Tests still run even when deploys are frozen
+- PRs are unaffected (they only run tests, not deploy)
+- If the secret is not set, deploys are **enabled** by default
+- This is a CI/CD level freeze, separate from runtime readonly mode
+
+### Emergency: Readonly Mode (Runtime)
+
+To prevent all DB writes at runtime (without freezing deploys):
+
+1. Go to Supabase → SQL Editor
+2. Run: `UPDATE runtime_flags SET enabled = true WHERE key = 'decision_os_readonly'`
+3. All Decision OS endpoints will return canonical responses but skip DB writes
+4. To restore: `UPDATE runtime_flags SET enabled = false WHERE key = 'decision_os_readonly'`
+
+### Alert Thresholds
+
+The `alerts_gate` job in CI checks these thresholds daily:
+
+| Metric | Threshold | Action When Exceeded |
+|--------|-----------|---------------------|
+| `healthz_ok_false` | > 0 | Investigate healthz failures |
+| `metrics_db_failed` | >= 1 | Check Supabase connectivity |
+| `ocr_provider_failed` | >= 5 | Check OCR provider status |
+
+If any threshold is exceeded, the pipeline fails and you should investigate before proceeding.

@@ -39,12 +39,37 @@ jobs:
         run: npm run smoke:mvp
 
   # =============================================================================
-  # JOB 2: Migrate Staging DB (push to main only)
+  # JOB 2: Deploy Freeze Gate (push to main only)
+  # Emergency brake - set STAGING_DEPLOY_ENABLED=false in GitHub secrets to freeze
+  # =============================================================================
+  deploy_freeze_gate:
+    name: Deploy Freeze Gate
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check deploy freeze status
+        env:
+          STAGING_DEPLOY_ENABLED: ${{ secrets.STAGING_DEPLOY_ENABLED }}
+        run: |
+          # Default to "true" if not set (allows deploys by default)
+          ENABLED="${STAGING_DEPLOY_ENABLED:-true}"
+          
+          if [ "$ENABLED" != "true" ]; then
+            echo "::error::Deploys frozen by STAGING_DEPLOY_ENABLED"
+            echo "FAIL deploys_frozen"
+            exit 1
+          fi
+          
+          echo "PASS deploy_enabled"
+
+  # =============================================================================
+  # JOB 3: Migrate Staging DB (push to main only)
   # =============================================================================
   migrate_staging:
     name: Migrate Staging DB
     runs-on: ubuntu-latest
-    needs: test
+    needs: deploy_freeze_gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout
@@ -65,7 +90,7 @@ jobs:
         run: npm run db:migrate:staging
 
   # =============================================================================
-  # JOB 3: Schema Gate (push to main only)
+  # JOB 4: Schema Gate (push to main only)
   # Verifies staging DB schema matches required structure
   # =============================================================================
   schema_gate:
@@ -92,7 +117,7 @@ jobs:
         run: npm run db:verify:staging
 
   # =============================================================================
-  # JOB 4: Deploy to Vercel (push to main only)
+  # JOB 5: Deploy to Vercel (push to main only)
   # =============================================================================
   deploy_staging:
     name: Deploy to Vercel
@@ -138,7 +163,7 @@ jobs:
       deployment_url: ${{ steps.deploy.outputs.deployment_url }}
 
   # =============================================================================
-  # JOB 5: Healthz Gate (push to main only)
+  # JOB 6: Healthz Gate (push to main only)
   # =============================================================================
   healthz_gate:
     name: Healthz Gate
@@ -160,7 +185,7 @@ jobs:
           echo "Healthz check passed (200)"
 
   # =============================================================================
-  # JOB 6: Metrics Health Gate (push to main only)
+  # JOB 7: Metrics Health Gate (push to main only)
   # Verifies runtime_metrics_daily table exists and is queryable
   # =============================================================================
   metrics_gate:
@@ -187,13 +212,40 @@ jobs:
         run: npm run metrics:health
 
   # =============================================================================
-  # JOB 7: Auth Required Gate (push to main only)
+  # JOB 8: Alerts Gate (push to main only)
+  # Checks durable metrics for alert thresholds
+  # =============================================================================
+  alerts_gate:
+    name: Alerts Gate
+    runs-on: ubuntu-latest
+    needs: metrics_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check metrics alerts
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run metrics:alerts
+
+  # =============================================================================
+  # JOB 9: Auth Required Gate (push to main only)
   # Verifies protected endpoints return 401 WITHOUT auth token
   # =============================================================================
   auth_required_gate:
     name: Auth Required Gate (401)
     runs-on: ubuntu-latest
-    needs: metrics_gate
+    needs: alerts_gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout
@@ -214,7 +266,7 @@ jobs:
         run: npm run auth:sanity:require401
 
   # =============================================================================
-  # JOB 8: Auth Works Gate (push to main only)
+  # JOB 10: Auth Works Gate (push to main only)
   # Verifies protected endpoints return 200 WITH valid auth token
   # =============================================================================
   auth_works_gate:
@@ -242,7 +294,7 @@ jobs:
         run: npm run auth:sanity:require200
 
   # =============================================================================
-  # JOB 9: Runtime Flags Gate (push to main only)
+  # JOB 11: Runtime Flags Gate (push to main only)
   # Proves DB runtime flags actually change live behavior
   # =============================================================================
   runtime_flags_gate:
@@ -271,7 +323,7 @@ jobs:
         run: npm run flags:proof
 
   # =============================================================================
-  # JOB 10: Readonly Mode Gate (push to main only)
+  # JOB 12: Readonly Mode Gate (push to main only)
   # Proves readonly mode prevents DB writes while maintaining valid responses
   # =============================================================================
   readonly_gate:
@@ -300,7 +352,7 @@ jobs:
         run: npm run readonly:proof
 
   # =============================================================================
-  # JOB 11: Smoke Test Staging (push to main only)
+  # JOB 13: Smoke Test Staging (push to main only)
   # =============================================================================
   smoke_staging:
     name: Smoke Test Staging

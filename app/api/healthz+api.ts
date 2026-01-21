@@ -29,10 +29,16 @@ interface HealthResponse {
 function buildResponse(ok: boolean, status: number): Response {
   const response: HealthResponse = { ok };
   
+  // Track healthz failures for alerting
+  if (!ok) {
+    record('healthz_ok_false');
+  }
+  
   // Validate before returning (fail-fast on contract violation)
   const validation = validateHealthzResponse(response);
   if (!validation.valid) {
     console.error('Healthz response validation failed:', validation.errors);
+    record('healthz_ok_false');
     // Return minimal valid response
     return Response.json({ ok: false }, { status: 500 });
   }

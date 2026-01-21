@@ -11,8 +11,10 @@ import {
   runMigrationsWithClient,
   verifyRequiredTables,
   verifyRequiredColumns,
+  verifyRequiredConstraints,
   REQUIRED_TABLES,
   REQUIRED_COLUMNS,
+  REQUIRED_CONSTRAINTS,
   type MigrationFile,
   type DbClient,
 } from '../../../db/migrate';
@@ -680,6 +682,127 @@ describe('Migration Logic', () => {
       expect(NOT_NULL_COLUMNS).toContain('decision_events.user_action');
       expect(NOT_NULL_COLUMNS).toContain('decision_events.household_key');
       expect(NOT_NULL_COLUMNS).toContain('runtime_flags.enabled');
+    });
+  });
+
+  describe('verifyRequiredConstraints', () => {
+    /**
+     * Mock DB client for constraint verification tests
+     */
+    class ConstraintVerifyMockClient implements DbClient {
+      private constraints: Map<string, Set<string>>;
+
+      constructor(constraints: Map<string, Set<string>>) {
+        this.constraints = constraints;
+      }
+
+      async query<T>(sql: string): Promise<{ rows: T[] }> {
+        if (sql.includes('pg_constraint')) {
+          const rows: Array<{ table_name: string; constraint_name: string }> = [];
+          for (const [tableName, constraintSet] of this.constraints) {
+            for (const constraintName of constraintSet) {
+              rows.push({ table_name: tableName, constraint_name: constraintName });
+            }
+          }
+          return { rows: rows as T[] };
+        }
+        return { rows: [] };
+      }
+
+      async end(): Promise<void> {}
+    }
+
+    it('passes when all required constraints exist', async () => {
+      const constraints = new Map<string, Set<string>>([
+        ['decision_events', new Set([
+          'decision_events_user_action_check',
+          'decision_events_household_key_check',
+          'decision_events_decision_type_check',
+          'decision_events_timestamps_check',
+        ])],
+      ]);
+      const client = new ConstraintVerifyMockClient(constraints);
+
+      const result = await verifyRequiredConstraints(client);
+
+      expect(result.valid).toBe(true);
+      expect(result.missing).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('fails when a constraint is missing', async () => {
+      const constraints = new Map<string, Set<string>>([
+        ['decision_events', new Set([
+          'decision_events_user_action_check',
+          // Missing: decision_events_household_key_check
+          'decision_events_decision_type_check',
+          'decision_events_timestamps_check',
+        ])],
+      ]);
+      const client = new ConstraintVerifyMockClient(constraints);
+
+      const result = await verifyRequiredConstraints(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing.length).toBeGreaterThan(0);
+      expect(result.missing.some(m => 
+        m.table === 'decision_events' && 
+        m.constraint === 'decision_events_household_key_check'
+      )).toBe(true);
+    });
+
+    it('reports multiple missing constraints', async () => {
+      const constraints = new Map<string, Set<string>>([
+        ['decision_events', new Set([
+          // Missing all except one
+          'decision_events_user_action_check',
+        ])],
+      ]);
+      const client = new ConstraintVerifyMockClient(constraints);
+
+      const result = await verifyRequiredConstraints(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing.length).toBe(3); // 3 missing out of 4
+    });
+
+    it('fails when table has no constraints at all', async () => {
+      const constraints = new Map<string, Set<string>>();
+      const client = new ConstraintVerifyMockClient(constraints);
+
+      const result = await verifyRequiredConstraints(client);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing.length).toBe(4); // All 4 constraints missing
+    });
+
+    it('works with custom constraints map', async () => {
+      const customConstraints = new Map<string, string[]>([
+        ['custom_table', ['custom_check_1', 'custom_check_2']],
+      ]);
+      
+      const existingConstraints = new Map<string, Set<string>>([
+        ['custom_table', new Set(['custom_check_1'])], // Missing custom_check_2
+      ]);
+      const client = new ConstraintVerifyMockClient(existingConstraints);
+
+      const result = await verifyRequiredConstraints(client, customConstraints);
+
+      expect(result.valid).toBe(false);
+      expect(result.missing.some(m => 
+        m.table === 'custom_table' && 
+        m.constraint === 'custom_check_2'
+      )).toBe(true);
+    });
+
+    it('REQUIRED_CONSTRAINTS contains decision_events constraints', () => {
+      const decisionEventsConstraints = REQUIRED_CONSTRAINTS.get('decision_events');
+      
+      expect(decisionEventsConstraints).toBeDefined();
+      expect(decisionEventsConstraints).toContain('decision_events_user_action_check');
+      expect(decisionEventsConstraints).toContain('decision_events_household_key_check');
+      expect(decisionEventsConstraints).toContain('decision_events_decision_type_check');
+      expect(decisionEventsConstraints).toContain('decision_events_timestamps_check');
     });
   });
 });
