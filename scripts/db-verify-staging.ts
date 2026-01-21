@@ -67,6 +67,7 @@ const REQUIRED_TABLES = [
   'schema_migrations',
   'runtime_flags',
   'runtime_metrics_daily',
+  'runtime_deployments_log',
 ];
 
 const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
@@ -84,6 +85,7 @@ const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['schema_migrations', ['filename', 'applied_at']],
   ['runtime_flags', ['key', 'enabled', 'updated_at']],
   ['runtime_metrics_daily', ['day', 'metric_key', 'count', 'updated_at']],
+  ['runtime_deployments_log', ['id', 'env', 'deployment_url', 'git_sha', 'run_id', 'recorded_at']],
 ]);
 
 const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
@@ -92,12 +94,20 @@ const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
   ['runtime_metrics_daily.count', 'bigint'],
   ['decision_events.user_action', 'text'],
   ['decision_events.household_key', 'text'],
+  ['runtime_deployments_log.env', 'text'],
+  ['runtime_deployments_log.deployment_url', 'text'],
+  ['runtime_deployments_log.git_sha', 'text'],
+  ['runtime_deployments_log.run_id', 'text'],
 ]);
 
 const NOT_NULL_COLUMNS: string[] = [
   'decision_events.user_action',
   'decision_events.household_key',
   'runtime_flags.enabled',
+  'runtime_deployments_log.env',
+  'runtime_deployments_log.deployment_url',
+  'runtime_deployments_log.git_sha',
+  'runtime_deployments_log.run_id',
 ];
 
 async function verifyRequiredTables(client: DbClient): Promise<{ valid: boolean; missing: string[] }> {

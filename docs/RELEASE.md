@@ -23,6 +23,8 @@ The project uses GitHub Actions for continuous integration and deployment to sta
 | `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
 | `readonly_gate` | Push to main | Proves readonly mode prevents DB writes |
 | `smoke_staging` | Push to main | Runs full staging smoke tests |
+| `record_last_green` | Push to main | Records deployment to runtime_deployments_log |
+| `provenance_gate` | Push to main | Verifies recorded deployment matches actual |
 | `metrics_prune` | Weekly (Sunday 03:00 UTC) | Deletes old metrics to prevent unbounded growth |
 
 ### Pipeline Gates
@@ -824,3 +826,52 @@ The `alerts_gate` job in CI checks these thresholds daily:
 | `ocr_provider_failed` | >= 5 | Check OCR provider status |
 
 If any threshold is exceeded, the pipeline fails and you should investigate before proceeding.
+
+### Emergency: Rollback Staging
+
+**When to use:** Bad deployment caused issues but deploy freeze wasn't set in time.
+
+**Automated rollback (recommended):**
+
+1. Go to GitHub repo → Actions → "Rollback Staging" workflow
+2. Click "Run workflow"
+3. Type `rollback` in the confirmation field
+4. Click "Run workflow"
+
+The workflow will:
+- Query `runtime_deployments_log` for the previous green deployment
+- Re-alias `STAGING_URL` to that deployment
+- Verify healthz returns 200
+
+**Manual rollback (if needed):**
+
+```bash
+# Set required env vars
+export DATABASE_URL_STAGING="postgres://..."
+export VERCEL_TOKEN="..."
+export STAGING_URL="https://your-app.vercel.app"
+
+# Execute rollback
+npm run staging:rollback
+```
+
+**Query deployment history:**
+
+```sql
+SELECT env, deployment_url, git_sha, run_id, recorded_at
+FROM runtime_deployments_log
+WHERE env = 'staging'
+ORDER BY recorded_at DESC
+LIMIT 5;
+```
+
+### Deployment Provenance
+
+Every successful staging pipeline run records to `runtime_deployments_log`:
+- `env`: Environment name (staging)
+- `deployment_url`: Vercel deployment URL
+- `git_sha`: Git commit SHA
+- `run_id`: GitHub Actions run ID
+- `recorded_at`: Timestamp
+
+The `provenance_gate` job verifies that the recorded deployment URL matches the actual deployment.

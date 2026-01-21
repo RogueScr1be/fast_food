@@ -292,8 +292,14 @@ describe('Migration Logic', () => {
       expect(REQUIRED_TABLES).toContain('schema_migrations');
     });
 
-    it('has at least 10 required tables', () => {
-      expect(REQUIRED_TABLES.length).toBeGreaterThanOrEqual(10);
+    it('contains runtime infrastructure tables', () => {
+      expect(REQUIRED_TABLES).toContain('runtime_flags');
+      expect(REQUIRED_TABLES).toContain('runtime_metrics_daily');
+      expect(REQUIRED_TABLES).toContain('runtime_deployments_log');
+    });
+
+    it('has at least 13 required tables', () => {
+      expect(REQUIRED_TABLES.length).toBeGreaterThanOrEqual(13);
     });
   });
 
@@ -473,6 +479,16 @@ describe('Migration Logic', () => {
       expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('count');
       expect(REQUIRED_COLUMNS.get('runtime_metrics_daily')).toContain('updated_at');
     });
+
+    it('contains runtime_deployments_log columns', () => {
+      expect(REQUIRED_COLUMNS.has('runtime_deployments_log')).toBe(true);
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('id');
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('env');
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('deployment_url');
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('git_sha');
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('run_id');
+      expect(REQUIRED_COLUMNS.get('runtime_deployments_log')).toContain('recorded_at');
+    });
   });
 
   describe('verifyRequiredColumnTypes', () => {
@@ -512,6 +528,10 @@ describe('Migration Logic', () => {
         'runtime_metrics_daily.count': 'bigint',
         'decision_events.user_action': 'text',
         'decision_events.household_key': 'text',
+        'runtime_deployments_log.env': 'text',
+        'runtime_deployments_log.deployment_url': 'text',
+        'runtime_deployments_log.git_sha': 'text',
+        'runtime_deployments_log.run_id': 'text',
       };
       const client = new TypeVerifyMockClient(columnTypes);
 
@@ -529,6 +549,10 @@ describe('Migration Logic', () => {
         'runtime_metrics_daily.count': 'bigint',
         'decision_events.user_action': 'text',
         'decision_events.household_key': 'text',
+        'runtime_deployments_log.env': 'text',
+        'runtime_deployments_log.deployment_url': 'text',
+        'runtime_deployments_log.git_sha': 'text',
+        'runtime_deployments_log.run_id': 'text',
       };
       const client = new TypeVerifyMockClient(columnTypes);
 
@@ -584,6 +608,13 @@ describe('Migration Logic', () => {
       expect(REQUIRED_COLUMN_TYPES.get('decision_events.user_action')).toBe('text');
       expect(REQUIRED_COLUMN_TYPES.get('decision_events.household_key')).toBe('text');
     });
+
+    it('REQUIRED_COLUMN_TYPES contains runtime_deployments_log columns', () => {
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_deployments_log.env')).toBe('text');
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_deployments_log.deployment_url')).toBe('text');
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_deployments_log.git_sha')).toBe('text');
+      expect(REQUIRED_COLUMN_TYPES.get('runtime_deployments_log.run_id')).toBe('text');
+    });
   });
 
   describe('verifyNotNull', () => {
@@ -622,6 +653,10 @@ describe('Migration Logic', () => {
         'decision_events.user_action': false,
         'decision_events.household_key': false,
         'runtime_flags.enabled': false,
+        'runtime_deployments_log.env': false,
+        'runtime_deployments_log.deployment_url': false,
+        'runtime_deployments_log.git_sha': false,
+        'runtime_deployments_log.run_id': false,
       };
       const client = new NotNullVerifyMockClient(columnNullable);
 
@@ -637,6 +672,10 @@ describe('Migration Logic', () => {
         'decision_events.user_action': true, // Should NOT be nullable
         'decision_events.household_key': false,
         'runtime_flags.enabled': false,
+        'runtime_deployments_log.env': false,
+        'runtime_deployments_log.deployment_url': false,
+        'runtime_deployments_log.git_sha': false,
+        'runtime_deployments_log.run_id': false,
       };
       const client = new NotNullVerifyMockClient(columnNullable);
 
@@ -682,6 +721,13 @@ describe('Migration Logic', () => {
       expect(NOT_NULL_COLUMNS).toContain('decision_events.user_action');
       expect(NOT_NULL_COLUMNS).toContain('decision_events.household_key');
       expect(NOT_NULL_COLUMNS).toContain('runtime_flags.enabled');
+    });
+
+    it('NOT_NULL_COLUMNS contains runtime_deployments_log columns', () => {
+      expect(NOT_NULL_COLUMNS).toContain('runtime_deployments_log.env');
+      expect(NOT_NULL_COLUMNS).toContain('runtime_deployments_log.deployment_url');
+      expect(NOT_NULL_COLUMNS).toContain('runtime_deployments_log.git_sha');
+      expect(NOT_NULL_COLUMNS).toContain('runtime_deployments_log.run_id');
     });
   });
 
