@@ -32,7 +32,9 @@
 import { processReceiptImport } from '../../../../lib/decision-os/receipt/handler';
 import { validateReceiptImportResponse, validateErrorResponse } from '../../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
-import { isDecisionOsEnabled, isOcrEnabled } from '../../../../lib/decision-os/config/flags';
+import { resolveFlags, getFlags } from '../../../../lib/decision-os/config/flags';
+import { record } from '../../../../lib/decision-os/monitoring/metrics';
+import { getDb } from '../../../../lib/decision-os/db/client';
 import type { ReceiptImportResponse } from '../../../../types/decision-os';
 
 interface ReceiptRequest {
@@ -95,9 +97,20 @@ function generateReceiptImportId(): string {
  * POST handler for receipt import
  */
 export async function POST(request: Request): Promise<Response> {
+  record('receipt_called');
+  
   try {
+    const db = getDb();
+    
+    // Resolve flags (ENV + optional DB override)
+    const flags = await resolveFlags({
+      env: getFlags(),
+      db: db,
+      useCache: true,
+    });
+    
     // KILL SWITCH: Check if Decision OS is enabled
-    if (!isDecisionOsEnabled()) {
+    if (!flags.decisionOsEnabled) {
       // Return 401 unauthorized when Decision OS is disabled
       return buildErrorResponse('unauthorized');
     }
@@ -122,9 +135,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     // KILL SWITCH: Check if OCR feature is enabled
-    if (!isOcrEnabled()) {
+    if (!flags.ocrEnabled) {
       // Return canonical failed response (still 200 OK)
       // Generate a receipt import ID for tracking even when OCR is disabled
+      record('ocr_provider_failed');
       const receiptImportId = generateReceiptImportId();
       return buildSuccessResponse(receiptImportId, 'failed');
     }
@@ -135,10 +149,16 @@ export async function POST(request: Request): Promise<Response> {
       userProfileId
     );
     
+    // Track OCR failures
+    if (result.status === 'failed') {
+      record('ocr_provider_failed');
+    }
+    
     return buildSuccessResponse(result.receiptImportId, result.status);
   } catch (error) {
     // Best-effort: return failed status, never 500
     console.error('Receipt import error:', error);
+    record('ocr_provider_failed');
     return buildSuccessResponse('', 'failed');
   }
 }

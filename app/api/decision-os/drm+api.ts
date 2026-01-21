@@ -33,7 +33,8 @@
 import { getDb } from '../../../lib/decision-os/db/client';
 import { validateDrmResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
-import { isDecisionOsEnabled, isDrmEnabled } from '../../../lib/decision-os/config/flags';
+import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
+import { record } from '../../../lib/decision-os/monitoring/metrics';
 import type { DecisionEventInsert, DrmResponse } from '../../../types/decision-os';
 
 interface DrmRequest {
@@ -101,15 +102,26 @@ function buildResponse(drmActivated: boolean): DrmResponse {
  * POST handler for DRM requests
  */
 export async function POST(request: Request): Promise<Response> {
+  record('drm_called');
+  
   try {
+    const db = getDb();
+    
+    // Resolve flags (ENV + optional DB override)
+    const flags = await resolveFlags({
+      env: getFlags(),
+      db: db,
+      useCache: true,
+    });
+    
     // KILL SWITCH: Check if Decision OS is enabled
-    if (!isDecisionOsEnabled()) {
+    if (!flags.decisionOsEnabled) {
       // Return 401 unauthorized when Decision OS is disabled
       return buildErrorResponse('unauthorized');
     }
     
     // KILL SWITCH: Check if DRM feature is enabled
-    if (!isDrmEnabled()) {
+    if (!flags.drmEnabled) {
       // Return canonical response with drmActivated: false
       const response = buildResponse(false);
       return Response.json(response, { status: 200 });
@@ -134,7 +146,6 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json(response, { status: 200 });
     }
     
-    const db = getDb();
     const { reason } = validatedRequest;
     const nowIso = new Date().toISOString();
     

@@ -8,10 +8,16 @@
  * - DECISION_AUTOPILOT_ENABLED: Autopilot feature
  * - DECISION_OCR_ENABLED: OCR/receipt scanning
  * - DECISION_DRM_ENABLED: Dinner Rescue Mode
+ * - RUNTIME_FLAGS_ENABLED: Enable DB-backed flags override
  * 
  * Defaults:
  * - Production (NODE_ENV=production): ALL false if env var missing (fail-closed)
  * - Non-production: Master true, features true EXCEPT OCR false
+ * 
+ * Runtime Flags (DB-backed):
+ * - When RUNTIME_FLAGS_ENABLED=true, DB flags are AND'd with ENV flags
+ * - DB flags cached for 30 seconds per process
+ * - If DB read fails in production, fail closed (treat as disabled)
  */
 
 export interface DecisionOsFlags {
@@ -23,6 +29,178 @@ export interface DecisionOsFlags {
   ocrEnabled: boolean;
   /** DRM feature - Dinner Rescue Mode */
   drmEnabled: boolean;
+}
+
+/**
+ * DB flag row structure
+ */
+export interface RuntimeFlagRow {
+  key: string;
+  enabled: boolean;
+  updated_at: string;
+}
+
+/**
+ * DB client interface for flag queries
+ */
+export interface FlagDbClient {
+  query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+
+/**
+ * Cached DB flags with expiration
+ */
+interface FlagCache {
+  flags: Map<string, boolean>;
+  expiresAt: number;
+}
+
+// In-memory cache for DB flags (30 second TTL)
+const FLAG_CACHE_TTL_MS = 30_000;
+let dbFlagCache: FlagCache | null = null;
+
+/**
+ * Clear the flag cache (for testing)
+ */
+export function clearFlagCache(): void {
+  dbFlagCache = null;
+}
+
+/**
+ * Get cached DB flags or return null if expired/missing
+ */
+function getCachedDbFlags(): Map<string, boolean> | null {
+  if (!dbFlagCache) return null;
+  if (Date.now() > dbFlagCache.expiresAt) {
+    dbFlagCache = null;
+    return null;
+  }
+  return dbFlagCache.flags;
+}
+
+/**
+ * Set DB flags cache
+ */
+function setCachedDbFlags(flags: Map<string, boolean>): void {
+  dbFlagCache = {
+    flags,
+    expiresAt: Date.now() + FLAG_CACHE_TTL_MS,
+  };
+}
+
+/**
+ * Fetch flags from database
+ */
+async function fetchDbFlags(client: FlagDbClient): Promise<Map<string, boolean>> {
+  const result = await client.query<RuntimeFlagRow>(
+    'SELECT key, enabled FROM runtime_flags'
+  );
+  
+  const flags = new Map<string, boolean>();
+  for (const row of result.rows) {
+    flags.set(row.key, row.enabled);
+  }
+  return flags;
+}
+
+/**
+ * Resolve flags input
+ */
+export interface ResolveFlagsInput {
+  /** Environment flags (from getFlags()) */
+  env?: DecisionOsFlags;
+  /** Database client for runtime flags */
+  db?: FlagDbClient | null;
+  /** Whether to use cached DB flags (default: true) */
+  useCache?: boolean;
+}
+
+/**
+ * Resolved flags with metadata
+ */
+export interface ResolvedFlags extends DecisionOsFlags {
+  /** Source of flags: 'env' | 'env+db' */
+  source: 'env' | 'env+db';
+  /** Whether DB flags were successfully loaded */
+  dbLoaded: boolean;
+}
+
+/**
+ * Resolve effective flags by combining ENV and DB flags.
+ * 
+ * Priority:
+ * 1. ENV master kill switch still gates everything
+ * 2. If RUNTIME_FLAGS_ENABLED=true, read DB flags and AND them with env flags
+ * 3. Cache DB flags for 30 seconds per process
+ * 
+ * Fail-closed behavior:
+ * - In production, if DB read fails, treat all DB flags as disabled
+ * - In dev, if DB read fails, fall back to env-only flags
+ */
+export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<ResolvedFlags> {
+  const envFlags = input.env ?? getFlags();
+  const useCache = input.useCache ?? true;
+  const prod = isProduction();
+  
+  // Base result from env flags
+  const result: ResolvedFlags = {
+    ...envFlags,
+    source: 'env',
+    dbLoaded: false,
+  };
+  
+  // Check if runtime flags are enabled
+  const runtimeFlagsEnabled = parseFlag(process.env.RUNTIME_FLAGS_ENABLED, false);
+  if (!runtimeFlagsEnabled || !input.db) {
+    return result;
+  }
+  
+  // Try to get DB flags (from cache or fresh)
+  let dbFlags: Map<string, boolean> | null = null;
+  
+  if (useCache) {
+    dbFlags = getCachedDbFlags();
+  }
+  
+  if (!dbFlags) {
+    try {
+      dbFlags = await fetchDbFlags(input.db);
+      if (useCache) {
+        setCachedDbFlags(dbFlags);
+      }
+    } catch (error) {
+      // Fail closed in production, fall back in dev
+      if (prod) {
+        // All DB flags treated as disabled (fail closed)
+        return {
+          decisionOsEnabled: false,
+          autopilotEnabled: false,
+          ocrEnabled: false,
+          drmEnabled: false,
+          source: 'env',
+          dbLoaded: false,
+        };
+      }
+      // In dev, just use env flags
+      return result;
+    }
+  }
+  
+  // AND env flags with DB flags
+  result.source = 'env+db';
+  result.dbLoaded = true;
+  
+  // Only enable if BOTH env AND db say enabled
+  result.decisionOsEnabled = envFlags.decisionOsEnabled && 
+    (dbFlags.get('decision_os_enabled') ?? false);
+  result.autopilotEnabled = envFlags.autopilotEnabled && 
+    (dbFlags.get('decision_autopilot_enabled') ?? false);
+  result.ocrEnabled = envFlags.ocrEnabled && 
+    (dbFlags.get('decision_ocr_enabled') ?? false);
+  result.drmEnabled = envFlags.drmEnabled && 
+    (dbFlags.get('decision_drm_enabled') ?? false);
+  
+  return result;
 }
 
 /**

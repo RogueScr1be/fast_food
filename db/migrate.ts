@@ -33,6 +33,7 @@ export const REQUIRED_TABLES = [
   'households',
   'household_members',
   'schema_migrations',
+  'runtime_flags',
 ] as const;
 
 /**
@@ -62,6 +63,7 @@ export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['taste_signals', ['id', 'household_key', 'event_id', 'weight', 'created_at']],
   ['taste_meal_scores', ['id', 'household_key', 'meal_id', 'score', 'approvals', 'rejections', 'updated_at']],
   ['schema_migrations', ['filename', 'applied_at']],
+  ['runtime_flags', ['key', 'enabled', 'updated_at']],
 ]);
 
 // =============================================================================

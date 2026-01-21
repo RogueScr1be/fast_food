@@ -39,7 +39,8 @@ import { checkAutopilotEligibility } from '../../../lib/decision-os/autopilot/po
 import { createAutopilotApproval, hasAutopilotApproval } from '../../../lib/decision-os/feedback/handler';
 import { validateDecisionResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest, type AuthContext } from '../../../lib/decision-os/auth/helper';
-import { isDecisionOsEnabled, isAutopilotEnabled } from '../../../lib/decision-os/config/flags';
+import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
+import { record } from '../../../lib/decision-os/monitoring/metrics';
 import type { DecisionResponse, DecisionEvent } from '../../../types/decision-os';
 
 interface DecisionRequest {
@@ -164,10 +165,21 @@ function buildResponse(
  * POST handler for decision requests
  */
 export async function POST(request: Request): Promise<Response> {
+  record('decision_called');
+  
   try {
+    const db = getDb();
+    
+    // Resolve flags (ENV + optional DB override)
+    const flags = await resolveFlags({
+      env: getFlags(),
+      db: db,
+      useCache: true,
+    });
+    
     // KILL SWITCH: Check if Decision OS is enabled
-    if (!isDecisionOsEnabled()) {
-      // Return 401 unauthorized when Decision OS is disabled
+    if (!flags.decisionOsEnabled) {
+      record('decision_unauthorized');
       return buildErrorResponse('unauthorized');
     }
     
@@ -176,6 +188,7 @@ export async function POST(request: Request): Promise<Response> {
     const authResult = await authenticateRequest(authHeader);
     
     if (!authResult.success) {
+      record('decision_unauthorized');
       return buildErrorResponse('unauthorized');
     }
     
@@ -190,7 +203,6 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json(response, { status: 200 });
     }
     
-    const db = getDb();
     const { context } = validatedRequest;
     
     // Get user's decision history
@@ -208,7 +220,7 @@ export async function POST(request: Request): Promise<Response> {
     const nowIso = new Date().toISOString();
     
     // Check autopilot eligibility (only if autopilot feature is enabled)
-    const autopilotFeatureEnabled = isAutopilotEnabled();
+    const autopilotFeatureEnabled = flags.decisionOsEnabled && flags.autopilotEnabled;
     const autopilotEligibility = autopilotFeatureEnabled 
       ? checkAutopilotEligibility(userEvents)
       : { eligible: false, reason: 'autopilot_disabled' };
@@ -236,6 +248,7 @@ export async function POST(request: Request): Promise<Response> {
         // Create and insert autopilot approval
         const autopilotCopy = createAutopilotApproval(pendingEvent);
         await db.insertDecisionEvent(autopilotCopy);
+        record('autopilot_inserted');
         
         // Insert taste signal for autopilot approval
         await db.insertTasteSignal({

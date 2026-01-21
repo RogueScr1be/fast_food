@@ -35,7 +35,9 @@ import {
 import { computeTasteWeight } from '../../../lib/decision-os/taste/weights';
 import { validateFeedbackResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
-import { isDecisionOsEnabled } from '../../../lib/decision-os/config/flags';
+import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
+import { record } from '../../../lib/decision-os/monitoring/metrics';
+import { getDb } from '../../../lib/decision-os/db/client';
 
 /**
  * Valid client-submitted actions.
@@ -148,9 +150,20 @@ function buildSuccessResponse(): Response {
  * - Idempotent: multiple undos create only one undo copy
  */
 export async function POST(request: Request): Promise<Response> {
+  record('feedback_called');
+  
   try {
+    const db = getDb();
+    
+    // Resolve flags (ENV + optional DB override)
+    const flags = await resolveFlags({
+      env: getFlags(),
+      db: db,
+      useCache: true,
+    });
+    
     // KILL SWITCH: Check if Decision OS is enabled
-    if (!isDecisionOsEnabled()) {
+    if (!flags.decisionOsEnabled) {
       // Return 401 unauthorized when Decision OS is disabled
       return buildErrorResponse('unauthorized');
     }
@@ -170,6 +183,11 @@ export async function POST(request: Request): Promise<Response> {
       // Still return { recorded: true } to maintain response shape
       // Invalid requests (including banned 'modified') are no-ops
       return buildSuccessResponse();
+    }
+    
+    // Track undo requests
+    if (validatedRequest.userAction === 'undo') {
+      record('undo_received');
     }
     
     // Get the original event

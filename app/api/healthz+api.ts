@@ -17,6 +17,7 @@
  */
 
 import { validateHealthzResponse } from '../../lib/decision-os/invariants';
+import { record, getSnapshot } from '../../lib/decision-os/monitoring/metrics';
 
 interface HealthResponse {
   ok: boolean;
@@ -85,16 +86,32 @@ async function checkDatabase(): Promise<boolean> {
  * GET /api/healthz
  */
 export async function GET(): Promise<Response> {
+  record('healthz_hit');
+  
   // Check 1: Environment variables
   const envOk = checkEnvVars();
   if (!envOk) {
+    // Log details in dev only (no secrets, just status)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[healthz] ENV check failed: missing DATABASE_URL or SUPABASE_JWT_SECRET');
+    }
     return buildResponse(false, 500);
   }
   
   // Check 2: Database connectivity
   const dbOk = await checkDatabase();
   if (!dbOk) {
+    // Log details in dev only
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[healthz] DB connectivity check failed');
+    }
     return buildResponse(false, 500);
+  }
+  
+  // Log success metrics in dev only
+  if (process.env.NODE_ENV !== 'production') {
+    const metrics = getSnapshot();
+    console.log('[healthz] All checks passed. Metrics:', JSON.stringify(metrics));
   }
   
   // All checks passed
