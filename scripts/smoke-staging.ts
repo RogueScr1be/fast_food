@@ -28,7 +28,22 @@
 const STAGING_URL = process.env.STAGING_URL || 'http://localhost:8081';
 const STAGING_AUTH_TOKEN = process.env.STAGING_AUTH_TOKEN;
 
-// Canonical allowed fields (must match invariants.ts)
+/**
+ * CANONICAL ALLOWED FIELDS
+ * 
+ * These MUST match lib/decision-os/invariants.ts:
+ * - DECISION_RESPONSE_ALLOWED_FIELDS
+ * - DRM_RESPONSE_ALLOWED_FIELDS
+ * - FEEDBACK_RESPONSE_ALLOWED_FIELDS
+ * - RECEIPT_RESPONSE_ALLOWED_FIELDS
+ * 
+ * Duplicated here because:
+ * 1. This script runs in Node context (not bundled)
+ * 2. Importing from lib/ would require complex bundling setup
+ * 3. Contract drift is prevented by invariants.test.ts which tests both sets
+ * 
+ * If you modify these, also update lib/decision-os/invariants.ts
+ */
 const DECISION_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
 const DRM_ALLOWED_FIELDS = new Set(['drmActivated']);
 const FEEDBACK_ALLOWED_FIELDS = new Set(['recorded']);

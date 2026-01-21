@@ -2,6 +2,71 @@
 
 This document describes how to build and release the Fast Food Zero-UI app using EAS (Expo Application Services).
 
+## CI/CD Staging Pipeline
+
+The project uses GitHub Actions for continuous integration and deployment to staging.
+
+### Pipeline Overview
+
+| Job | Trigger | Description |
+|-----|---------|-------------|
+| `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
+| `migrate_staging` | Push to main | Runs database migrations on staging |
+| `deploy_staging` | Push to main | Deploys to Vercel staging |
+| `smoke_staging` | Push to main | Runs staging smoke tests |
+
+### Required GitHub Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `DATABASE_URL_STAGING` | Yes | Postgres connection string for staging |
+| `VERCEL_TOKEN` | Yes | Vercel deployment token |
+| `VERCEL_ORG_ID` | Yes | Vercel organization ID |
+| `VERCEL_PROJECT_ID` | Yes | Vercel project ID |
+| `STAGING_URL` | Yes | Deployed staging URL (e.g., `https://your-app.vercel.app`) |
+| `STAGING_AUTH_TOKEN` | Yes | Supabase JWT for authenticated smoke tests |
+
+### How to Set Up Secrets
+
+1. **DATABASE_URL_STAGING**: Get from Supabase dashboard → Project Settings → Database → Connection string
+
+2. **Vercel Secrets**:
+   ```bash
+   # Get Vercel token from https://vercel.com/account/tokens
+   # Get org/project IDs from .vercel/project.json after running:
+   vercel link
+   ```
+
+3. **STAGING_URL**: Your Vercel deployment URL
+
+4. **STAGING_AUTH_TOKEN**: Generate a Supabase JWT:
+   - Create a test user in Supabase Auth
+   - Get their access token from Supabase dashboard or via API
+   - This token is used for authenticated smoke tests only
+
+### How to Rotate STAGING_AUTH_TOKEN
+
+1. Log into Supabase dashboard
+2. Go to Authentication → Users
+3. Find or create a staging test user
+4. Generate a new session/access token:
+   - Via SQL Editor: `SELECT * FROM auth.users WHERE email = 'staging-test@example.com'`
+   - Via Supabase client: Call `supabase.auth.signInWithPassword()` and get `session.access_token`
+5. Update the GitHub secret: Settings → Secrets → Actions → Update `STAGING_AUTH_TOKEN`
+
+### Vercel Environment Variables
+
+Ensure these are set in Vercel project settings:
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Postgres connection string |
+| `NODE_ENV` | `production` |
+| `SUPABASE_JWT_SECRET` | JWT secret for auth verification |
+| `OCR_PROVIDER` | `none` (or `google_vision` if enabled) |
+
+---
+
 ## Prerequisites
 
 ### 1. Install EAS CLI

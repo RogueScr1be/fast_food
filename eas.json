@@ -11,7 +11,7 @@
         "simulator": true
       },
       "env": {
-        "EXPO_PUBLIC_DECISION_OS_BASE_URL": "http://localhost:8081",
+        "EXPO_PUBLIC_DECISION_OS_BASE_URL": "http://localhost:3000",
         "EXPO_PUBLIC_APP_VARIANT": "development"
       }
     },
