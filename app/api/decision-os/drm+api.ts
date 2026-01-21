@@ -9,32 +9,26 @@
  *   reason: 'handle_it' | 'dinner_changed' | 'not_hungry' | string
  * }
  * 
- * Response:
+ * Response (CANONICAL CONTRACT - DO NOT ADD FIELDS):
  * {
- *   rescueActivated: boolean,
- *   rescueType: string,
- *   message: string,
- *   recorded: boolean
+ *   drmActivated: boolean
  * }
+ * 
+ * BANNED FIELDS: rescueActivated, rescueType, message, recorded
  * 
  * INVARIANTS:
  * - No arrays in response
  * - Creates decision_event row with user_action='drm_triggered'
+ * - validateDrmResponse() must pass before returning
  */
 
 import { getDb } from '../../../lib/decision-os/db/client';
-import type { DecisionEventInsert } from '../../../types/decision-os';
+import { validateDrmResponse } from '../../../lib/decision-os/invariants';
+import type { DecisionEventInsert, DrmResponse } from '../../../types/decision-os';
 
 interface DrmRequest {
   userProfileId: number;
   reason: string;
-}
-
-interface DrmResponse {
-  rescueActivated: boolean;
-  rescueType: string;
-  message: string;
-  recorded: boolean;
 }
 
 /**
@@ -62,7 +56,7 @@ function validateRequest(body: unknown): DrmRequest | null {
 }
 
 /**
- * Generate DRM event ID
+ * Generate DRM event ID (internal only, not exposed in response)
  */
 function generateDrmEventId(): string {
   const timestamp = Date.now().toString(36);
@@ -71,31 +65,20 @@ function generateDrmEventId(): string {
 }
 
 /**
- * Get rescue response based on reason
+ * Build and validate canonical response
  */
-function getRescueResponse(reason: string): { message: string; rescueType: string } {
-  switch (reason) {
-    case 'handle_it':
-      return {
-        rescueType: 'handle_it',
-        message: 'Dinner is handled. Take a break.',
-      };
-    case 'dinner_changed':
-      return {
-        rescueType: 'dinner_changed',
-        message: 'Plans changed. No worries.',
-      };
-    case 'not_hungry':
-      return {
-        rescueType: 'not_hungry',
-        message: 'Skipping dinner. That\'s okay.',
-      };
-    default:
-      return {
-        rescueType: 'custom',
-        message: 'Dinner rescue activated.',
-      };
+function buildResponse(drmActivated: boolean): DrmResponse {
+  const response: DrmResponse = { drmActivated };
+  
+  // Validate before returning (fail-fast on contract violation)
+  const validation = validateDrmResponse(response);
+  if (!validation.valid) {
+    console.error('DRM response validation failed:', validation.errors);
+    // Return minimal valid response
+    return { drmActivated: false };
   }
+  
+  return response;
 }
 
 /**
@@ -107,12 +90,7 @@ export async function POST(request: Request): Promise<Response> {
     const validatedRequest = validateRequest(body);
     
     if (!validatedRequest) {
-      const response: DrmResponse = {
-        rescueActivated: false,
-        rescueType: 'none',
-        message: 'Invalid request',
-        recorded: false,
-      };
+      const response = buildResponse(false);
       return Response.json(response, { status: 200 });
     }
     
@@ -120,7 +98,7 @@ export async function POST(request: Request): Promise<Response> {
     const { userProfileId, reason } = validatedRequest;
     const nowIso = new Date().toISOString();
     
-    // Create DRM event (append-only)
+    // Create DRM event (append-only, internal)
     const eventId = generateDrmEventId();
     const drmEvent: DecisionEventInsert = {
       id: eventId,
@@ -148,27 +126,14 @@ export async function POST(request: Request): Promise<Response> {
       created_at: nowIso,
     });
     
-    // Get rescue response
-    const rescue = getRescueResponse(reason);
-    
-    const response: DrmResponse = {
-      rescueActivated: true,
-      rescueType: rescue.rescueType,
-      message: rescue.message,
-      recorded: true,
-    };
-    
+    // Build canonical response (ONLY drmActivated)
+    const response = buildResponse(true);
     return Response.json(response, { status: 200 });
   } catch (error) {
     console.error('DRM processing error:', error);
     
-    // Best-effort response
-    const response: DrmResponse = {
-      rescueActivated: false,
-      rescueType: 'error',
-      message: 'Error processing DRM request',
-      recorded: false,
-    };
+    // Best-effort canonical response
+    const response = buildResponse(false);
     return Response.json(response, { status: 200 });
   }
 }

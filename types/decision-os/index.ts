@@ -87,18 +87,51 @@ export interface DecisionEventInsert {
 
 /**
  * Decision response from the decision endpoint
+ * 
+ * CANONICAL CONTRACT (DO NOT ADD FIELDS):
+ * - decision: object | null (the meal suggestion)
+ * - drmRecommended: boolean (whether DRM should be triggered)
+ * - reason?: string (explanation when decision is null or drmRecommended)
+ * - autopilot?: boolean (whether autopilot was applied)
+ * 
+ * BANNED FIELDS (DO NOT ADD):
+ * - decisionEventId (internal only)
+ * - message (use reason instead)
+ * - any arrays
  */
 export interface DecisionResponse {
   drmRecommended: boolean;
   decision: Record<string, unknown> | null;
   autopilot?: boolean;
-  decisionEventId?: string;
-  message?: string;
+  reason?: string;
 }
 
+/**
+ * DRM response from the drm endpoint
+ * 
+ * CANONICAL CONTRACT (DO NOT ADD FIELDS):
+ * - drmActivated: boolean
+ * 
+ * BANNED FIELDS (DO NOT ADD):
+ * - rescueActivated, rescueType, recorded, message
+ * - any arrays
+ */
+export interface DrmResponse {
+  drmActivated: boolean;
+}
+
+/**
+ * Feedback response from the feedback endpoint
+ * 
+ * CANONICAL CONTRACT (DO NOT ADD FIELDS):
+ * - recorded: true (always)
+ * 
+ * BANNED FIELDS (DO NOT ADD):
+ * - eventId
+ * - any arrays
+ */
 export interface FeedbackResponse {
-  recorded: boolean;
-  eventId?: string;
+  recorded: true;
 }
 
 export interface AutopilotConfig {

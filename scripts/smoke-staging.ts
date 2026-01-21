@@ -2,12 +2,14 @@
 /**
  * Staging Smoke Test Runner for Decision OS
  * 
- * Hits the deployed staging API endpoints and verifies:
- * 1. Receipt import (OCR disabled = status failed, but creates audit row)
- * 2. Decision request (verify response shape)
- * 3. Feedback approved (verify { recorded: true })
- * 4. Reject twice, verify DRM recommended
- * 5. DRM call with handle_it
+ * Verifies CANONICAL response shapes:
+ * 1. Receipt import: { receiptImportId: string, status: string }
+ * 2. Decision: { decision: object|null, drmRecommended: boolean, reason?: string, autopilot?: boolean }
+ * 3. Feedback: { recorded: true }
+ * 4. DRM: { drmActivated: boolean }
+ * 
+ * NOTE: decisionEventId is NOT in the canonical contract, so feedback test uses
+ * a synthetic eventId (server handles gracefully as no-op for unknown IDs).
  * 
  * Usage:
  *   STAGING_URL=https://your-app.vercel.app npm run smoke:staging
@@ -18,6 +20,12 @@
  */
 
 const STAGING_URL = process.env.STAGING_URL || 'http://localhost:8081';
+
+// Canonical allowed fields (must match invariants.ts)
+const DECISION_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
+const DRM_ALLOWED_FIELDS = new Set(['drmActivated']);
+const FEEDBACK_ALLOWED_FIELDS = new Set(['recorded']);
+const RECEIPT_ALLOWED_FIELDS = new Set(['receiptImportId', 'status']);
 
 interface TestResult {
   name: string;
@@ -48,11 +56,19 @@ async function fetchJson<T>(path: string, options: RequestInit = {}): Promise<{ 
   return { status: response.status, data };
 }
 
+/**
+ * Check that response only contains allowed fields
+ */
+function checkAllowedFields(data: Record<string, unknown>, allowed: Set<string>): { ok: boolean; unknown: string[] } {
+  const unknown = Object.keys(data).filter(k => !allowed.has(k));
+  return { ok: unknown.length === 0, unknown };
+}
+
 // =============================================================================
 // TEST STEPS
 // =============================================================================
 
-async function testReceiptImport(): Promise<string | null> {
+async function testReceiptImport(): Promise<void> {
   console.log('\n--- Step 1: Receipt Import ---');
   
   try {
@@ -67,39 +83,35 @@ async function testReceiptImport(): Promise<string | null> {
       }
     );
     
-    // Should return 200 even on OCR failure
     const statusOk = status === 200;
     log('Receipt import returns 200', statusOk, `status=${status}`);
     
-    // Must have receiptImportId
+    // Must have receiptImportId (string)
     const hasId = typeof data.receiptImportId === 'string';
-    log('Response has receiptImportId', hasId, `id=${data.receiptImportId?.substring(0, 20)}...`);
+    log('receiptImportId is string', hasId);
     
-    // Must have status field
+    // Must have status (string)
     const hasStatus = typeof data.status === 'string';
-    log('Response has status', hasStatus, `status=${data.status}`);
+    log('status is string', hasStatus, `value=${data.status}`);
     
-    // Response shape: exactly { receiptImportId, status }
-    const keys = Object.keys(data);
-    const shapeOk = keys.length === 2 && keys.includes('receiptImportId') && keys.includes('status');
-    log('Response shape correct', shapeOk, `keys=${keys.join(',')}`);
-    
-    return data.receiptImportId;
+    // Response shape: ONLY allowed fields
+    const fieldCheck = checkAllowedFields(data, RECEIPT_ALLOWED_FIELDS);
+    log('Receipt response has only allowed fields', fieldCheck.ok, 
+        fieldCheck.ok ? 'ok' : `unknown: ${fieldCheck.unknown.join(',')}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     log('Receipt import request', false, message);
-    return null;
   }
 }
 
-async function testDecision(): Promise<string | null> {
+async function testDecision(): Promise<void> {
   console.log('\n--- Step 2: Decision Request ---');
   
   try {
     const { status, data } = await fetchJson<{
       decision: Record<string, unknown> | null;
       drmRecommended: boolean;
-      decisionEventId?: string;
+      reason?: string;
       autopilot?: boolean;
     }>('/api/decision-os/decision', {
       method: 'POST',
@@ -112,47 +124,52 @@ async function testDecision(): Promise<string | null> {
     const statusOk = status === 200;
     log('Decision returns 200', statusOk, `status=${status}`);
     
-    // Must have drmRecommended (boolean)
+    // drmRecommended: required boolean
     const hasDrm = typeof data.drmRecommended === 'boolean';
-    log('Response has drmRecommended', hasDrm, `value=${data.drmRecommended}`);
+    log('drmRecommended is boolean', hasDrm, `value=${data.drmRecommended}`);
     
-    // Must have decision (object or null)
-    const hasDecision = data.decision === null || typeof data.decision === 'object';
-    log('Response has decision', hasDecision);
+    // decision: required, object or null
+    const hasDecision = 'decision' in data && (data.decision === null || typeof data.decision === 'object');
+    log('decision is object|null', hasDecision);
     
-    // autopilot is optional boolean
+    // reason: optional string
+    if ('reason' in data) {
+      const reasonOk = typeof data.reason === 'string';
+      log('reason is string if present', reasonOk, `value=${data.reason}`);
+    }
+    
+    // autopilot: optional boolean
     if ('autopilot' in data) {
       const autopilotOk = typeof data.autopilot === 'boolean';
       log('autopilot is boolean if present', autopilotOk, `value=${data.autopilot}`);
-    } else {
-      log('autopilot is absent (valid)', true);
     }
     
-    // No arrays in response
+    // Response shape: ONLY allowed fields (NO decisionEventId, NO message)
+    const fieldCheck = checkAllowedFields(data, DECISION_ALLOWED_FIELDS);
+    log('Decision response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
+    
+    // No arrays at any level
     const hasNoArrays = !Object.values(data).some(v => Array.isArray(v));
     log('No arrays in response', hasNoArrays);
-    
-    return data.decisionEventId || null;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     log('Decision request', false, message);
-    return null;
   }
 }
 
-async function testFeedback(eventId: string | null): Promise<void> {
-  console.log('\n--- Step 3: Feedback (Approved) ---');
+async function testFeedback(): Promise<void> {
+  console.log('\n--- Step 3: Feedback ---');
   
-  if (!eventId) {
-    log('Feedback test', false, 'No eventId from decision');
-    return;
-  }
+  // NOTE: Since decisionEventId is NOT in the canonical contract,
+  // we use a synthetic eventId. Server handles gracefully (no-op for unknown IDs).
+  const syntheticEventId = `smoke-test-event-${Date.now()}`;
   
   try {
-    const { status, data } = await fetchJson<{ recorded: boolean }>('/api/decision-os/feedback', {
+    const { status, data } = await fetchJson<{ recorded: true }>('/api/decision-os/feedback', {
       method: 'POST',
       body: JSON.stringify({
-        eventId,
+        eventId: syntheticEventId,
         userAction: 'approved',
       }),
     });
@@ -160,115 +177,75 @@ async function testFeedback(eventId: string | null): Promise<void> {
     const statusOk = status === 200;
     log('Feedback returns 200', statusOk, `status=${status}`);
     
-    // Must have recorded: true
+    // recorded: must be true
     const recordedOk = data.recorded === true;
-    log('Response has recorded: true', recordedOk, `recorded=${data.recorded}`);
+    log('recorded is true', recordedOk, `value=${data.recorded}`);
     
-    // Response shape
-    const keys = Object.keys(data);
-    const hasRecorded = keys.includes('recorded');
-    log('Response has recorded field', hasRecorded, `keys=${keys.join(',')}`);
+    // Response shape: ONLY allowed fields (NO eventId)
+    const fieldCheck = checkAllowedFields(data, FEEDBACK_ALLOWED_FIELDS);
+    log('Feedback response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     log('Feedback request', false, message);
   }
 }
 
-async function testRejectTwiceAndDrm(): Promise<void> {
-  console.log('\n--- Step 4: Reject Twice + DRM Check ---');
+async function testDrmRecommendation(): Promise<void> {
+  console.log('\n--- Step 4: DRM Recommendation Check ---');
   
   try {
-    // First rejection
-    const decision1 = await fetchJson<{ decisionEventId?: string; drmRecommended: boolean }>(
-      '/api/decision-os/decision',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          userProfileId: 1,
-          context: { time: '18:00', dayOfWeek: 'Tuesday', rejectionTest: true },
-        }),
-      }
-    );
-    
-    if (decision1.data.decisionEventId) {
-      await fetchJson('/api/decision-os/feedback', {
-        method: 'POST',
-        body: JSON.stringify({
-          eventId: decision1.data.decisionEventId,
-          userAction: 'rejected',
-        }),
-      });
-      log('First rejection recorded', true);
+    // Multiple decision calls to verify drmRecommended behavior
+    for (let i = 0; i < 3; i++) {
+      const { data } = await fetchJson<{ drmRecommended: boolean }>(
+        '/api/decision-os/decision',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            userProfileId: 1,
+            context: { time: `18:0${i}`, dayOfWeek: 'Tuesday', testIteration: i },
+          }),
+        }
+      );
+      
+      // Verify drmRecommended is always a boolean
+      const drmValid = typeof data.drmRecommended === 'boolean';
+      log(`Decision ${i + 1} drmRecommended is boolean`, drmValid, `value=${data.drmRecommended}`);
     }
-    
-    // Second rejection
-    const decision2 = await fetchJson<{ decisionEventId?: string; drmRecommended: boolean }>(
-      '/api/decision-os/decision',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          userProfileId: 1,
-          context: { time: '18:05', dayOfWeek: 'Tuesday', rejectionTest: true },
-        }),
-      }
-    );
-    
-    if (decision2.data.decisionEventId) {
-      await fetchJson('/api/decision-os/feedback', {
-        method: 'POST',
-        body: JSON.stringify({
-          eventId: decision2.data.decisionEventId,
-          userAction: 'rejected',
-        }),
-      });
-      log('Second rejection recorded', true);
-    }
-    
-    // Third decision should recommend DRM (or at least have valid shape)
-    const decision3 = await fetchJson<{ drmRecommended: boolean }>(
-      '/api/decision-os/decision',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          userProfileId: 1,
-          context: { time: '18:10', dayOfWeek: 'Tuesday', rejectionTest: true },
-        }),
-      }
-    );
-    
-    // drmRecommended should be true after multiple rejections (or at least be a boolean)
-    const drmValid = typeof decision3.data.drmRecommended === 'boolean';
-    log('DRM recommendation valid', drmValid, `drmRecommended=${decision3.data.drmRecommended}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    log('Reject + DRM test', false, message);
+    log('DRM recommendation test', false, message);
   }
 }
 
-async function testDrmHandleIt(): Promise<void> {
-  console.log('\n--- Step 5: DRM Handle It ---');
+async function testDrmEndpoint(): Promise<void> {
+  console.log('\n--- Step 5: DRM Endpoint ---');
   
   try {
-    const { status, data } = await fetchJson<{
-      rescueActivated?: boolean;
-      rescueType?: string;
-      recorded?: boolean;
-    }>('/api/decision-os/drm', {
-      method: 'POST',
-      body: JSON.stringify({
-        userProfileId: 1,
-        reason: 'handle_it',
-      }),
-    });
+    const { status, data } = await fetchJson<{ drmActivated: boolean }>(
+      '/api/decision-os/drm',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          userProfileId: 1,
+          reason: 'handle_it',
+        }),
+      }
+    );
     
     const statusOk = status === 200;
     log('DRM returns 200', statusOk, `status=${status}`);
     
-    // Check response has expected fields (shape may vary)
-    const hasContent = Object.keys(data).length > 0;
-    log('DRM response has content', hasContent, `keys=${Object.keys(data).join(',')}`);
+    // drmActivated: required boolean
+    const hasActivated = typeof data.drmActivated === 'boolean';
+    log('drmActivated is boolean', hasActivated, `value=${data.drmActivated}`);
     
-    // No arrays in response
+    // Response shape: ONLY allowed fields (NO rescueActivated, rescueType, recorded, message)
+    const fieldCheck = checkAllowedFields(data, DRM_ALLOWED_FIELDS);
+    log('DRM response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
+    
+    // No arrays
     const hasNoArrays = !Object.values(data).some(v => Array.isArray(v));
     log('No arrays in DRM response', hasNoArrays);
   } catch (error) {
@@ -282,23 +259,23 @@ async function testDrmHandleIt(): Promise<void> {
 // =============================================================================
 
 async function runSmokeTests(): Promise<void> {
-  console.log('=== Staging Smoke Tests ===');
+  console.log('=== Staging Smoke Tests (Canonical Contract Validation) ===');
   console.log(`Target: ${STAGING_URL}\n`);
   
   // Step 1: Receipt Import
-  const receiptId = await testReceiptImport();
+  await testReceiptImport();
   
   // Step 2: Decision
-  const eventId = await testDecision();
+  await testDecision();
   
   // Step 3: Feedback
-  await testFeedback(eventId);
+  await testFeedback();
   
-  // Step 4: Reject twice + DRM check
-  await testRejectTwiceAndDrm();
+  // Step 4: DRM Recommendation
+  await testDrmRecommendation();
   
-  // Step 5: DRM Handle It
-  await testDrmHandleIt();
+  // Step 5: DRM Endpoint
+  await testDrmEndpoint();
   
   // Summary
   console.log('\n=== Summary ===');

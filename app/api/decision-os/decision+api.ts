@@ -9,24 +9,27 @@
  *   context?: { time?: string, dayOfWeek?: string, ... }
  * }
  * 
- * Response (DO NOT CHANGE SHAPE):
+ * Response (CANONICAL CONTRACT - DO NOT ADD FIELDS):
  * {
  *   decision: object | null,
  *   drmRecommended: boolean,
- *   autopilot?: boolean,
- *   decisionEventId?: string,
- *   message?: string
+ *   reason?: string,
+ *   autopilot?: boolean
  * }
+ * 
+ * BANNED FIELDS: decisionEventId, message
  * 
  * INVARIANTS:
  * - No arrays in response
  * - append-only: feedback creates NEW rows, never updates
  * - autopilot is optional boolean
+ * - validateDecisionResponse() must pass before returning
  */
 
 import { getDb } from '../../../lib/decision-os/db/client';
 import { checkAutopilotEligibility } from '../../../lib/decision-os/autopilot/policy';
-import { createAutopilotApproval, hasAutopilotApproval, NOTES } from '../../../lib/decision-os/feedback/handler';
+import { createAutopilotApproval, hasAutopilotApproval } from '../../../lib/decision-os/feedback/handler';
+import { validateDecisionResponse } from '../../../lib/decision-os/invariants';
 import type { DecisionResponse, DecisionEvent } from '../../../types/decision-os';
 
 interface DecisionRequest {
@@ -55,7 +58,7 @@ function validateRequest(body: unknown): DecisionRequest | null {
 }
 
 /**
- * Generate a unique decision event ID
+ * Generate a unique decision event ID (internal only, not exposed in response)
  */
 function generateDecisionEventId(): string {
   const timestamp = Date.now().toString(36);
@@ -68,7 +71,6 @@ function generateDecisionEventId(): string {
  */
 function generateContextHash(userId: number, context?: Record<string, unknown>): string {
   const base = `${userId}-${JSON.stringify(context || {})}`;
-  // Simple hash - in production use crypto
   let hash = 0;
   for (let i = 0; i < base.length; i++) {
     const char = base.charCodeAt(i);
@@ -110,6 +112,39 @@ function getMealSuggestion(context?: Record<string, unknown>): Record<string, un
 }
 
 /**
+ * Build and validate canonical response
+ */
+function buildResponse(
+  decision: Record<string, unknown> | null,
+  drmRecommended: boolean,
+  reason?: string,
+  autopilot?: boolean
+): DecisionResponse {
+  const response: DecisionResponse = {
+    decision,
+    drmRecommended,
+  };
+  
+  if (reason !== undefined) {
+    response.reason = reason;
+  }
+  
+  if (autopilot !== undefined) {
+    response.autopilot = autopilot;
+  }
+  
+  // Validate before returning (fail-fast on contract violation)
+  const validation = validateDecisionResponse(response);
+  if (!validation.valid) {
+    console.error('Decision response validation failed:', validation.errors);
+    // Return minimal valid response
+    return { decision: null, drmRecommended: false };
+  }
+  
+  return response;
+}
+
+/**
  * POST handler for decision requests
  */
 export async function POST(request: Request): Promise<Response> {
@@ -118,11 +153,7 @@ export async function POST(request: Request): Promise<Response> {
     const validatedRequest = validateRequest(body);
     
     if (!validatedRequest) {
-      const response: DecisionResponse = {
-        decision: null,
-        drmRecommended: false,
-        message: 'Invalid request',
-      };
+      const response = buildResponse(null, false, 'Invalid request');
       return Response.json(response, { status: 200 });
     }
     
@@ -138,7 +169,7 @@ export async function POST(request: Request): Promise<Response> {
     // Get meal suggestion
     const mealSuggestion = getMealSuggestion(context);
     
-    // Create decision event
+    // Create decision event (internal, not exposed in response)
     const eventId = generateDecisionEventId();
     const contextHash = generateContextHash(userProfileId, context);
     const nowIso = new Date().toISOString();
@@ -160,7 +191,6 @@ export async function POST(request: Request): Promise<Response> {
     };
     
     // If autopilot eligible and not already applied, create autopilot approval
-    let autopilotApplied = false;
     if (autopilotEligibility.eligible) {
       // Check for existing autopilot approval (idempotency)
       const existingCopies = await db.getDecisionEventsByContextHash(contextHash);
@@ -169,7 +199,6 @@ export async function POST(request: Request): Promise<Response> {
         // Create and insert autopilot approval
         const autopilotCopy = createAutopilotApproval(pendingEvent);
         await db.insertDecisionEvent(autopilotCopy);
-        autopilotApplied = true;
         
         // Insert taste signal for autopilot approval
         await db.insertTasteSignal({
@@ -180,39 +209,23 @@ export async function POST(request: Request): Promise<Response> {
           decision_event_id: autopilotCopy.id,
           created_at: nowIso,
         });
-      } else {
-        // Already has autopilot approval
-        autopilotApplied = true;
       }
     }
     
-    // Build response
-    const response: DecisionResponse = {
-      decision: drmRecommended ? null : mealSuggestion,
+    // Build canonical response (NO decisionEventId, NO message)
+    const response = buildResponse(
+      drmRecommended ? null : mealSuggestion,
       drmRecommended,
-      decisionEventId: eventId,
-    };
-    
-    // Add autopilot flag if eligible
-    if (autopilotEligibility.eligible) {
-      response.autopilot = true;
-    }
-    
-    // Add reason if DRM recommended
-    if (drmRecommended) {
-      response.message = 'Multiple rejections detected';
-    }
+      drmRecommended ? 'Multiple rejections detected' : undefined,
+      autopilotEligibility.eligible ? true : undefined
+    );
     
     return Response.json(response, { status: 200 });
   } catch (error) {
     console.error('Decision processing error:', error);
     
-    // Best-effort response
-    const response: DecisionResponse = {
-      decision: null,
-      drmRecommended: false,
-      message: 'Error processing decision',
-    };
+    // Best-effort canonical response
+    const response = buildResponse(null, false, 'Error processing decision');
     return Response.json(response, { status: 200 });
   }
 }

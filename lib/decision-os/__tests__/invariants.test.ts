@@ -1,80 +1,382 @@
-import { validateDecisionResponse } from '../invariants';
+import { 
+  validateDecisionResponse, 
+  validateDrmResponse,
+  validateFeedbackResponse,
+  validateReceiptImportResponse,
+  DECISION_RESPONSE_ALLOWED_FIELDS,
+  DRM_RESPONSE_ALLOWED_FIELDS,
+  FEEDBACK_RESPONSE_ALLOWED_FIELDS,
+  RECEIPT_RESPONSE_ALLOWED_FIELDS,
+} from '../invariants';
 import { createFeedbackCopy, createAutopilotApproval, NOTES } from '../feedback/handler';
 import { processReceiptImport, clearReceiptStores } from '../receipt/handler';
 import { MOCK_KEYS, StubOcrProvider } from '../ocr/providers';
-import type { DecisionEvent, ReceiptImportResponse } from '../../../types/decision-os';
+import type { DecisionEvent } from '../../../types/decision-os';
 import * as childProcess from 'child_process';
 
+// =============================================================================
+// DECISION RESPONSE VALIDATION
+// =============================================================================
+
 describe('validateDecisionResponse', () => {
-  it('passes without autopilot', () => {
-    const response = {
-      drmRecommended: true,
-      decision: { action: 'cook' },
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
+  describe('valid responses', () => {
+    it('passes with minimal required fields', () => {
+      const response = {
+        drmRecommended: true,
+        decision: { action: 'cook' },
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with autopilot:true', () => {
+      const response = {
+        drmRecommended: false,
+        decision: null,
+        autopilot: true,
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with autopilot:false', () => {
+      const response = {
+        drmRecommended: true,
+        decision: { action: 'order' },
+        autopilot: false,
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with reason string', () => {
+      const response = {
+        drmRecommended: true,
+        decision: null,
+        reason: 'Multiple rejections detected',
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with all allowed fields', () => {
+      const response = {
+        drmRecommended: true,
+        decision: { meal: 'Chicken' },
+        autopilot: true,
+        reason: 'User preference',
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(true);
+    });
   });
 
-  it('passes with autopilot:true', () => {
-    const response = {
-      drmRecommended: false,
-      decision: null,
-      autopilot: true,
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
+  describe('type validation', () => {
+    it('fails with autopilot:"yes"', () => {
+      const response = {
+        drmRecommended: true,
+        decision: null,
+        autopilot: 'yes',
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'autopilot')).toBe(true);
+    });
+
+    it('fails with autopilot:1', () => {
+      const response = {
+        drmRecommended: true,
+        decision: null,
+        autopilot: 1,
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'autopilot')).toBe(true);
+    });
+
+    it('fails when drmRecommended is missing', () => {
+      const response = { decision: null };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'drmRecommended')).toBe(true);
+    });
+
+    it('fails when decision is missing', () => {
+      const response = { drmRecommended: true };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'decision')).toBe(true);
+    });
+
+    it('fails when decision is an array', () => {
+      const response = {
+        drmRecommended: true,
+        decision: [{ action: 'cook' }],
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'decision')).toBe(true);
+    });
   });
 
-  it('passes with autopilot:false', () => {
-    const response = {
-      drmRecommended: true,
-      decision: { action: 'order' },
-      autopilot: false,
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
+  describe('BANNED FIELDS (prevents future drift)', () => {
+    it('FAILS with decisionEventId (BANNED)', () => {
+      const response = {
+        drmRecommended: true,
+        decision: { meal: 'Chicken' },
+        decisionEventId: 'dec-123', // BANNED
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'decisionEventId')).toBe(true);
+    });
+
+    it('FAILS with message (BANNED - use reason)', () => {
+      const response = {
+        drmRecommended: true,
+        decision: null,
+        message: 'Some message', // BANNED - use reason
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'message')).toBe(true);
+    });
+
+    it('FAILS with any unknown field', () => {
+      const response = {
+        drmRecommended: true,
+        decision: null,
+        unknownField: 'value',
+      };
+      const result = validateDecisionResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'unknownField')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// DRM RESPONSE VALIDATION
+// =============================================================================
+
+describe('validateDrmResponse', () => {
+  describe('valid responses', () => {
+    it('passes with drmActivated: true', () => {
+      const response = { drmActivated: true };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with drmActivated: false', () => {
+      const response = { drmActivated: false };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
   });
 
-  it('fails with autopilot:"yes"', () => {
-    const response = {
-      drmRecommended: true,
-      decision: null,
-      autopilot: 'yes',
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.field === 'autopilot')).toBe(true);
+  describe('type validation', () => {
+    it('fails when drmActivated is missing', () => {
+      const response = {};
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'drmActivated')).toBe(true);
+    });
+
+    it('fails when drmActivated is not boolean', () => {
+      const response = { drmActivated: 'yes' };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'drmActivated')).toBe(true);
+    });
   });
 
-  it('fails with autopilot:1', () => {
-    const response = {
-      drmRecommended: true,
-      decision: null,
-      autopilot: 1,
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.field === 'autopilot')).toBe(true);
+  describe('BANNED FIELDS (prevents future drift)', () => {
+    it('FAILS with rescueActivated (BANNED)', () => {
+      const response = {
+        drmActivated: true,
+        rescueActivated: true, // BANNED
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'rescueActivated')).toBe(true);
+    });
+
+    it('FAILS with rescueType (BANNED)', () => {
+      const response = {
+        drmActivated: true,
+        rescueType: 'handle_it', // BANNED
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'rescueType')).toBe(true);
+    });
+
+    it('FAILS with recorded (BANNED)', () => {
+      const response = {
+        drmActivated: true,
+        recorded: true, // BANNED
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'recorded')).toBe(true);
+    });
+
+    it('FAILS with message (BANNED)', () => {
+      const response = {
+        drmActivated: true,
+        message: 'Dinner rescued', // BANNED
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'message')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// FEEDBACK RESPONSE VALIDATION
+// =============================================================================
+
+describe('validateFeedbackResponse', () => {
+  describe('valid responses', () => {
+    it('passes with recorded: true', () => {
+      const response = { recorded: true };
+      const result = validateFeedbackResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
   });
 
-  it('fails when drmRecommended is missing', () => {
-    const response = { decision: null };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.field === 'drmRecommended')).toBe(true);
+  describe('type validation', () => {
+    it('fails when recorded is missing', () => {
+      const response = {};
+      const result = validateFeedbackResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'recorded')).toBe(true);
+    });
+
+    it('fails when recorded is false', () => {
+      const response = { recorded: false };
+      const result = validateFeedbackResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'recorded')).toBe(true);
+    });
   });
 
-  it('fails when decision is an array', () => {
-    const response = {
-      drmRecommended: true,
-      decision: [{ action: 'cook' }],
-    };
-    const result = validateDecisionResponse(response);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.field === 'decision')).toBe(true);
+  describe('BANNED FIELDS (prevents future drift)', () => {
+    it('FAILS with eventId (BANNED)', () => {
+      const response = {
+        recorded: true,
+        eventId: 'evt-123', // BANNED
+      };
+      const result = validateFeedbackResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'eventId')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// RECEIPT IMPORT RESPONSE VALIDATION
+// =============================================================================
+
+describe('validateReceiptImportResponse', () => {
+  describe('valid responses', () => {
+    it('passes with valid receiptImportId and status', () => {
+      const response = { receiptImportId: 'rcpt-123', status: 'parsed' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with status: received', () => {
+      const response = { receiptImportId: 'rcpt-123', status: 'received' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(true);
+    });
+
+    it('passes with status: failed', () => {
+      const response = { receiptImportId: '', status: 'failed' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('type validation', () => {
+    it('fails when receiptImportId is missing', () => {
+      const response = { status: 'parsed' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'receiptImportId')).toBe(true);
+    });
+
+    it('fails when status is missing', () => {
+      const response = { receiptImportId: 'rcpt-123' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'status')).toBe(true);
+    });
+
+    it('fails with invalid status value', () => {
+      const response = { receiptImportId: 'rcpt-123', status: 'processing' };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'status')).toBe(true);
+    });
+  });
+
+  describe('BANNED FIELDS (prevents future drift)', () => {
+    it('FAILS with any extra field', () => {
+      const response = {
+        receiptImportId: 'rcpt-123',
+        status: 'parsed',
+        items: [], // BANNED - no arrays
+      };
+      const result = validateReceiptImportResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'items')).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// ALLOWED FIELDS CONSTANTS (single source of truth)
+// =============================================================================
+
+describe('Allowed Fields Constants', () => {
+  it('DECISION_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
+    expect(DECISION_RESPONSE_ALLOWED_FIELDS).toEqual(
+      new Set(['decision', 'drmRecommended', 'reason', 'autopilot'])
+    );
+    // Verify banned fields are NOT in allowed set
+    expect(DECISION_RESPONSE_ALLOWED_FIELDS.has('decisionEventId')).toBe(false);
+    expect(DECISION_RESPONSE_ALLOWED_FIELDS.has('message')).toBe(false);
+  });
+
+  it('DRM_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
+    expect(DRM_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['drmActivated']));
+    // Verify banned fields are NOT in allowed set
+    expect(DRM_RESPONSE_ALLOWED_FIELDS.has('rescueActivated')).toBe(false);
+    expect(DRM_RESPONSE_ALLOWED_FIELDS.has('rescueType')).toBe(false);
+    expect(DRM_RESPONSE_ALLOWED_FIELDS.has('recorded')).toBe(false);
+    expect(DRM_RESPONSE_ALLOWED_FIELDS.has('message')).toBe(false);
+  });
+
+  it('FEEDBACK_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
+    expect(FEEDBACK_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['recorded']));
+    expect(FEEDBACK_RESPONSE_ALLOWED_FIELDS.has('eventId')).toBe(false);
+  });
+
+  it('RECEIPT_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
+    expect(RECEIPT_RESPONSE_ALLOWED_FIELDS).toEqual(
+      new Set(['receiptImportId', 'status'])
+    );
   });
 });
 
