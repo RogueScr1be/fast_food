@@ -10,7 +10,8 @@ import {
   requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate,
   TENANT_TABLES, extractTableReferences, hasPredicateForTableOrAlias, checkTenantSafety, checkOnConflictSafety, assertTenantSafe,
   normalizeSql, checkSqlStyleContract, assertSqlStyleContract,
-  stripStringLiterals, normalizeTableName, hasWrongParamIndexForTenant, hasLiteralTenantPredicate
+  stripStringLiterals, normalizeTableName, hasWrongParamIndexForTenant, hasLiteralTenantPredicate,
+  hasAnySubquery, hasCte
 } from '../db/client';
 import { tenantWhere, tenantAnd, tenantConflict, tenantUpdateWhere, TABLE_ALIASES } from '../db/sql';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
@@ -1705,6 +1706,112 @@ describe('Database Client', () => {
           false
         );
         expect(result).toBe(true);
+      });
+    });
+
+    describe('CTE and subquery detection helpers', () => {
+      describe('hasAnySubquery', () => {
+        it('detects (SELECT ...) subquery', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id = (SELECT 1)')).toBe(true);
+        });
+
+        it('detects EXISTS (SELECT ...)', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE EXISTS (SELECT 1)')).toBe(true);
+        });
+
+        it('detects IN (SELECT ...)', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id IN (SELECT id FROM other)')).toBe(true);
+        });
+
+        it('detects ANY (SELECT ...)', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id = ANY (SELECT id FROM other)')).toBe(true);
+        });
+
+        it('detects ALL (SELECT ...)', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id > ALL (SELECT id FROM other)')).toBe(true);
+        });
+
+        it('returns false for flat SELECT', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id = $1')).toBe(false);
+        });
+
+        it('returns false for IN with values list', () => {
+          expect(hasAnySubquery('SELECT * FROM users WHERE id IN ($1, $2)')).toBe(false);
+        });
+      });
+
+      describe('hasCte', () => {
+        it('detects WITH at start', () => {
+          expect(hasCte('WITH x AS (SELECT 1) SELECT * FROM x')).toBe(true);
+        });
+
+        it('returns false for SELECT without WITH', () => {
+          expect(hasCte('SELECT * FROM users WHERE id = $1')).toBe(false);
+        });
+
+        it('returns false when WITH appears inside query (not CTE)', () => {
+          // This should not be detected as CTE - WITH is not at start
+          expect(hasCte("SELECT 'with' as word FROM users")).toBe(false);
+        });
+      });
+    });
+
+    describe('CTE and subquery ban for tenant SQL (Rule 11)', () => {
+      describe('MUST FAIL - tenant SQL with subquery', () => {
+        it('rejects tenant SQL with EXISTS subquery', () => {
+          const sql = `
+            SELECT * FROM decision_events de
+            WHERE de.household_key = $1
+              AND EXISTS (SELECT 1 FROM receipt_imports ri WHERE ri.household_key = $1)
+          `;
+          expect(() => assertSqlStyleContract(sql)).toThrow(/subquery_banned_for_tenant_sql/);
+        });
+
+        it('rejects tenant SQL with IN subquery', () => {
+          const sql = `
+            SELECT * FROM decision_events de
+            WHERE de.household_key = $1
+              AND de.id IN (SELECT id FROM receipt_imports ri WHERE ri.household_key = $1)
+          `;
+          expect(() => assertSqlStyleContract(sql)).toThrow(/subquery_banned_for_tenant_sql/);
+        });
+
+        it('rejects tenant SQL with nested (SELECT ...)', () => {
+          const sql = `
+            SELECT * FROM decision_events de
+            WHERE de.household_key = $1
+              AND (SELECT 1) = 1
+          `;
+          expect(() => assertSqlStyleContract(sql)).toThrow(/subquery_banned_for_tenant_sql/);
+        });
+      });
+
+      describe('MUST FAIL - tenant SQL with CTE', () => {
+        it('rejects tenant SQL that uses CTE', () => {
+          const sql = `
+            WITH x AS (SELECT 1)
+            SELECT * FROM decision_events de
+            WHERE de.household_key = $1
+          `;
+          expect(() => assertSqlStyleContract(sql)).toThrow(/cte_banned_for_tenant_sql/);
+        });
+      });
+
+      describe('MUST PASS - non-tenant SQL can use CTEs/subqueries', () => {
+        it('allows CTE when no tenant tables referenced', () => {
+          const sql = `WITH x AS (SELECT 1) SELECT * FROM x`;
+          expect(() => assertSqlStyleContract(sql)).not.toThrow();
+        });
+
+        it('allows subquery when no tenant tables referenced', () => {
+          const sql = `SELECT 1 WHERE EXISTS (SELECT 1)`;
+          expect(() => assertSqlStyleContract(sql)).not.toThrow();
+        });
+
+        it('allows IN subquery on non-tenant table', () => {
+          const sql = `SELECT * FROM users WHERE id IN (SELECT user_id FROM other_table)`;
+          expect(() => assertSqlStyleContract(sql)).not.toThrow();
+        });
       });
     });
   });

@@ -16,7 +16,7 @@
  * - When modifying existing SQL queries
  */
 
-import { assertTenantSafe, checkSqlStyleContract, TENANT_TABLES } from '../db/client';
+import { assertTenantSafe, checkSqlStyleContract, TENANT_TABLES, normalizeSql, hasAnySubquery, hasCte } from '../db/client';
 
 /**
  * All runtime SQL strings used by PostgresAdapter.
@@ -180,6 +180,37 @@ describe('Golden Runtime SQL Contract', () => {
       // Verify all tenant tables have at least one query
       TENANT_TABLES.forEach(table => {
         expect(coveredTables.has(table)).toBe(true);
+      });
+    });
+  });
+
+  describe('no CTEs in tenant SQL (Rule 11)', () => {
+    it('golden runtime SQL contains no CTEs', () => {
+      RUNTIME_SQL.forEach((sql, index) => {
+        const normalized = normalizeSql(sql).toLowerCase().trim();
+        expect(normalized.startsWith('with ')).toBe(false);
+      });
+    });
+  });
+
+  describe('no subqueries in tenant SQL (Rule 11)', () => {
+    it('golden runtime SQL contains no subqueries', () => {
+      RUNTIME_SQL.forEach((sql, index) => {
+        expect(hasAnySubquery(sql)).toBe(false);
+      });
+    });
+
+    it('golden runtime SQL contains no (SELECT ...)', () => {
+      RUNTIME_SQL.forEach((sql, index) => {
+        const normalized = normalizeSql(sql).toLowerCase();
+        expect(normalized).not.toMatch(/\(\s*select\s/);
+      });
+    });
+
+    it('golden runtime SQL contains no EXISTS (SELECT ...)', () => {
+      RUNTIME_SQL.forEach((sql, index) => {
+        const normalized = normalizeSql(sql).toLowerCase();
+        expect(normalized).not.toMatch(/exists\s*\(\s*select\s/);
       });
     });
   });

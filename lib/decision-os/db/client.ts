@@ -564,6 +564,7 @@ export interface SqlContractViolation {
  * 8. $1 MUST be used for tenant predicates (not $2, $3, etc.)
  * 9. Literal tenant predicates banned (no household_key = 'value')
  * 10. ON CONFLICT ON CONSTRAINT is banned (use column-based ON CONFLICT)
+ * 11. Tenant SQL cannot use CTEs or subqueries (flat queries only)
  */
 export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
   const violations: SqlContractViolation[] = [];
@@ -671,6 +672,27 @@ export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
       rule: 'on_conflict_on_constraint_banned',
       message: 'ON CONFLICT ON CONSTRAINT is banned; use column-based ON CONFLICT (household_key, ...)',
     });
+  }
+  
+  // Rule 11: Tenant SQL cannot use CTEs or subqueries
+  // This keeps SQL flat and parseable for tenant predicate verification
+  // Note: reusing 'refs' from Rule 6 above
+  const touchesTenantTable = refs.some(r => TENANT_TABLES.has(r.table));
+  
+  if (touchesTenantTable) {
+    if (hasCte(sql)) {
+      violations.push({
+        rule: 'cte_banned_for_tenant_sql',
+        message: 'CTEs (WITH ...) are banned in tenant SQL; use flat queries only',
+      });
+    }
+    
+    if (hasAnySubquery(sql)) {
+      violations.push({
+        rule: 'subquery_banned_for_tenant_sql',
+        message: 'Subqueries are banned in tenant SQL; use flat queries only',
+      });
+    }
   }
   
   return violations;
@@ -854,6 +876,42 @@ export function hasWrongParamIndexForTenant(sql: string): boolean {
  */
 export function hasLiteralTenantPredicate(sql: string): boolean {
   return /household_key\s*=\s*'/i.test(sql);
+}
+
+/**
+ * Check if SQL contains any subquery construct.
+ * 
+ * Subqueries are banned in tenant SQL because they can hide
+ * tenant predicates in ways that are hard to verify.
+ * 
+ * Detects: (SELECT ...), EXISTS (SELECT ...), IN (SELECT ...), ANY (SELECT ...), ALL (SELECT ...)
+ */
+export function hasAnySubquery(sql: string): boolean {
+  const normalized = normalizeSql(sql).toLowerCase();
+  
+  // Check for various subquery patterns
+  const subqueryPatterns = [
+    /\(\s*select\s/i,           // (SELECT ...
+    /exists\s*\(\s*select\s/i,  // EXISTS (SELECT ...
+    /\bin\s*\(\s*select\s/i,    // IN (SELECT ...
+    /\bany\s*\(\s*select\s/i,   // ANY (SELECT ...
+    /\ball\s*\(\s*select\s/i,   // ALL (SELECT ...
+  ];
+  
+  return subqueryPatterns.some(pattern => pattern.test(normalized));
+}
+
+/**
+ * Check if SQL uses a CTE (Common Table Expression).
+ * 
+ * CTEs are banned in tenant SQL because they can obscure
+ * tenant isolation verification.
+ */
+export function hasCte(sql: string): boolean {
+  const normalized = normalizeSql(sql).toLowerCase().trim();
+  
+  // CTE starts with WITH keyword
+  return normalized.startsWith('with ');
 }
 
 /**

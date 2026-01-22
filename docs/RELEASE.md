@@ -980,6 +980,33 @@ WHERE household_key = $1 AND id = $3
 | `DELETE FROM tenant_table` | Banned entirely |
 | SQL with `;` (multi-statement) | Injection risk |
 | DDL (`ALTER`, `CREATE`, `DROP`) | Not allowed at runtime |
+| `WITH ... AS (...)` (CTE) on tenant SQL | Obscures tenant isolation |
+| `EXISTS (SELECT ...)` on tenant SQL | Subqueries hide predicates |
+| `IN (SELECT ...)` on tenant SQL | Subqueries hide predicates |
+
+### CTEs and Subqueries Banned for Tenant SQL
+
+Tenant SQL must be **flat and parseable**. No CTEs or subqueries:
+
+```sql
+-- BANNED (CTE on tenant SQL):
+WITH x AS (SELECT 1) 
+SELECT * FROM decision_events de WHERE de.household_key = $1
+
+-- BANNED (subquery on tenant SQL):
+SELECT * FROM decision_events de 
+WHERE de.household_key = $1 
+  AND EXISTS (SELECT 1 FROM receipt_imports ri WHERE ri.household_key = $1)
+
+-- ALLOWED (flat tenant SQL):
+SELECT * FROM decision_events de WHERE de.household_key = $1
+
+-- ALLOWED (CTE/subquery on non-tenant tables):
+WITH x AS (SELECT 1) SELECT * FROM x
+SELECT 1 WHERE EXISTS (SELECT 1)
+```
+
+**Reason:** We only support flat, parseable, predicate-verifiable SQL in tenant context.
 
 ### Schema/Quote Handling
 
