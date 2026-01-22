@@ -461,37 +461,109 @@ function isWriteStatement(sql: string): boolean {
 // =============================================================================
 
 /**
- * Tables that contain household-partitioned data and MUST be queried with household_key.
- * Any SELECT from these tables without household_key in WHERE clause is a tenant leak.
+ * SINGLE SOURCE OF TRUTH: Tables that contain household-partitioned data.
+ * Any SELECT/UPDATE/DELETE from these tables MUST include household_key predicate.
+ * Any INSERT with ON CONFLICT MUST have household_key in conflict target.
+ * 
+ * Exported so db/migrate.ts and tests can reference the same list.
  */
-const HOUSEHOLD_SCOPED_TABLES = [
+export const TENANT_TABLES = new Set([
   'decision_events',
   'taste_meal_scores',
   'taste_signals',
   'inventory_items',
   'receipt_imports',
-];
+]);
+
+// Alias for backward compatibility
+const HOUSEHOLD_SCOPED_TABLES = Array.from(TENANT_TABLES);
+
+/**
+ * Extract table references from SQL (FROM and JOIN clauses).
+ * Returns array of {table, alias} objects.
+ * 
+ * Examples:
+ *   "FROM decision_events" -> [{table: 'decision_events', alias: null}]
+ *   "FROM decision_events de" -> [{table: 'decision_events', alias: 'de'}]
+ *   "FROM decision_events de JOIN receipt_imports ri ON ..." 
+ *     -> [{table: 'decision_events', alias: 'de'}, {table: 'receipt_imports', alias: 'ri'}]
+ */
+export function extractTableReferences(sql: string): Array<{table: string, alias: string | null}> {
+  const refs: Array<{table: string, alias: string | null}> = [];
+  
+  // SQL keywords that should NOT be treated as aliases
+  const SQL_KEYWORDS = new Set([
+    'where', 'and', 'or', 'on', 'inner', 'outer', 'left', 'right', 'full', 
+    'cross', 'join', 'natural', 'using', 'order', 'group', 'having', 'limit',
+    'offset', 'union', 'intersect', 'except', 'set', 'values', 'select', 'from'
+  ]);
+  
+  // Match FROM <table> [alias] and JOIN <table> [alias]
+  // Alias must be a simple identifier, not a keyword
+  const tablePattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
+  
+  let match;
+  while ((match = tablePattern.exec(sql)) !== null) {
+    const tableName = match[1].toLowerCase();
+    let alias = match[2]?.toLowerCase() || null;
+    
+    // Filter out SQL keywords from being treated as aliases
+    if (alias && SQL_KEYWORDS.has(alias)) {
+      alias = null;
+    }
+    
+    // Only track tenant tables (skip system tables like schema_migrations)
+    if (TENANT_TABLES.has(tableName)) {
+      refs.push({ table: tableName, alias });
+    }
+  }
+  
+  return refs;
+}
+
+/**
+ * Check if SQL has a household_key predicate for a specific table/alias.
+ * 
+ * For single-table queries: accepts unqualified "household_key = $N"
+ * For multi-table queries: requires qualified "alias.household_key = $N"
+ */
+export function hasPredicateForTableOrAlias(sql: string, tableOrAlias: string, isSingleTable: boolean): boolean {
+  const patterns = [];
+  
+  if (isSingleTable) {
+    // Single table: accept unqualified predicates
+    patterns.push(
+      new RegExp(`WHERE\\s+household_key\\s*=\\s*\\$`, 'i'),
+      new RegExp(`AND\\s+household_key\\s*=\\s*\\$`, 'i'),
+      new RegExp(`WHERE\\s+household_key\\s*=\\s*'`, 'i'),
+      new RegExp(`AND\\s+household_key\\s*=\\s*'`, 'i'),
+    );
+  }
+  
+  // Always check for qualified predicates (alias.household_key or table.household_key)
+  const escaped = tableOrAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  patterns.push(
+    new RegExp(`WHERE\\s+${escaped}\\.household_key\\s*=\\s*\\$`, 'i'),
+    new RegExp(`AND\\s+${escaped}\\.household_key\\s*=\\s*\\$`, 'i'),
+    new RegExp(`WHERE\\s+${escaped}\\.household_key\\s*=\\s*'`, 'i'),
+    new RegExp(`AND\\s+${escaped}\\.household_key\\s*=\\s*'`, 'i'),
+  );
+  
+  return patterns.some(p => p.test(sql));
+}
 
 /**
  * Check if a SQL query has a proper household_key predicate (not just substring).
- * Looks for patterns like:
- *   - WHERE household_key = $1
- *   - AND household_key = $2
- *   - WHERE household_key=$1 (no spaces)
  * 
- * @param sql - SQL statement to check
- * @returns true if the query has a proper household_key predicate
+ * For backward compatibility - checks for any household_key predicate.
+ * Use assertTenantSafe() for full join-safe checking.
  */
 export function hasHouseholdKeyPredicate(sql: string): boolean {
-  // Check for proper predicate patterns:
-  // - WHERE household_key = or WHERE household_key=
-  // - AND household_key = or AND household_key=
-  // Must be followed by a parameter placeholder ($N) or a value
   const predicatePatterns = [
-    /WHERE\s+household_key\s*=\s*\$/i,    // WHERE household_key = $1
-    /AND\s+household_key\s*=\s*\$/i,      // AND household_key = $2
-    /WHERE\s+household_key\s*=\s*'/i,     // WHERE household_key = 'value'
-    /AND\s+household_key\s*=\s*'/i,       // AND household_key = 'value'
+    /WHERE\s+(?:\w+\.)?household_key\s*=\s*\$/i,
+    /AND\s+(?:\w+\.)?household_key\s*=\s*\$/i,
+    /WHERE\s+(?:\w+\.)?household_key\s*=\s*'/i,
+    /AND\s+(?:\w+\.)?household_key\s*=\s*'/i,
   ];
   
   return predicatePatterns.some(pattern => pattern.test(sql));
@@ -503,11 +575,7 @@ export function hasHouseholdKeyPredicate(sql: string): boolean {
  * STRENGTHENED: Requires actual predicate pattern (WHERE/AND household_key = $N),
  * not just substring match on 'household_key'.
  * 
- * This is a belt-and-suspenders guard to catch tenant isolation bugs.
- * Only applies to SELECT queries from household-scoped tables.
- * 
- * @param sql - SQL statement to check
- * @returns true if the query requires household_key but doesn't have it as proper predicate
+ * For full join-safety, use assertTenantSafe() instead.
  */
 export function requiresHouseholdKeyButMissing(sql: string): boolean {
   const upperSql = sql.toUpperCase();
@@ -521,11 +589,9 @@ export function requiresHouseholdKeyButMissing(sql: string): boolean {
   // Check if any household-scoped table is referenced
   for (const table of HOUSEHOLD_SCOPED_TABLES) {
     const tableUpper = table.toUpperCase();
-    // Check for FROM <table> or JOIN <table> patterns
     if (upperSql.includes(`FROM ${tableUpper}`) || upperSql.includes(`JOIN ${tableUpper}`)) {
-      // STRENGTHENED: Must have a proper predicate, not just contain 'household_key'
       if (!hasHouseholdKeyPredicate(sql)) {
-        return true; // Missing household_key predicate!
+        return true;
       }
     }
   }
@@ -534,18 +600,128 @@ export function requiresHouseholdKeyButMissing(sql: string): boolean {
 }
 
 /**
+ * COMPREHENSIVE tenant safety check for SELECT queries.
+ * 
+ * For each tenant table referenced (FROM or JOIN), verifies:
+ * - Single table query: accepts unqualified household_key predicate
+ * - Multi-table query (joins): requires qualified predicate for EACH tenant table
+ * 
+ * @returns {valid: boolean, missingPredicates: string[]}
+ */
+export function checkTenantSafety(sql: string): {valid: boolean, missingPredicates: string[]} {
+  const upperSql = sql.toUpperCase().trimStart();
+  
+  // Only check SELECT/WITH queries
+  if (!upperSql.startsWith('SELECT') && !upperSql.startsWith('WITH')) {
+    return { valid: true, missingPredicates: [] };
+  }
+  
+  const refs = extractTableReferences(sql);
+  if (refs.length === 0) {
+    return { valid: true, missingPredicates: [] };
+  }
+  
+  const isSingleTable = refs.length === 1;
+  const missingPredicates: string[] = [];
+  
+  for (const ref of refs) {
+    const identifier = ref.alias || ref.table;
+    if (!hasPredicateForTableOrAlias(sql, identifier, isSingleTable)) {
+      missingPredicates.push(ref.alias ? `${ref.table} (alias: ${ref.alias})` : ref.table);
+    }
+  }
+  
+  return {
+    valid: missingPredicates.length === 0,
+    missingPredicates,
+  };
+}
+
+/**
+ * Check if an INSERT statement has household_key in ON CONFLICT target.
+ * 
+ * For tenant tables, ON CONFLICT MUST include household_key to prevent
+ * cross-tenant overwrites.
+ * 
+ * @returns {valid: boolean, table: string | null, conflictTarget: string | null}
+ */
+export function checkOnConflictSafety(sql: string): {valid: boolean, table: string | null, conflictTarget: string | null} {
+  const upperSql = sql.toUpperCase();
+  
+  // Only check INSERT statements
+  if (!upperSql.trimStart().startsWith('INSERT')) {
+    return { valid: true, table: null, conflictTarget: null };
+  }
+  
+  // Extract table from INSERT INTO <table>
+  const insertMatch = /INSERT\s+INTO\s+(\w+)/i.exec(sql);
+  if (!insertMatch) {
+    return { valid: true, table: null, conflictTarget: null };
+  }
+  
+  const tableName = insertMatch[1].toLowerCase();
+  
+  // If not a tenant table, no check needed
+  if (!TENANT_TABLES.has(tableName)) {
+    return { valid: true, table: tableName, conflictTarget: null };
+  }
+  
+  // Check if ON CONFLICT exists
+  const conflictMatch = /ON\s+CONFLICT\s*\(([^)]+)\)/i.exec(sql);
+  if (!conflictMatch) {
+    // No ON CONFLICT clause - that's fine for simple inserts
+    return { valid: true, table: tableName, conflictTarget: null };
+  }
+  
+  const conflictTarget = conflictMatch[1].toLowerCase();
+  
+  // ON CONFLICT target MUST include household_key for tenant tables
+  if (!conflictTarget.includes('household_key')) {
+    return { valid: false, table: tableName, conflictTarget };
+  }
+  
+  return { valid: true, table: tableName, conflictTarget };
+}
+
+/**
+ * Assert that a SQL query is tenant-safe.
+ * 
+ * For SELECT: verifies household_key predicate for all tenant table references
+ * For INSERT with ON CONFLICT: verifies household_key in conflict target
+ * 
+ * This is called automatically by adapters.
+ * 
+ * @throws Error if tenant isolation would be violated
+ */
+export function assertTenantSafe(sql: string): void {
+  // Check SELECT queries
+  const selectCheck = checkTenantSafety(sql);
+  if (!selectCheck.valid) {
+    throw new Error(
+      `household_key_missing: Tenant tables [${selectCheck.missingPredicates.join(', ')}] ` +
+      `require household_key predicate in WHERE clause`
+    );
+  }
+  
+  // Check INSERT ON CONFLICT
+  const conflictCheck = checkOnConflictSafety(sql);
+  if (!conflictCheck.valid) {
+    throw new Error(
+      `on_conflict_unsafe: INSERT INTO ${conflictCheck.table} with ON CONFLICT (${conflictCheck.conflictTarget}) ` +
+      `must include household_key in conflict target for tenant safety`
+    );
+  }
+}
+
+/**
  * Assert that a SQL query has proper household_key predicate if reading from tenant tables.
- * Throws if tenant isolation would be violated.
  * 
- * This is called automatically by PostgresAdapter.query() for SELECT statements.
+ * This is the legacy guard - calls assertTenantSafe internally.
  * 
- * @param sql - SQL statement to check
  * @throws Error if household_key predicate is required but missing
  */
 export function assertHouseholdScoped(sql: string): void {
-  if (requiresHouseholdKeyButMissing(sql)) {
-    throw new Error('household_key_missing: SELECT from tenant table must include household_key predicate (WHERE/AND household_key = $N)');
-  }
+  assertTenantSafe(sql);
 }
 
 /**
@@ -710,16 +886,18 @@ class PostgresAdapter implements DbAdapter {
   async upsertInventoryItem(item: InventoryItem): Promise<void> {
     // Use canonical columns (item_name, remaining_qty, last_seen_at) with household_key
     // Also write to legacy columns for backward compatibility
+    // TENANT SAFETY: ON CONFLICT uses (household_key, item_name) per migration 024
     await this.query(
       `INSERT INTO inventory_items 
        (id, user_profile_id, household_key, item_name, remaining_qty, confidence, last_seen_at, name, quantity, unit, source, receipt_import_id, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       ON CONFLICT (id) DO UPDATE SET
+       ON CONFLICT (household_key, item_name) DO UPDATE SET
          remaining_qty = EXCLUDED.remaining_qty,
          quantity = EXCLUDED.quantity,
          confidence = EXCLUDED.confidence,
          last_seen_at = EXCLUDED.last_seen_at,
-         updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at,
+         user_profile_id = EXCLUDED.user_profile_id`,
       [
         item.id,
         item.user_profile_id,

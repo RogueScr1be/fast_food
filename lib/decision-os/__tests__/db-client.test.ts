@@ -5,7 +5,11 @@
  * Postgres adapter is tested via integration/smoke tests.
  */
 
-import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate } from '../db/client';
+import { 
+  getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, 
+  requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate,
+  TENANT_TABLES, extractTableReferences, hasPredicateForTableOrAlias, checkTenantSafety, checkOnConflictSafety, assertTenantSafe
+} from '../db/client';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -971,6 +975,262 @@ describe('Database Client', () => {
       
       const byHash = await db.getDecisionEventsByContextHash(TEST_HOUSEHOLD_KEY, 'some-hash');
       expect(byHash).toBeDefined();
+    });
+  });
+
+  // ==========================================================================
+  // PASS 3: JOIN-SAFE + UPSERT-SAFE TENANT ISOLATION
+  // ==========================================================================
+
+  describe('TENANT_TABLES constant', () => {
+    it('contains all expected tenant tables', () => {
+      expect(TENANT_TABLES.has('decision_events')).toBe(true);
+      expect(TENANT_TABLES.has('taste_meal_scores')).toBe(true);
+      expect(TENANT_TABLES.has('taste_signals')).toBe(true);
+      expect(TENANT_TABLES.has('inventory_items')).toBe(true);
+      expect(TENANT_TABLES.has('receipt_imports')).toBe(true);
+    });
+
+    it('does not contain non-tenant tables', () => {
+      expect(TENANT_TABLES.has('user_profiles')).toBe(false);
+      expect(TENANT_TABLES.has('households')).toBe(false);
+      expect(TENANT_TABLES.has('schema_migrations')).toBe(false);
+    });
+  });
+
+  describe('extractTableReferences', () => {
+    it('extracts single table without alias', () => {
+      const refs = extractTableReferences('SELECT * FROM decision_events WHERE household_key = $1');
+      expect(refs).toHaveLength(1);
+      expect(refs[0].table).toBe('decision_events');
+      expect(refs[0].alias).toBeNull();
+    });
+
+    it('extracts single table with alias', () => {
+      const refs = extractTableReferences('SELECT * FROM decision_events de WHERE de.household_key = $1');
+      expect(refs).toHaveLength(1);
+      expect(refs[0].table).toBe('decision_events');
+      expect(refs[0].alias).toBe('de');
+    });
+
+    it('extracts multiple tables from JOIN', () => {
+      const sql = `
+        SELECT * FROM decision_events de 
+        JOIN receipt_imports ri ON ri.id = de.receipt_id 
+        WHERE de.household_key = $1
+      `;
+      const refs = extractTableReferences(sql);
+      expect(refs).toHaveLength(2);
+      expect(refs.find(r => r.table === 'decision_events')?.alias).toBe('de');
+      expect(refs.find(r => r.table === 'receipt_imports')?.alias).toBe('ri');
+    });
+
+    it('ignores non-tenant tables', () => {
+      const refs = extractTableReferences('SELECT * FROM user_profiles WHERE id = $1');
+      expect(refs).toHaveLength(0);
+    });
+
+    it('handles AS keyword in alias', () => {
+      const refs = extractTableReferences('SELECT * FROM decision_events AS de WHERE de.household_key = $1');
+      expect(refs).toHaveLength(1);
+      expect(refs[0].alias).toBe('de');
+    });
+  });
+
+  describe('hasPredicateForTableOrAlias', () => {
+    it('accepts unqualified predicate for single-table query', () => {
+      const sql = 'SELECT * FROM decision_events WHERE household_key = $1';
+      expect(hasPredicateForTableOrAlias(sql, 'decision_events', true)).toBe(true);
+    });
+
+    it('accepts qualified predicate with alias', () => {
+      const sql = 'SELECT * FROM decision_events de WHERE de.household_key = $1';
+      expect(hasPredicateForTableOrAlias(sql, 'de', false)).toBe(true);
+    });
+
+    it('accepts qualified predicate with table name', () => {
+      const sql = 'SELECT * FROM decision_events WHERE decision_events.household_key = $1';
+      expect(hasPredicateForTableOrAlias(sql, 'decision_events', false)).toBe(true);
+    });
+
+    it('rejects missing predicate for table', () => {
+      const sql = 'SELECT * FROM decision_events de JOIN receipt_imports ri ON ri.id = de.id WHERE de.household_key = $1';
+      // receipt_imports (ri) has no predicate
+      expect(hasPredicateForTableOrAlias(sql, 'ri', false)).toBe(false);
+    });
+  });
+
+  describe('checkTenantSafety (join-safe checking)', () => {
+    describe('single table queries', () => {
+      it('allows properly scoped single table query', () => {
+        const result = checkTenantSafety('SELECT * FROM decision_events WHERE household_key = $1');
+        expect(result.valid).toBe(true);
+        expect(result.missingPredicates).toHaveLength(0);
+      });
+
+      it('rejects single table query without predicate', () => {
+        const result = checkTenantSafety('SELECT * FROM decision_events WHERE id = $1');
+        expect(result.valid).toBe(false);
+        expect(result.missingPredicates.some(p => p.includes('decision_events'))).toBe(true);
+      });
+    });
+
+    describe('join queries (CRITICAL for tenant isolation)', () => {
+      it('allows join when ALL tables have predicates', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id 
+          WHERE de.household_key = $1 AND ri.household_key = $1
+        `;
+        const result = checkTenantSafety(sql);
+        expect(result.valid).toBe(true);
+      });
+
+      it('REJECTS join when one table missing predicate (LEAK)', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id 
+          WHERE de.household_key = $1
+        `;
+        // receipt_imports (ri) has no household_key predicate
+        const result = checkTenantSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.missingPredicates.some(p => p.includes('receipt_imports'))).toBe(true);
+      });
+
+      it('REJECTS join where only outer table has predicate', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN taste_signals ts ON ts.event_id = de.id
+          WHERE de.household_key = $1
+        `;
+        const result = checkTenantSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.missingPredicates.some(p => p.includes('taste_signals'))).toBe(true);
+      });
+    });
+
+    describe('non-tenant table queries', () => {
+      it('allows queries on non-tenant tables without predicate', () => {
+        const result = checkTenantSafety('SELECT * FROM user_profiles WHERE id = $1');
+        expect(result.valid).toBe(true);
+      });
+    });
+  });
+
+  describe('checkOnConflictSafety (upsert protection)', () => {
+    describe('tenant table upserts', () => {
+      it('allows ON CONFLICT with household_key in target', () => {
+        const sql = `
+          INSERT INTO taste_meal_scores (id, household_key, meal_id, score)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (household_key, meal_id) DO UPDATE SET score = EXCLUDED.score
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(true);
+        expect(result.table).toBe('taste_meal_scores');
+      });
+
+      it('allows ON CONFLICT with household_key + item_name for inventory', () => {
+        const sql = `
+          INSERT INTO inventory_items (id, household_key, item_name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (household_key, item_name) DO UPDATE SET remaining_qty = EXCLUDED.remaining_qty
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(true);
+      });
+
+      it('REJECTS ON CONFLICT without household_key (CRITICAL)', () => {
+        const sql = `
+          INSERT INTO inventory_items (id, household_key, item_name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (id) DO UPDATE SET remaining_qty = EXCLUDED.remaining_qty
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.table).toBe('inventory_items');
+        expect(result.conflictTarget).toBe('id');
+      });
+
+      it('REJECTS ON CONFLICT with only non-household columns', () => {
+        const sql = `
+          INSERT INTO taste_meal_scores (id, household_key, meal_id, score)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (user_profile_id, meal_id) DO UPDATE SET score = EXCLUDED.score
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.table).toBe('taste_meal_scores');
+      });
+    });
+
+    describe('non-tenant table upserts', () => {
+      it('allows ON CONFLICT without household_key for non-tenant tables', () => {
+        const sql = `
+          INSERT INTO user_profiles (id, auth_user_id)
+          VALUES ($1, $2)
+          ON CONFLICT (id) DO UPDATE SET auth_user_id = EXCLUDED.auth_user_id
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('simple inserts (no ON CONFLICT)', () => {
+      it('allows simple insert without ON CONFLICT', () => {
+        const sql = 'INSERT INTO decision_events (id, household_key) VALUES ($1, $2)';
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(true);
+        expect(result.conflictTarget).toBeNull();
+      });
+    });
+  });
+
+  describe('assertTenantSafe (comprehensive guard)', () => {
+    it('allows valid single-table SELECT', () => {
+      expect(() => {
+        assertTenantSafe('SELECT * FROM decision_events WHERE household_key = $1');
+      }).not.toThrow();
+    });
+
+    it('throws for leaky single-table SELECT', () => {
+      expect(() => {
+        assertTenantSafe('SELECT * FROM decision_events WHERE id = $1');
+      }).toThrow('household_key_missing');
+    });
+
+    it('throws for leaky JOIN (one table missing predicate)', () => {
+      const sql = `
+        SELECT * FROM decision_events de 
+        JOIN receipt_imports ri ON ri.id = de.receipt_id 
+        WHERE de.household_key = $1
+      `;
+      expect(() => {
+        assertTenantSafe(sql);
+      }).toThrow('household_key_missing');
+    });
+
+    it('throws for unsafe ON CONFLICT', () => {
+      const sql = `
+        INSERT INTO inventory_items (id, household_key, item_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO UPDATE SET remaining_qty = EXCLUDED.remaining_qty
+      `;
+      expect(() => {
+        assertTenantSafe(sql);
+      }).toThrow('on_conflict_unsafe');
+    });
+
+    it('allows safe ON CONFLICT', () => {
+      const sql = `
+        INSERT INTO inventory_items (id, household_key, item_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (household_key, item_name) DO UPDATE SET remaining_qty = EXCLUDED.remaining_qty
+      `;
+      expect(() => {
+        assertTenantSafe(sql);
+      }).not.toThrow();
     });
   });
 });
