@@ -1046,13 +1046,41 @@ const sql = `
 | taste_signals | `ts` |
 | taste_meal_scores | `tms` |
 
-### Enforcement
+### Enforcement (3 Layers)
 
-Contract violations are caught by:
-1. `assertSqlStyleContract()` - Checks banned patterns
-2. `checkTenantSafety()` - Verifies JOIN predicates
+#### Layer 1: Runtime Checks
+Contract violations are caught at runtime by:
+1. `assertSqlStyleContract()` - Checks banned patterns, $1 enforcement, OR/IN clauses
+2. `checkTenantSafety()` - Verifies JOIN predicates for all tenant tables
 3. `checkOnConflictSafety()` - Verifies UPSERT safety
 
 All three run automatically in `assertTenantSafe()` which is called by both adapters.
 
+#### Layer 2: Golden SQL Test
+`lib/decision-os/__tests__/golden-sql-contract.test.ts` validates:
+- All runtime SQL strings pass the contract
+- SELECT queries use `$1` for household_key
+- UPDATE queries have `WHERE household_key = $1`
+- INSERT ON CONFLICT includes household_key in target
+
+**If you add new SQL, add it to RUNTIME_SQL in golden-sql-contract.test.ts**
+
+#### Layer 3: CI Grep Gate
+`npm run sql:contract:gate` fails if SQL touching tenant tables appears outside:
+- `lib/decision-os/db/sql.ts` (helpers)
+- `lib/decision-os/db/client.ts` (runtime SQL)
+- `lib/decision-os/auth/helper.ts` (auth tables)
+- Test files
+
+Runs in CI on every PR and push.
+
 **Violations are bugs. CI fails. Blocked merge.**
+
+### Final Warning
+
+Even "bypass-proof" regex checks are NOT the same as real multi-tenant isolation.
+The gold standard is:
+- **Postgres RLS** with household_key enforced at the DB policy layer
+- Plus app-layer contract + tests (what we have now)
+
+Treat this SQL contract as a **stopgap + developer discipline tool**, not the ultimate firewall.

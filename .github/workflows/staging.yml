@@ -38,6 +38,9 @@ jobs:
       - name: Run smoke tests (in-memory)
         run: npm run smoke:mvp
 
+      - name: SQL Contract Gate
+        run: npm run sql:contract:gate
+
   # =============================================================================
   # JOB 2: Ephemeral Postgres Migration Test (always runs)
   # Spins up Postgres, runs migrations, verifies schema, tests writes

@@ -1178,10 +1178,11 @@ class PostgresAdapter implements DbAdapter {
   }
   
   // Household-scoped update: requires householdKey for tenant isolation
+  // CONTRACT: $1 is ALWAYS household_key for UPDATE WHERE clauses
   async updateReceiptImportStatus(householdKey: string, id: string, status: string, errorMessage?: string): Promise<void> {
     await this.query(
-      `UPDATE receipt_imports SET status = $1, error_message = $2 WHERE household_key = $3 AND id = $4`,
-      [status, errorMessage || null, householdKey, id]
+      `UPDATE receipt_imports SET status = $2, error_message = $3 WHERE household_key = $1 AND id = $4`,
+      [householdKey, status, errorMessage || null, id]
     );
   }
   
