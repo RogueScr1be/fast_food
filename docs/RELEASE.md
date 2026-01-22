@@ -906,3 +906,123 @@ Every successful staging pipeline run records to `runtime_deployments_log`:
 - `recorded_at`: Timestamp
 
 The `provenance_gate` job verifies that the recorded deployment URL matches the actual deployment.
+
+---
+
+## SQL Style Contract v1 (Tenant-Safe Dialect)
+
+All SQL executed through `lib/decision-os/db/client.ts` adapters MUST follow this contract.
+
+### The $1 Rule
+
+**`$1` is ALWAYS `household_key` for tenant-scoped queries.**
+
+Other parameters start at `$2`. This is non-negotiable.
+
+```sql
+-- Reads: $1 = household_key, $2+ = other params
+SELECT * FROM decision_events de WHERE de.household_key = $1 AND de.id = $2
+
+-- Updates: $1 = household_key, $2+ = values/conditions
+UPDATE receipt_imports SET status = $2 WHERE household_key = $1 AND id = $3
+```
+
+### Tenant Tables
+
+These tables require `household_key` predicate in ALL queries:
+
+- `decision_events`
+- `receipt_imports`
+- `inventory_items`
+- `taste_signals`
+- `taste_meal_scores`
+
+### Required Patterns
+
+#### SELECT (Single Table)
+```sql
+SELECT * FROM decision_events de WHERE de.household_key = $1
+```
+
+#### SELECT (JOIN) - BOTH tables need predicates
+```sql
+SELECT * FROM decision_events de 
+JOIN receipt_imports ri ON ri.id = de.receipt_id
+WHERE de.household_key = $1 AND ri.household_key = $1
+```
+
+#### INSERT with UPSERT
+```sql
+INSERT INTO inventory_items (household_key, item_name, ...)
+VALUES ($1, $2, ...)
+ON CONFLICT (household_key, item_name) DO UPDATE SET ...
+```
+
+#### UPDATE
+```sql
+UPDATE receipt_imports SET status = $2 
+WHERE household_key = $1 AND id = $3
+```
+
+### Banned Patterns (CI Fails)
+
+| Pattern | Why Banned |
+|---------|------------|
+| `WHERE household_key = $1` (unqualified with aliases) | Ambiguous in JOINs |
+| `$1 = de.household_key` (reversed) | Non-standard, hard to parse |
+| `WHERE de.household_key IN ($1, $2)` | Multi-tenant leak risk |
+| `WHERE de.household_key = $1 OR ...` | Tenant in OR = leak |
+| `ON CONFLICT (id)` on tenant table | Cross-tenant overwrite |
+| `UPDATE ... WHERE id = $1` (no household_key) | Cross-tenant mutation |
+| `DELETE FROM tenant_table` | Banned entirely |
+| SQL with `;` (multi-statement) | Injection risk |
+| DDL (`ALTER`, `CREATE`, `DROP`) | Not allowed at runtime |
+
+### Helper Functions
+
+Use `lib/decision-os/db/sql.ts` helpers for consistent SQL:
+
+```typescript
+import { tenantWhere, tenantAnd, tenantConflict, TABLE_ALIASES } from '../db/sql';
+
+// Single table
+const sql = `SELECT * FROM decision_events de WHERE ${tenantWhere('de')}`;
+// -> SELECT * FROM decision_events de WHERE de.household_key = $1
+
+// JOIN
+const sql = `
+  SELECT * FROM decision_events de 
+  JOIN receipt_imports ri ON ri.id = de.id
+  WHERE ${tenantWhere('de')} ${tenantAnd('ri')}
+`;
+// -> ... WHERE de.household_key = $1 AND ri.household_key = $1
+
+// UPSERT
+const sql = `
+  INSERT INTO inventory_items (...)
+  VALUES (...)
+  ${tenantConflict('item_name')} DO UPDATE SET ...
+`;
+// -> ON CONFLICT (household_key, item_name) DO UPDATE SET ...
+```
+
+### Standard Table Aliases
+
+| Table | Alias |
+|-------|-------|
+| decision_events | `de` |
+| receipt_imports | `ri` |
+| inventory_items | `ii` |
+| taste_signals | `ts` |
+| taste_meal_scores | `tms` |
+
+### Enforcement
+
+Contract violations are caught by:
+1. `assertSqlStyleContract()` - Checks banned patterns
+2. `checkTenantSafety()` - Verifies JOIN predicates
+3. `checkOnConflictSafety()` - Verifies UPSERT safety
+
+All three run automatically in `assertTenantSafe()` which is called by both adapters.
+
+**Violations are bugs. CI fails. Blocked merge.**

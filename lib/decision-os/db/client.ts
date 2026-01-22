@@ -478,6 +478,170 @@ export const TENANT_TABLES = new Set([
 // Alias for backward compatibility
 const HOUSEHOLD_SCOPED_TABLES = Array.from(TENANT_TABLES);
 
+// =============================================================================
+// SQL STYLE CONTRACT v1 - TENANT-SAFE DIALECT
+// =============================================================================
+
+/**
+ * Banned SQL tokens that should never appear in tenant queries.
+ * Any of these triggers immediate rejection.
+ */
+const BANNED_SQL_TOKENS = [
+  'DELETE',    // No deletes on tenant tables
+  'ALTER',     // No DDL
+  'CREATE',    // No DDL
+  'DROP',      // No DDL  
+  'TRUNCATE',  // No DDL
+  'COPY',      // No bulk operations
+  'GRANT',     // No permission changes
+  'REVOKE',    // No permission changes
+  'EXECUTE',   // No dynamic SQL
+];
+
+/**
+ * Normalize SQL for contract checking.
+ * - Strips comments (line and block)
+ * - Collapses whitespace
+ * - Lowercases for consistent matching
+ */
+export function normalizeSql(sql: string): string {
+  let normalized = sql;
+  
+  // Strip line comments (-- ...)
+  normalized = normalized.replace(/--.*$/gm, ' ');
+  
+  // Strip block comments (/* ... */)
+  normalized = normalized.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  
+  // Collapse whitespace
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+  
+  return normalized;
+}
+
+/**
+ * SQL Style Contract violation result.
+ */
+export interface SqlContractViolation {
+  rule: string;
+  message: string;
+  sql?: string;
+}
+
+/**
+ * Check SQL against the Tenant-Safe Dialect contract.
+ * Returns violations array (empty = valid).
+ * 
+ * Rules enforced:
+ * 1. No multi-statement SQL (;)
+ * 2. No banned tokens (DELETE, DDL, etc.)
+ * 3. No reverse predicates ($1 = alias.household_key)
+ * 4. No IN/ANY tenant predicates
+ * 5. No OR with tenant predicates
+ * 6. Qualified predicates required when aliases exist
+ * 7. UPDATE must have household_key in WHERE
+ */
+export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
+  const violations: SqlContractViolation[] = [];
+  const normalized = normalizeSql(sql);
+  const upper = normalized.toUpperCase();
+  
+  // Rule 1: No multi-statement SQL
+  if (normalized.includes(';')) {
+    violations.push({
+      rule: 'no_multi_statement',
+      message: 'Multi-statement SQL is banned (contains semicolon)',
+    });
+  }
+  
+  // Rule 2: No banned tokens
+  for (const token of BANNED_SQL_TOKENS) {
+    // Match whole word only
+    const tokenRegex = new RegExp(`\\b${token}\\b`, 'i');
+    if (tokenRegex.test(normalized)) {
+      violations.push({
+        rule: 'banned_token',
+        message: `Banned SQL token: ${token}`,
+      });
+    }
+  }
+  
+  // Rule 3: No reverse predicates ($N = alias.household_key)
+  if (/\$\d+\s*=\s*\w*\.?household_key/i.test(normalized)) {
+    violations.push({
+      rule: 'reverse_predicate',
+      message: 'Reverse predicate ($N = household_key) is banned; use alias.household_key = $N',
+    });
+  }
+  
+  // Rule 4: No IN/ANY tenant predicates
+  if (/household_key\s+(IN|=\s*ANY)\s*\(/i.test(normalized)) {
+    violations.push({
+      rule: 'in_any_predicate',
+      message: 'IN/ANY predicates on household_key are banned; use equality only',
+    });
+  }
+  
+  // Rule 5: No OR with tenant predicates (tenant predicate must not be in OR clause)
+  // This is a simplified check - catches common patterns
+  if (/household_key\s*=\s*\$\d+\s+OR\b/i.test(normalized) ||
+      /\bOR\s+\w*\.?household_key\s*=/i.test(normalized)) {
+    violations.push({
+      rule: 'or_with_tenant_predicate',
+      message: 'Tenant predicate in OR clause is banned',
+    });
+  }
+  
+  // Rule 6: Qualified predicates required when aliases exist
+  // Extract table references to check for aliases
+  const refs = extractTableReferences(sql);
+  const hasAliases = refs.some(r => r.alias !== null);
+  
+  if (hasAliases && refs.length > 0) {
+    // Check for unqualified household_key in WHERE/AND
+    // Pattern: WHERE household_key = or AND household_key = (without alias.)
+    if (/(?:WHERE|AND)\s+household_key\s*=/i.test(normalized) &&
+        !(/(?:WHERE|AND)\s+\w+\.household_key\s*=/i.test(normalized))) {
+      violations.push({
+        rule: 'unqualified_predicate',
+        message: 'Unqualified household_key predicate when aliases exist; use alias.household_key = $N',
+      });
+    }
+  }
+  
+  // Rule 7: UPDATE must have household_key in WHERE
+  if (upper.trimStart().startsWith('UPDATE')) {
+    // Check if it's updating a tenant table
+    const updateMatch = /UPDATE\s+(\w+)/i.exec(normalized);
+    if (updateMatch) {
+      const tableName = updateMatch[1].toLowerCase();
+      if (TENANT_TABLES.has(tableName)) {
+        // Must have WHERE household_key = in the statement
+        if (!(/WHERE\s+(?:\w+\.)?household_key\s*=\s*\$/i.test(normalized))) {
+          violations.push({
+            rule: 'update_missing_tenant_predicate',
+            message: `UPDATE on tenant table '${tableName}' must include WHERE household_key = $N`,
+          });
+        }
+      }
+    }
+  }
+  
+  return violations;
+}
+
+/**
+ * Assert SQL passes the Tenant-Safe Dialect contract.
+ * Throws on first violation.
+ */
+export function assertSqlStyleContract(sql: string): void {
+  const violations = checkSqlStyleContract(sql);
+  if (violations.length > 0) {
+    const v = violations[0];
+    throw new Error(`sql_contract_violation: [${v.rule}] ${v.message}`);
+  }
+}
+
 /**
  * Extract table references from SQL (FROM and JOIN clauses).
  * Returns array of {table, alias} objects.
@@ -686,15 +850,20 @@ export function checkOnConflictSafety(sql: string): {valid: boolean, table: stri
 /**
  * Assert that a SQL query is tenant-safe.
  * 
- * For SELECT: verifies household_key predicate for all tenant table references
- * For INSERT with ON CONFLICT: verifies household_key in conflict target
+ * Performs three levels of checking:
+ * 1. SQL Style Contract (banned tokens, multi-statement, reverse predicates, etc.)
+ * 2. SELECT tenant safety (household_key predicate for all tenant table references)
+ * 3. INSERT ON CONFLICT safety (household_key in conflict target)
  * 
  * This is called automatically by adapters.
  * 
  * @throws Error if tenant isolation would be violated
  */
 export function assertTenantSafe(sql: string): void {
-  // Check SELECT queries
+  // Level 1: SQL Style Contract (dialect rules)
+  assertSqlStyleContract(sql);
+  
+  // Level 2: Check SELECT queries
   const selectCheck = checkTenantSafety(sql);
   if (!selectCheck.valid) {
     throw new Error(
@@ -703,7 +872,7 @@ export function assertTenantSafe(sql: string): void {
     );
   }
   
-  // Check INSERT ON CONFLICT
+  // Level 3: Check INSERT ON CONFLICT
   const conflictCheck = checkOnConflictSafety(sql);
   if (!conflictCheck.valid) {
     throw new Error(

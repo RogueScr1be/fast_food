@@ -8,8 +8,10 @@
 import { 
   getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, 
   requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate,
-  TENANT_TABLES, extractTableReferences, hasPredicateForTableOrAlias, checkTenantSafety, checkOnConflictSafety, assertTenantSafe
+  TENANT_TABLES, extractTableReferences, hasPredicateForTableOrAlias, checkTenantSafety, checkOnConflictSafety, assertTenantSafe,
+  normalizeSql, checkSqlStyleContract, assertSqlStyleContract
 } from '../db/client';
+import { tenantWhere, tenantAnd, tenantConflict, tenantUpdateWhere, TABLE_ALIASES } from '../db/sql';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -1231,6 +1233,187 @@ describe('Database Client', () => {
       expect(() => {
         assertTenantSafe(sql);
       }).not.toThrow();
+    });
+  });
+
+  // ==========================================================================
+  // SQL STYLE CONTRACT v1 - TENANT-SAFE DIALECT TESTS
+  // ==========================================================================
+
+  describe('SQL Style Contract', () => {
+    describe('normalizeSql', () => {
+      it('strips line comments', () => {
+        const sql = 'SELECT * FROM users -- this is a comment\nWHERE id = 1';
+        expect(normalizeSql(sql)).toBe('SELECT * FROM users WHERE id = 1');
+      });
+
+      it('strips block comments', () => {
+        const sql = 'SELECT * FROM /* comment */ users WHERE id = 1';
+        expect(normalizeSql(sql)).toBe('SELECT * FROM users WHERE id = 1');
+      });
+
+      it('collapses whitespace', () => {
+        const sql = 'SELECT   *   FROM    users    WHERE   id = 1';
+        expect(normalizeSql(sql)).toBe('SELECT * FROM users WHERE id = 1');
+      });
+    });
+
+    describe('checkSqlStyleContract - MUST PASS patterns', () => {
+      it('allows single-table tenant SELECT with alias predicate', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE de.household_key = $1';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations).toHaveLength(0);
+      });
+
+      it('allows JOIN between two tenant tables with both predicates', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id
+          WHERE de.household_key = $1 AND ri.household_key = $1
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations).toHaveLength(0);
+      });
+
+      it('allows UPSERT with household_key in conflict target', () => {
+        const sql = `
+          INSERT INTO taste_meal_scores (id, household_key, meal_id, score)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (household_key, meal_id) DO UPDATE SET score = EXCLUDED.score
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations).toHaveLength(0);
+      });
+
+      it('allows UPDATE with WHERE household_key = $1 AND id = $2', () => {
+        const sql = 'UPDATE receipt_imports SET status = $2 WHERE household_key = $1 AND id = $3';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations).toHaveLength(0);
+      });
+    });
+
+    describe('checkSqlStyleContract - MUST FAIL patterns', () => {
+      it('rejects reverse predicate ($1 = alias.household_key)', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE $1 = de.household_key';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'reverse_predicate')).toBe(true);
+      });
+
+      it('rejects IN predicate on household_key', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE de.household_key IN ($1, $2)';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'in_any_predicate')).toBe(true);
+      });
+
+      it('rejects ANY predicate on household_key', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE de.household_key = ANY($1)';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'in_any_predicate')).toBe(true);
+      });
+
+      it('rejects household_key predicate in OR clause', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE de.household_key = $1 OR de.user_profile_id = $2';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'or_with_tenant_predicate')).toBe(true);
+      });
+
+      it('rejects multi-statement SQL (semicolon)', () => {
+        const sql = 'SELECT * FROM decision_events; DELETE FROM users';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'no_multi_statement')).toBe(true);
+      });
+
+      it('rejects DELETE statement', () => {
+        const sql = 'DELETE FROM decision_events WHERE id = $1';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(true);
+      });
+
+      it('rejects DDL (ALTER)', () => {
+        const sql = 'ALTER TABLE decision_events ADD COLUMN foo TEXT';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(true);
+      });
+
+      it('rejects DDL (DROP)', () => {
+        const sql = 'DROP TABLE decision_events';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(true);
+      });
+
+      it('rejects TRUNCATE', () => {
+        const sql = 'TRUNCATE decision_events';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(true);
+      });
+
+      it('rejects UPDATE on tenant table without household_key predicate', () => {
+        const sql = 'UPDATE decision_events SET notes = $1 WHERE id = $2';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'update_missing_tenant_predicate')).toBe(true);
+      });
+    });
+
+    describe('assertSqlStyleContract', () => {
+      it('throws on first violation', () => {
+        expect(() => {
+          assertSqlStyleContract('SELECT * FROM decision_events; DROP TABLE users');
+        }).toThrow('sql_contract_violation');
+      });
+
+      it('does not throw for valid SQL', () => {
+        expect(() => {
+          assertSqlStyleContract('SELECT * FROM decision_events de WHERE de.household_key = $1');
+        }).not.toThrow();
+      });
+    });
+  });
+
+  // ==========================================================================
+  // SQL HELPER FUNCTIONS TESTS
+  // ==========================================================================
+
+  describe('SQL Helper Functions', () => {
+    describe('tenantWhere', () => {
+      it('generates WHERE clause with alias', () => {
+        expect(tenantWhere('de')).toBe('de.household_key = $1');
+      });
+    });
+
+    describe('tenantAnd', () => {
+      it('generates AND clause with alias', () => {
+        expect(tenantAnd('ri')).toBe('AND ri.household_key = $1');
+      });
+    });
+
+    describe('tenantConflict', () => {
+      it('generates ON CONFLICT with household_key first', () => {
+        expect(tenantConflict('item_name')).toBe('ON CONFLICT (household_key, item_name)');
+      });
+
+      it('generates ON CONFLICT with multiple columns', () => {
+        expect(tenantConflict('meal_id', 'user_profile_id')).toBe('ON CONFLICT (household_key, meal_id, user_profile_id)');
+      });
+    });
+
+    describe('tenantUpdateWhere', () => {
+      it('generates WHERE clause without alias', () => {
+        expect(tenantUpdateWhere()).toBe('WHERE household_key = $1');
+      });
+
+      it('generates WHERE clause with alias', () => {
+        expect(tenantUpdateWhere('ri')).toBe('WHERE ri.household_key = $1');
+      });
+    });
+
+    describe('TABLE_ALIASES', () => {
+      it('has all expected tenant table aliases', () => {
+        expect(TABLE_ALIASES.decision_events).toBe('de');
+        expect(TABLE_ALIASES.receipt_imports).toBe('ri');
+        expect(TABLE_ALIASES.inventory_items).toBe('ii');
+        expect(TABLE_ALIASES.taste_signals).toBe('ts');
+        expect(TABLE_ALIASES.taste_meal_scores).toBe('tms');
+      });
     });
   });
 });
