@@ -302,11 +302,23 @@ export const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
 
 /**
  * Columns that must NOT be nullable.
+ * All tenant tables must have household_key NOT NULL.
  */
 export const NOT_NULL_COLUMNS: string[] = [
+  // decision_events
   'decision_events.user_action',
   'decision_events.household_key',
+  // taste_signals
+  'taste_signals.household_key',
+  // taste_meal_scores
+  'taste_meal_scores.household_key',
+  // inventory_items
+  'inventory_items.household_key',
+  // receipt_imports
+  'receipt_imports.household_key',
+  // runtime_flags
   'runtime_flags.enabled',
+  // runtime_deployments_log
   'runtime_deployments_log.env',
   'runtime_deployments_log.deployment_url',
   'runtime_deployments_log.git_sha',
@@ -323,6 +335,18 @@ export const REQUIRED_CONSTRAINTS: Map<string, string[]> = new Map([
     'decision_events_household_key_check',
     'decision_events_decision_type_check',
     'decision_events_timestamps_check',
+  ]],
+  ['taste_signals', [
+    'taste_signals_household_key_nonempty',
+  ]],
+  ['taste_meal_scores', [
+    'taste_meal_scores_household_key_nonempty',
+  ]],
+  ['inventory_items', [
+    'inventory_items_household_key_nonempty',
+  ]],
+  ['receipt_imports', [
+    'receipt_imports_household_key_nonempty',
   ]],
 ]);
 

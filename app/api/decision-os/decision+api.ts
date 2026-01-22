@@ -205,8 +205,8 @@ export async function POST(request: Request): Promise<Response> {
     
     const { context } = validatedRequest;
     
-    // Get user's decision history
-    const userEvents = await db.getDecisionEventsByUserId(userProfileId, 100);
+    // Get user's decision history (household-scoped)
+    const userEvents = await db.getDecisionEventsByUserId(userProfileId, authContext.householdKey, 100);
     
     // Check if DRM should be recommended
     const drmRecommended = shouldRecommendDrm(userEvents);
@@ -256,8 +256,8 @@ export async function POST(request: Request): Promise<Response> {
     // If autopilot eligible and not already applied, create autopilot approval
     // ONLY if autopilot feature is enabled
     if (autopilotFeatureEnabled && autopilotEligibility.eligible) {
-      // Check for existing autopilot approval (idempotency)
-      const existingCopies = await db.getDecisionEventsByContextHash(contextHash);
+      // Check for existing autopilot approval (idempotency, household-scoped)
+      const existingCopies = await db.getDecisionEventsByContextHash(contextHash, authContext.householdKey);
       
       if (!hasAutopilotApproval(existingCopies)) {
         // Create and insert autopilot approval

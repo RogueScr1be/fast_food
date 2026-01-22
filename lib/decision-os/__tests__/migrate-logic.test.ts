@@ -650,9 +650,20 @@ describe('Migration Logic', () => {
 
     it('passes when all NOT NULL columns are correctly NOT NULL', async () => {
       const columnNullable: Record<string, boolean> = {
+        // decision_events
         'decision_events.user_action': false,
         'decision_events.household_key': false,
+        // taste_signals
+        'taste_signals.household_key': false,
+        // taste_meal_scores
+        'taste_meal_scores.household_key': false,
+        // inventory_items
+        'inventory_items.household_key': false,
+        // receipt_imports
+        'receipt_imports.household_key': false,
+        // runtime_flags
         'runtime_flags.enabled': false,
+        // runtime_deployments_log
         'runtime_deployments_log.env': false,
         'runtime_deployments_log.deployment_url': false,
         'runtime_deployments_log.git_sha': false,
@@ -669,9 +680,20 @@ describe('Migration Logic', () => {
 
     it('fails when a column is nullable but should be NOT NULL', async () => {
       const columnNullable: Record<string, boolean> = {
+        // decision_events
         'decision_events.user_action': true, // Should NOT be nullable
         'decision_events.household_key': false,
+        // taste_signals
+        'taste_signals.household_key': false,
+        // taste_meal_scores
+        'taste_meal_scores.household_key': false,
+        // inventory_items
+        'inventory_items.household_key': false,
+        // receipt_imports
+        'receipt_imports.household_key': false,
+        // runtime_flags
         'runtime_flags.enabled': false,
+        // runtime_deployments_log
         'runtime_deployments_log.env': false,
         'runtime_deployments_log.deployment_url': false,
         'runtime_deployments_log.git_sha': false,
@@ -759,12 +781,25 @@ describe('Migration Logic', () => {
     }
 
     it('passes when all required constraints exist', async () => {
+      // Include all required constraints from all tables
       const constraints = new Map<string, Set<string>>([
         ['decision_events', new Set([
           'decision_events_user_action_check',
           'decision_events_household_key_check',
           'decision_events_decision_type_check',
           'decision_events_timestamps_check',
+        ])],
+        ['taste_signals', new Set([
+          'taste_signals_household_key_nonempty',
+        ])],
+        ['taste_meal_scores', new Set([
+          'taste_meal_scores_household_key_nonempty',
+        ])],
+        ['inventory_items', new Set([
+          'inventory_items_household_key_nonempty',
+        ])],
+        ['receipt_imports', new Set([
+          'receipt_imports_household_key_nonempty',
         ])],
       ]);
       const client = new ConstraintVerifyMockClient(constraints);
@@ -783,6 +818,18 @@ describe('Migration Logic', () => {
           // Missing: decision_events_household_key_check
           'decision_events_decision_type_check',
           'decision_events_timestamps_check',
+        ])],
+        ['taste_signals', new Set([
+          'taste_signals_household_key_nonempty',
+        ])],
+        ['taste_meal_scores', new Set([
+          'taste_meal_scores_household_key_nonempty',
+        ])],
+        ['inventory_items', new Set([
+          'inventory_items_household_key_nonempty',
+        ])],
+        ['receipt_imports', new Set([
+          'receipt_imports_household_key_nonempty',
         ])],
       ]);
       const client = new ConstraintVerifyMockClient(constraints);
@@ -803,13 +850,26 @@ describe('Migration Logic', () => {
           // Missing all except one
           'decision_events_user_action_check',
         ])],
+        // Other tables have all constraints
+        ['taste_signals', new Set([
+          'taste_signals_household_key_nonempty',
+        ])],
+        ['taste_meal_scores', new Set([
+          'taste_meal_scores_household_key_nonempty',
+        ])],
+        ['inventory_items', new Set([
+          'inventory_items_household_key_nonempty',
+        ])],
+        ['receipt_imports', new Set([
+          'receipt_imports_household_key_nonempty',
+        ])],
       ]);
       const client = new ConstraintVerifyMockClient(constraints);
 
       const result = await verifyRequiredConstraints(client);
 
       expect(result.valid).toBe(false);
-      expect(result.missing.length).toBe(3); // 3 missing out of 4
+      expect(result.missing.length).toBe(3); // 3 missing from decision_events
     });
 
     it('fails when table has no constraints at all', async () => {
@@ -819,7 +879,8 @@ describe('Migration Logic', () => {
       const result = await verifyRequiredConstraints(client);
 
       expect(result.valid).toBe(false);
-      expect(result.missing.length).toBe(4); // All 4 constraints missing
+      // 4 decision_events + 1 each for taste_signals, taste_meal_scores, inventory_items, receipt_imports = 8 total
+      expect(result.missing.length).toBe(8);
     });
 
     it('works with custom constraints map', async () => {

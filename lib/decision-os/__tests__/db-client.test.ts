@@ -5,7 +5,7 @@
  * Postgres adapter is tested via integration/smoke tests.
  */
 
-import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql } from '../db/client';
+import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, requiresHouseholdKeyButMissing, assertHouseholdScoped } from '../db/client';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -32,30 +32,33 @@ describe('Database Client', () => {
   });
 
   describe('decision events', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
     const testEvent: DecisionEventInsert = {
       id: 'test-event-1',
       user_profile_id: 1,
+      household_key: TEST_HOUSEHOLD_KEY,
       decided_at: new Date().toISOString(),
       actioned_at: new Date().toISOString(),
       user_action: 'approved',
       notes: 'autopilot',
       decision_payload: { meal: 'Test Meal' },
+      decision_type: 'meal_decision',
       meal_id: 42,
       context_hash: 'test-hash',
     };
 
-    it('inserts and retrieves decision event', async () => {
+    it('inserts and retrieves decision event (household-scoped)', async () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
       
-      const retrieved = await db.getDecisionEventById(testEvent.id);
+      const retrieved = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
       expect(retrieved).not.toBeNull();
       expect(retrieved?.id).toBe(testEvent.id);
       expect(retrieved?.user_action).toBe('approved');
       expect(retrieved?.notes).toBe('autopilot');
     });
 
-    it('retrieves events by user ID', async () => {
+    it('retrieves events by user ID (household-scoped)', async () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
       await db.insertDecisionEvent({
@@ -64,41 +67,74 @@ describe('Database Client', () => {
         user_action: 'rejected',
       });
 
-      const events = await db.getDecisionEventsByUserId(1);
+      const events = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
       expect(events.length).toBe(2);
     });
 
-    it('retrieves events by context hash', async () => {
+    it('retrieves events by context hash (household-scoped)', async () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
 
-      const events = await db.getDecisionEventsByContextHash('test-hash');
+      const events = await db.getDecisionEventsByContextHash('test-hash', TEST_HOUSEHOLD_KEY);
       expect(events.length).toBe(1);
       expect(events[0].id).toBe(testEvent.id);
     });
 
     it('returns null for non-existent event', async () => {
       const db = getDb();
-      const event = await db.getDecisionEventById('non-existent');
+      const event = await db.getDecisionEventById('non-existent', TEST_HOUSEHOLD_KEY);
       expect(event).toBeNull();
+    });
+
+    it('household isolation: event in different household not returned', async () => {
+      const db = getDb();
+      await db.insertDecisionEvent(testEvent);
+      
+      // Query with different household key - should return null
+      const retrieved = await db.getDecisionEventById(testEvent.id, 'other-household');
+      expect(retrieved).toBeNull();
+    });
+
+    it('household isolation: events filtered by household', async () => {
+      const db = getDb();
+      // Insert event in household A
+      await db.insertDecisionEvent(testEvent);
+      // Insert event in household B
+      await db.insertDecisionEvent({
+        ...testEvent,
+        id: 'test-event-other-hh',
+        household_key: 'other-household',
+      });
+
+      // Query for household A - should only get 1 event
+      const eventsA = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
+      expect(eventsA.length).toBe(1);
+      expect(eventsA[0].id).toBe(testEvent.id);
+
+      // Query for household B - should only get 1 event
+      const eventsB = await db.getDecisionEventsByUserId(1, 'other-household');
+      expect(eventsB.length).toBe(1);
+      expect(eventsB[0].id).toBe('test-event-other-hh');
     });
   });
 
   describe('receipt imports', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
     const testReceipt: ReceiptImportRecord = {
       id: 'receipt-1',
       user_profile_id: 1,
+      household_key: TEST_HOUSEHOLD_KEY,
       created_at: new Date().toISOString(),
       status: 'received',
       raw_ocr_text: 'Test receipt text',
       image_hash: 'hash-123',
     };
 
-    it('inserts and retrieves receipt import', async () => {
+    it('inserts and retrieves receipt import (household-scoped)', async () => {
       const db = getDb();
       await db.insertReceiptImport(testReceipt);
       
-      const retrieved = await db.getReceiptImportById(testReceipt.id);
+      const retrieved = await db.getReceiptImportById(testReceipt.id, TEST_HOUSEHOLD_KEY);
       expect(retrieved).not.toBeNull();
       expect(retrieved?.status).toBe('received');
     });
@@ -108,39 +144,45 @@ describe('Database Client', () => {
       await db.insertReceiptImport(testReceipt);
       await db.updateReceiptImportStatus(testReceipt.id, 'parsed');
 
-      const retrieved = await db.getReceiptImportById(testReceipt.id);
+      const retrieved = await db.getReceiptImportById(testReceipt.id, TEST_HOUSEHOLD_KEY);
       expect(retrieved?.status).toBe('parsed');
     });
 
-    it('finds receipt by image hash', async () => {
+    it('finds receipt by image hash (household-scoped)', async () => {
       const db = getDb();
       await db.insertReceiptImport(testReceipt);
 
-      const found = await db.getReceiptImportByImageHash(1, 'hash-123');
+      const found = await db.getReceiptImportByImageHash(TEST_HOUSEHOLD_KEY, 'hash-123');
       expect(found).not.toBeNull();
       expect(found?.id).toBe(testReceipt.id);
     });
   });
 
   describe('inventory items', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
     const testItem: InventoryItem = {
       id: 'item-1',
       user_profile_id: 1,
+      household_key: TEST_HOUSEHOLD_KEY,
+      item_name: 'Chicken',
+      remaining_qty: 2,
+      confidence: 0.95,
+      last_seen_at: new Date().toISOString(),
+      // Legacy columns for backward compat
       name: 'Chicken',
       quantity: 2,
-      confidence: 0.95,
       source: 'receipt',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    it('upserts and retrieves inventory item', async () => {
+    it('upserts and retrieves inventory item (household-scoped)', async () => {
       const db = getDb();
       await db.upsertInventoryItem(testItem);
       
-      const items = await db.getInventoryItemsByUserId(1);
+      const items = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
       expect(items.length).toBe(1);
-      expect(items[0].name).toBe('Chicken');
+      expect(items[0].item_name).toBe('Chicken');
     });
 
     it('updates existing inventory item on upsert', async () => {
@@ -148,23 +190,49 @@ describe('Database Client', () => {
       await db.upsertInventoryItem(testItem);
       await db.upsertInventoryItem({
         ...testItem,
+        remaining_qty: 5,
         quantity: 5,
       });
 
-      const items = await db.getInventoryItemsByUserId(1);
+      const items = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
       expect(items.length).toBe(1);
-      expect(items[0].quantity).toBe(5);
+      expect(items[0].remaining_qty).toBe(5);
+    });
+
+    it('household isolation: inventory filtered by household', async () => {
+      const db = getDb();
+      await db.upsertInventoryItem(testItem);
+      await db.upsertInventoryItem({
+        ...testItem,
+        id: 'item-other-hh',
+        household_key: 'other-household',
+        item_name: 'Beef',
+      });
+
+      // Query for household A - should only get 1 item
+      const itemsA = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
+      expect(itemsA.length).toBe(1);
+      expect(itemsA[0].item_name).toBe('Chicken');
+
+      // Query for household B - should only get 1 item
+      const itemsB = await db.getInventoryItemsByHousehold('other-household');
+      expect(itemsB.length).toBe(1);
+      expect(itemsB[0].item_name).toBe('Beef');
     });
   });
 
   describe('taste signals and scores', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
+
     it('inserts taste signal', async () => {
       const db = getDb();
       await db.insertTasteSignal({
         id: 'ts-1',
         user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
         meal_id: 42,
         weight: 1.0,
+        event_id: 'event-1',
         created_at: new Date().toISOString(),
       });
       // No retrieval method for taste signals in adapter interface
@@ -172,53 +240,97 @@ describe('Database Client', () => {
       expect(true).toBe(true);
     });
 
-    it('upserts and retrieves taste meal score', async () => {
+    it('upserts and retrieves taste meal score (household-scoped)', async () => {
       const db = getDb();
       await db.upsertTasteMealScore({
         id: 'score-1',
         user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
         meal_id: 42,
         score: 0.8,
         approvals: 5,
         rejections: 1,
       });
 
-      const score = await db.getTasteMealScore(1, 42);
+      const score = await db.getTasteMealScore(1, TEST_HOUSEHOLD_KEY, 42);
       expect(score).not.toBeNull();
       expect(score?.score).toBe(0.8);
       expect(score?.approvals).toBe(5);
     });
+
+    it('household isolation: taste score filtered by household', async () => {
+      const db = getDb();
+      await db.upsertTasteMealScore({
+        id: 'score-hh-a',
+        user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
+        meal_id: 42,
+        score: 0.8,
+        approvals: 5,
+        rejections: 1,
+      });
+      await db.upsertTasteMealScore({
+        id: 'score-hh-b',
+        user_profile_id: 1,
+        household_key: 'other-household',
+        meal_id: 42,
+        score: 0.2,
+        approvals: 1,
+        rejections: 4,
+      });
+
+      // Query for household A - should get 0.8 score
+      const scoreA = await db.getTasteMealScore(1, TEST_HOUSEHOLD_KEY, 42);
+      expect(scoreA).not.toBeNull();
+      expect(scoreA?.score).toBe(0.8);
+
+      // Query for household B - should get 0.2 score
+      const scoreB = await db.getTasteMealScore(1, 'other-household', 42);
+      expect(scoreB).not.toBeNull();
+      expect(scoreB?.score).toBe(0.2);
+
+      // Query for non-existent household - should return null
+      const scoreC = await db.getTasteMealScore(1, 'non-existent-hh', 42);
+      expect(scoreC).toBeNull();
+    });
   });
 
   describe('clearAll', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
+
     it('clears all data', async () => {
       const db = getDb();
       
       await db.insertDecisionEvent({
         id: 'event-1',
         user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
         decided_at: new Date().toISOString(),
         actioned_at: new Date().toISOString(),
         user_action: 'approved',
         decision_payload: {},
+        decision_type: 'meal_decision',
       });
 
       await clearDb();
 
-      const events = await db.getDecisionEventsByUserId(1);
+      const events = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
       expect(events.length).toBe(0);
     });
   });
 
   describe('readonly mode', () => {
+    const TEST_HOUSEHOLD_KEY = 'test-household';
     const testEvent: DecisionEventInsert = {
       id: 'readonly-test-event',
       user_profile_id: 1,
+      household_key: TEST_HOUSEHOLD_KEY,
       decided_at: new Date().toISOString(),
       actioned_at: new Date().toISOString(),
       user_action: 'approved',
       notes: 'test',
       decision_payload: { meal: 'Test Meal' },
+      decision_type: 'meal_decision',
       meal_id: 1,
       context_hash: 'readonly-hash',
     };
@@ -273,6 +385,7 @@ describe('Database Client', () => {
         await db.insertReceiptImport({
           id: 'receipt-readonly',
           user_profile_id: 1,
+          household_key: TEST_HOUSEHOLD_KEY,
           created_at: new Date().toISOString(),
           status: 'received',
         });
@@ -289,6 +402,7 @@ describe('Database Client', () => {
       await db.insertReceiptImport({
         id: 'receipt-update-test',
         user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
         created_at: new Date().toISOString(),
         status: 'received',
       });
@@ -312,9 +426,13 @@ describe('Database Client', () => {
         await db.upsertInventoryItem({
           id: 'item-readonly',
           user_profile_id: 1,
+          household_key: TEST_HOUSEHOLD_KEY,
+          item_name: 'Chicken',
+          remaining_qty: 2,
+          confidence: 0.95,
+          last_seen_at: new Date().toISOString(),
           name: 'Chicken',
           quantity: 2,
-          confidence: 0.95,
           source: 'receipt',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -333,8 +451,10 @@ describe('Database Client', () => {
         await db.insertTasteSignal({
           id: 'ts-readonly',
           user_profile_id: 1,
+          household_key: TEST_HOUSEHOLD_KEY,
           meal_id: 42,
           weight: 1.0,
+          event_id: 'event-1',
           created_at: new Date().toISOString(),
         });
         fail('Expected readonly_mode error');
@@ -372,7 +492,7 @@ describe('Database Client', () => {
       // Should work now
       await db.insertDecisionEvent(testEvent);
       
-      const event = await db.getDecisionEventById(testEvent.id);
+      const event = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
       expect(event).not.toBeNull();
       expect(event?.id).toBe(testEvent.id);
     });
@@ -386,8 +506,8 @@ describe('Database Client', () => {
       // Enable readonly
       setDbReadonly(true);
       
-      // Should still be able to read
-      const event = await db.getDecisionEventById(testEvent.id);
+      // Should still be able to read (household-scoped)
+      const event = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
       expect(event).not.toBeNull();
       expect(event?.id).toBe(testEvent.id);
     });
@@ -586,6 +706,126 @@ describe('Database Client', () => {
         expect(isReadOnlySql('SET search_path = public')).toBe(false);
         expect(isReadOnlySql('SHOW all')).toBe(false);
       });
+    });
+  });
+
+  describe('requiresHouseholdKeyButMissing (tenant isolation guard)', () => {
+    describe('returns false for non-tenant tables', () => {
+      it('allows SELECT from users table', () => {
+        expect(requiresHouseholdKeyButMissing('SELECT * FROM users WHERE id = 1')).toBe(false);
+      });
+
+      it('allows SELECT from schema_migrations', () => {
+        expect(requiresHouseholdKeyButMissing('SELECT * FROM schema_migrations')).toBe(false);
+      });
+
+      it('allows SELECT from runtime_flags', () => {
+        expect(requiresHouseholdKeyButMissing('SELECT * FROM runtime_flags')).toBe(false);
+      });
+    });
+
+    describe('returns false when household_key is present', () => {
+      it('decision_events with household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM decision_events WHERE household_key = $1'
+        )).toBe(false);
+      });
+
+      it('taste_meal_scores with household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM taste_meal_scores WHERE household_key = $1 AND meal_id = $2'
+        )).toBe(false);
+      });
+
+      it('inventory_items with household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM inventory_items WHERE household_key = $1 ORDER BY last_seen_at DESC'
+        )).toBe(false);
+      });
+
+      it('receipt_imports with household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM receipt_imports WHERE household_key = $1 AND image_hash = $2'
+        )).toBe(false);
+      });
+
+      it('taste_signals with household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM taste_signals WHERE household_key = $1 ORDER BY created_at DESC'
+        )).toBe(false);
+      });
+    });
+
+    describe('returns true for tenant tables without household_key (leaky queries)', () => {
+      it('decision_events without household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM decision_events WHERE user_profile_id = $1'
+        )).toBe(true);
+      });
+
+      it('decision_events by id only', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM decision_events WHERE id = $1'
+        )).toBe(true);
+      });
+
+      it('taste_meal_scores without household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM taste_meal_scores WHERE user_profile_id = $1 AND meal_id = $2'
+        )).toBe(true);
+      });
+
+      it('inventory_items without household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM inventory_items WHERE user_profile_id = $1'
+        )).toBe(true);
+      });
+
+      it('receipt_imports without household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM receipt_imports WHERE user_profile_id = $1 AND image_hash = $2'
+        )).toBe(true);
+      });
+
+      it('taste_signals without household_key', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'SELECT * FROM taste_signals WHERE user_profile_id = $1'
+        )).toBe(true);
+      });
+    });
+
+    describe('returns false for non-SELECT queries', () => {
+      it('INSERT does not require household_key check', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'INSERT INTO decision_events (id, user_profile_id) VALUES ($1, $2)'
+        )).toBe(false);
+      });
+
+      it('UPDATE does not require household_key check', () => {
+        expect(requiresHouseholdKeyButMissing(
+          'UPDATE decision_events SET status = $1 WHERE id = $2'
+        )).toBe(false);
+      });
+    });
+  });
+
+  describe('assertHouseholdScoped', () => {
+    it('does not throw for properly scoped query', () => {
+      expect(() => {
+        assertHouseholdScoped('SELECT * FROM decision_events WHERE household_key = $1');
+      }).not.toThrow();
+    });
+
+    it('throws for leaky query', () => {
+      expect(() => {
+        assertHouseholdScoped('SELECT * FROM decision_events WHERE user_profile_id = $1');
+      }).toThrow('household_key_missing');
+    });
+
+    it('does not throw for non-tenant tables', () => {
+      expect(() => {
+        assertHouseholdScoped('SELECT * FROM users WHERE id = $1');
+      }).not.toThrow();
     });
   });
 });
