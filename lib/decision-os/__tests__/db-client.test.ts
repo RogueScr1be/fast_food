@@ -9,7 +9,8 @@ import {
   getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, 
   requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate,
   TENANT_TABLES, extractTableReferences, hasPredicateForTableOrAlias, checkTenantSafety, checkOnConflictSafety, assertTenantSafe,
-  normalizeSql, checkSqlStyleContract, assertSqlStyleContract
+  normalizeSql, checkSqlStyleContract, assertSqlStyleContract,
+  stripStringLiterals, normalizeTableName, hasWrongParamIndexForTenant, hasLiteralTenantPredicate
 } from '../db/client';
 import { tenantWhere, tenantAnd, tenantConflict, tenantUpdateWhere, TABLE_ALIASES } from '../db/sql';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
@@ -1413,6 +1414,297 @@ describe('Database Client', () => {
         expect(TABLE_ALIASES.inventory_items).toBe('ii');
         expect(TABLE_ALIASES.taste_signals).toBe('ts');
         expect(TABLE_ALIASES.taste_meal_scores).toBe('tms');
+      });
+    });
+  });
+
+  // ==========================================================================
+  // BYPASS-PROOF TESTS (HOSTILE TRUTH)
+  // These tests verify that real bypass vectors are blocked.
+  // ==========================================================================
+
+  describe('Bypass-Proof Contract Tests', () => {
+    describe('stripStringLiterals', () => {
+      it('strips single-quoted strings', () => {
+        expect(stripStringLiterals("SELECT 'hello' as x")).toBe("SELECT '' as x");
+      });
+
+      it('handles escaped quotes inside strings', () => {
+        expect(stripStringLiterals("SELECT 'it''s fine' as x")).toBe("SELECT '' as x");
+      });
+
+      it('handles multiple strings', () => {
+        expect(stripStringLiterals("SELECT 'a', 'b', 'c'")).toBe("SELECT '', '', ''");
+      });
+    });
+
+    describe('normalizeTableName', () => {
+      it('strips schema prefix', () => {
+        expect(normalizeTableName('public.receipt_imports')).toBe('receipt_imports');
+      });
+
+      it('strips quotes', () => {
+        expect(normalizeTableName('"receipt_imports"')).toBe('receipt_imports');
+      });
+
+      it('strips both schema and quotes', () => {
+        expect(normalizeTableName('"public"."receipt_imports"')).toBe('receipt_imports');
+      });
+
+      it('lowercases table name', () => {
+        expect(normalizeTableName('Receipt_Imports')).toBe('receipt_imports');
+      });
+    });
+
+    describe('schema-qualified tables are detected', () => {
+      it('detects FROM public.receipt_imports ri', () => {
+        const refs = extractTableReferences('SELECT * FROM public.receipt_imports ri WHERE ri.household_key = $1');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'receipt_imports', alias: 'ri' });
+      });
+
+      it('enforces predicate on schema-qualified table', () => {
+        const sql = 'SELECT * FROM public.decision_events de WHERE de.id = $1';
+        const result = checkTenantSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.missingPredicates.some(p => p.includes('decision_events'))).toBe(true);
+      });
+    });
+
+    describe('quoted identifiers are detected', () => {
+      it('detects FROM "receipt_imports" ri', () => {
+        const refs = extractTableReferences('SELECT * FROM "receipt_imports" ri WHERE ri.household_key = $1');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'receipt_imports', alias: 'ri' });
+      });
+
+      it('detects FROM "public"."receipt_imports" ri', () => {
+        const refs = extractTableReferences('SELECT * FROM "public"."receipt_imports" ri WHERE ri.household_key = $1');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'receipt_imports', alias: 'ri' });
+      });
+
+      it('enforces predicate on quoted table', () => {
+        const sql = 'SELECT * FROM "decision_events" de WHERE de.id = $1';
+        const result = checkTenantSafety(sql);
+        expect(result.valid).toBe(false);
+      });
+    });
+
+    describe('UPDATE and INSERT are detected', () => {
+      it('detects UPDATE receipt_imports', () => {
+        const refs = extractTableReferences('UPDATE receipt_imports SET status = $2 WHERE household_key = $1');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'receipt_imports', alias: null });
+      });
+
+      it('detects UPDATE public.receipt_imports', () => {
+        const refs = extractTableReferences('UPDATE public.receipt_imports SET status = $2 WHERE household_key = $1');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'receipt_imports', alias: null });
+      });
+
+      it('detects INSERT INTO inventory_items', () => {
+        const refs = extractTableReferences('INSERT INTO inventory_items (id, household_key) VALUES ($1, $2)');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'inventory_items', alias: null });
+      });
+
+      it('detects INSERT INTO public.inventory_items', () => {
+        const refs = extractTableReferences('INSERT INTO public.inventory_items (id, household_key) VALUES ($1, $2)');
+        expect(refs).toHaveLength(1);
+        expect(refs[0]).toEqual({ table: 'inventory_items', alias: null });
+      });
+    });
+
+    describe('string literals do NOT trip contract (false positive prevention)', () => {
+      it('allows SELECT with semicolon in string', () => {
+        const sql = "SELECT ';' as semi FROM users WHERE id = $1";
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'no_multi_statement')).toBe(false);
+      });
+
+      it('allows SELECT with DROP in string', () => {
+        const sql = "SELECT 'DROP TABLE users' as txt FROM users WHERE id = $1";
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(false);
+      });
+
+      it('allows SELECT with DELETE in string', () => {
+        const sql = "SELECT 'DELETE FROM x' as txt FROM users WHERE id = $1";
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'banned_token')).toBe(false);
+      });
+
+      it('still rejects actual semicolon outside strings', () => {
+        const sql = "SELECT 'ok' as x; DELETE FROM users";
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'no_multi_statement')).toBe(true);
+      });
+    });
+
+    describe('$1 predicate enforcement (CRITICAL)', () => {
+      it('hasWrongParamIndexForTenant detects $2', () => {
+        expect(hasWrongParamIndexForTenant('WHERE de.household_key = $2')).toBe(true);
+      });
+
+      it('hasWrongParamIndexForTenant allows $1', () => {
+        expect(hasWrongParamIndexForTenant('WHERE de.household_key = $1')).toBe(false);
+      });
+
+      it('hasWrongParamIndexForTenant detects $10', () => {
+        expect(hasWrongParamIndexForTenant('WHERE de.household_key = $10')).toBe(true);
+      });
+
+      it('rejects WHERE de.household_key = $2 via contract', () => {
+        const sql = 'SELECT * FROM decision_events de WHERE de.household_key = $2';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'wrong_param_index')).toBe(true);
+      });
+
+      it('rejects JOIN where one table uses $1 and other uses $2', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id
+          WHERE de.household_key = $1 AND ri.household_key = $2
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'wrong_param_index')).toBe(true);
+      });
+    });
+
+    describe('literal tenant predicates banned', () => {
+      it('hasLiteralTenantPredicate detects literal value', () => {
+        expect(hasLiteralTenantPredicate("WHERE household_key = 'abc'")).toBe(true);
+      });
+
+      it('hasLiteralTenantPredicate allows parameter', () => {
+        expect(hasLiteralTenantPredicate('WHERE household_key = $1')).toBe(false);
+      });
+
+      it('rejects household_key = literal via contract', () => {
+        const sql = "SELECT * FROM decision_events de WHERE de.household_key = 'abc'";
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'literal_tenant_predicate')).toBe(true);
+      });
+    });
+
+    describe('multi-table forbids unqualified predicate', () => {
+      it('rejects unqualified predicate in JOIN', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id
+          WHERE household_key = $1
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'unqualified_predicate')).toBe(true);
+      });
+
+      it('allows qualified predicates in JOIN', () => {
+        const sql = `
+          SELECT * FROM decision_events de 
+          JOIN receipt_imports ri ON ri.id = de.receipt_id
+          WHERE de.household_key = $1 AND ri.household_key = $1
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'unqualified_predicate')).toBe(false);
+      });
+    });
+
+    describe('ON CONFLICT ON CONSTRAINT is banned', () => {
+      it('rejects ON CONFLICT ON CONSTRAINT via contract', () => {
+        const sql = `
+          INSERT INTO inventory_items (id, household_key, item_name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT ON CONSTRAINT inventory_items_pkey DO UPDATE SET item_name = $3
+        `;
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'on_conflict_on_constraint_banned')).toBe(true);
+      });
+
+      it('rejects ON CONFLICT ON CONSTRAINT via checkOnConflictSafety', () => {
+        const sql = `
+          INSERT INTO inventory_items (id, household_key, item_name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT ON CONSTRAINT some_constraint DO UPDATE SET item_name = $3
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(false);
+        expect(result.conflictTarget).toBe('ON CONSTRAINT');
+      });
+
+      it('allows column-based ON CONFLICT', () => {
+        const sql = `
+          INSERT INTO inventory_items (id, household_key, item_name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (household_key, item_name) DO UPDATE SET remaining_qty = $4
+        `;
+        const result = checkOnConflictSafety(sql);
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('UPDATE tenant predicate enforcement', () => {
+      it('rejects UPDATE with missing household_key predicate', () => {
+        const sql = 'UPDATE receipt_imports SET status = $1 WHERE id = $2';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'update_missing_tenant_predicate')).toBe(true);
+      });
+
+      it('rejects UPDATE with wrong param index for household_key', () => {
+        const sql = 'UPDATE receipt_imports SET status = $1 WHERE household_key = $2 AND id = $3';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'update_missing_tenant_predicate')).toBe(true);
+      });
+
+      it('allows UPDATE with correct WHERE household_key = $1', () => {
+        const sql = 'UPDATE receipt_imports SET status = $2 WHERE household_key = $1 AND id = $3';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'update_missing_tenant_predicate')).toBe(false);
+      });
+
+      it('allows UPDATE on non-tenant table without household_key', () => {
+        const sql = 'UPDATE users SET name = $1 WHERE id = $2';
+        const violations = checkSqlStyleContract(sql);
+        expect(violations.some(v => v.rule === 'update_missing_tenant_predicate')).toBe(false);
+      });
+    });
+
+    describe('hasPredicateForTableOrAlias enforces $1', () => {
+      it('rejects predicate with $2 for single table', () => {
+        const result = hasPredicateForTableOrAlias(
+          'SELECT * FROM decision_events WHERE household_key = $2', 
+          'decision_events', 
+          true
+        );
+        expect(result).toBe(false);
+      });
+
+      it('accepts predicate with $1 for single table', () => {
+        const result = hasPredicateForTableOrAlias(
+          'SELECT * FROM decision_events WHERE household_key = $1', 
+          'decision_events', 
+          true
+        );
+        expect(result).toBe(true);
+      });
+
+      it('rejects qualified predicate with $2', () => {
+        const result = hasPredicateForTableOrAlias(
+          'SELECT * FROM decision_events de WHERE de.household_key = $2', 
+          'de', 
+          false
+        );
+        expect(result).toBe(false);
+      });
+
+      it('accepts qualified predicate with $1', () => {
+        const result = hasPredicateForTableOrAlias(
+          'SELECT * FROM decision_events de WHERE de.household_key = $1', 
+          'de', 
+          false
+        );
+        expect(result).toBe(true);
       });
     });
   });

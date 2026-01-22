@@ -499,10 +499,28 @@ const BANNED_SQL_TOKENS = [
 ];
 
 /**
+ * Strip string literals from SQL to prevent false positives.
+ * Replaces 'content' with '' (empty string literal placeholder).
+ * 
+ * This prevents things like SELECT ';' or SELECT 'DROP TABLE' from
+ * triggering banned token/multi-statement detection.
+ */
+export function stripStringLiterals(sql: string): string {
+  // Replace single-quoted strings (handling escaped quotes '')
+  // Pattern: '...' where ... doesn't contain unescaped quotes
+  // We use a simple approach: match '...' and replace with ''
+  // Handle escaped quotes by matching non-quote or doubled quotes
+  return sql.replace(/'(?:[^']|'')*'/g, "''");
+}
+
+/**
  * Normalize SQL for contract checking.
  * - Strips comments (line and block)
+ * - Strips string literals (prevents false positives)
  * - Collapses whitespace
- * - Lowercases for consistent matching
+ * 
+ * IMPORTANT: String literals are stripped BEFORE banned token scanning
+ * to avoid false positives on values like 'DROP TABLE' or ';'.
  */
 export function normalizeSql(sql: string): string {
   let normalized = sql;
@@ -512,6 +530,9 @@ export function normalizeSql(sql: string): string {
   
   // Strip block comments (/* ... */)
   normalized = normalized.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  
+  // Strip string literals to prevent false positives
+  normalized = stripStringLiterals(normalized);
   
   // Collapse whitespace
   normalized = normalized.replace(/\s+/g, ' ').trim();
@@ -538,23 +559,26 @@ export interface SqlContractViolation {
  * 3. No reverse predicates ($1 = alias.household_key)
  * 4. No IN/ANY tenant predicates
  * 5. No OR with tenant predicates
- * 6. Qualified predicates required when aliases exist
- * 7. UPDATE must have household_key in WHERE
+ * 6. Qualified predicates required when aliases exist in multi-table queries
+ * 7. UPDATE must have household_key = $1 in WHERE
+ * 8. $1 MUST be used for tenant predicates (not $2, $3, etc.)
+ * 9. Literal tenant predicates banned (no household_key = 'value')
+ * 10. ON CONFLICT ON CONSTRAINT is banned (use column-based ON CONFLICT)
  */
 export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
   const violations: SqlContractViolation[] = [];
   const normalized = normalizeSql(sql);
   const upper = normalized.toUpperCase();
   
-  // Rule 1: No multi-statement SQL
+  // Rule 1: No multi-statement SQL (checked AFTER string literal stripping)
   if (normalized.includes(';')) {
     violations.push({
       rule: 'no_multi_statement',
-      message: 'Multi-statement SQL is banned (contains semicolon)',
+      message: 'Multi-statement SQL is banned (contains semicolon outside string literals)',
     });
   }
   
-  // Rule 2: No banned tokens
+  // Rule 2: No banned tokens (checked AFTER string literal stripping)
   for (const token of BANNED_SQL_TOKENS) {
     // Match whole word only
     const tokenRegex = new RegExp(`\\b${token}\\b`, 'i');
@@ -570,7 +594,7 @@ export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
   if (/\$\d+\s*=\s*\w*\.?household_key/i.test(normalized)) {
     violations.push({
       rule: 'reverse_predicate',
-      message: 'Reverse predicate ($N = household_key) is banned; use alias.household_key = $N',
+      message: 'Reverse predicate ($N = household_key) is banned; use alias.household_key = $1',
     });
   }
   
@@ -582,8 +606,7 @@ export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
     });
   }
   
-  // Rule 5: No OR with tenant predicates (tenant predicate must not be in OR clause)
-  // This is a simplified check - catches common patterns
+  // Rule 5: No OR with tenant predicates
   if (/household_key\s*=\s*\$\d+\s+OR\b/i.test(normalized) ||
       /\bOR\s+\w*\.?household_key\s*=/i.test(normalized)) {
     violations.push({
@@ -592,39 +615,62 @@ export function checkSqlStyleContract(sql: string): SqlContractViolation[] {
     });
   }
   
-  // Rule 6: Qualified predicates required when aliases exist
-  // Extract table references to check for aliases
+  // Rule 6: Qualified predicates required for multi-table queries
   const refs = extractTableReferences(sql);
-  const hasAliases = refs.some(r => r.alias !== null);
+  const tenantRefs = refs.filter(r => TENANT_TABLES.has(r.table));
+  const hasMultipleTenantTables = tenantRefs.length > 1;
   
-  if (hasAliases && refs.length > 0) {
-    // Check for unqualified household_key in WHERE/AND
-    // Pattern: WHERE household_key = or AND household_key = (without alias.)
-    if (/(?:WHERE|AND)\s+household_key\s*=/i.test(normalized) &&
-        !(/(?:WHERE|AND)\s+\w+\.household_key\s*=/i.test(normalized))) {
+  if (hasMultipleTenantTables) {
+    // In multi-table queries, unqualified predicates are ALWAYS wrong
+    // Pattern: WHERE household_key = or AND household_key = (without alias prefix)
+    if (/(?:WHERE|AND)\s+household_key\s*=\s*\$/i.test(normalized)) {
       violations.push({
         rule: 'unqualified_predicate',
-        message: 'Unqualified household_key predicate when aliases exist; use alias.household_key = $N',
+        message: 'Unqualified household_key predicate in multi-table query is banned; use alias.household_key = $1 for each table',
       });
     }
   }
   
-  // Rule 7: UPDATE must have household_key in WHERE
+  // Rule 7: UPDATE must have household_key = $1 in WHERE
   if (upper.trimStart().startsWith('UPDATE')) {
-    // Check if it's updating a tenant table
-    const updateMatch = /UPDATE\s+(\w+)/i.exec(normalized);
-    if (updateMatch) {
-      const tableName = updateMatch[1].toLowerCase();
-      if (TENANT_TABLES.has(tableName)) {
-        // Must have WHERE household_key = in the statement
-        if (!(/WHERE\s+(?:\w+\.)?household_key\s*=\s*\$/i.test(normalized))) {
-          violations.push({
-            rule: 'update_missing_tenant_predicate',
-            message: `UPDATE on tenant table '${tableName}' must include WHERE household_key = $N`,
-          });
-        }
+    // Extract table name (handles schema-qualified and quoted)
+    const updateRefs = extractTableReferences(sql);
+    const updateTenantRef = updateRefs.find(r => TENANT_TABLES.has(r.table));
+    
+    if (updateTenantRef) {
+      // Must have WHERE household_key = $1 (specifically $1, not other indices)
+      if (!(/WHERE\s+(?:\w+\.)?household_key\s*=\s*\$1(?!\d)/i.test(normalized))) {
+        violations.push({
+          rule: 'update_missing_tenant_predicate',
+          message: `UPDATE on tenant table '${updateTenantRef.table}' must include WHERE household_key = $1`,
+        });
       }
     }
+  }
+  
+  // Rule 8: $1 MUST be used for tenant predicates (not $2, $3, etc.)
+  if (hasWrongParamIndexForTenant(normalized)) {
+    violations.push({
+      rule: 'wrong_param_index',
+      message: '$1 must be used for household_key predicate (found $2 or higher); contract: $1 is ALWAYS household_key',
+    });
+  }
+  
+  // Rule 9: Literal tenant predicates banned
+  // Note: We check the original SQL (before literal stripping) for this
+  if (hasLiteralTenantPredicate(sql)) {
+    violations.push({
+      rule: 'literal_tenant_predicate',
+      message: 'Literal values for household_key are banned; use parameterized $1',
+    });
+  }
+  
+  // Rule 10: ON CONFLICT ON CONSTRAINT is banned
+  if (/ON\s+CONFLICT\s+ON\s+CONSTRAINT/i.test(normalized)) {
+    violations.push({
+      rule: 'on_conflict_on_constraint_banned',
+      message: 'ON CONFLICT ON CONSTRAINT is banned; use column-based ON CONFLICT (household_key, ...)',
+    });
   }
   
   return violations;
@@ -643,14 +689,44 @@ export function assertSqlStyleContract(sql: string): void {
 }
 
 /**
- * Extract table references from SQL (FROM and JOIN clauses).
+ * Normalize a table name by stripping schema prefix and quotes.
+ * 
+ * Examples:
+ *   "public.receipt_imports" -> "receipt_imports"
+ *   '"receipt_imports"' -> "receipt_imports"
+ *   '"public"."receipt_imports"' -> "receipt_imports"
+ *   "receipt_imports" -> "receipt_imports"
+ */
+export function normalizeTableName(tableName: string): string {
+  // Strip quotes
+  let normalized = tableName.replace(/"/g, '');
+  
+  // Strip schema prefix (take last part after dot)
+  if (normalized.includes('.')) {
+    const parts = normalized.split('.');
+    normalized = parts[parts.length - 1];
+  }
+  
+  return normalized.toLowerCase();
+}
+
+/**
+ * Extract table references from SQL (FROM, JOIN, UPDATE, INSERT INTO).
  * Returns array of {table, alias} objects.
+ * 
+ * Handles:
+ *   - Simple: FROM decision_events
+ *   - Aliased: FROM decision_events de
+ *   - Schema-qualified: FROM public.receipt_imports ri
+ *   - Quoted: FROM "receipt_imports" ri
+ *   - Quoted+schema: FROM "public"."receipt_imports" ri
+ *   - UPDATE: UPDATE receipt_imports SET ...
+ *   - INSERT: INSERT INTO inventory_items ...
  * 
  * Examples:
  *   "FROM decision_events" -> [{table: 'decision_events', alias: null}]
- *   "FROM decision_events de" -> [{table: 'decision_events', alias: 'de'}]
- *   "FROM decision_events de JOIN receipt_imports ri ON ..." 
- *     -> [{table: 'decision_events', alias: 'de'}, {table: 'receipt_imports', alias: 'ri'}]
+ *   "FROM public.decision_events de" -> [{table: 'decision_events', alias: 'de'}]
+ *   "UPDATE receipt_imports SET ..." -> [{table: 'receipt_imports', alias: null}]
  */
 export function extractTableReferences(sql: string): Array<{table: string, alias: string | null}> {
   const refs: Array<{table: string, alias: string | null}> = [];
@@ -659,16 +735,36 @@ export function extractTableReferences(sql: string): Array<{table: string, alias
   const SQL_KEYWORDS = new Set([
     'where', 'and', 'or', 'on', 'inner', 'outer', 'left', 'right', 'full', 
     'cross', 'join', 'natural', 'using', 'order', 'group', 'having', 'limit',
-    'offset', 'union', 'intersect', 'except', 'set', 'values', 'select', 'from'
+    'offset', 'union', 'intersect', 'except', 'set', 'values', 'select', 'from',
+    'returning', 'conflict', 'do', 'update', 'nothing'
   ]);
   
-  // Match FROM <table> [alias] and JOIN <table> [alias]
-  // Alias must be a simple identifier, not a keyword
-  const tablePattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
+  // Pattern for table identifier: handles schema.table, "table", "schema"."table"
+  // Table part: (?:"[^"]+"|[a-z_][a-z0-9_]*)(?:\.(?:"[^"]+"|[a-z_][a-z0-9_]*))?
+  const tableIdent = '(?:"[^"]+"|[a-z_][a-z0-9_]*)(?:\\.(?:"[^"]+"|[a-z_][a-z0-9_]*))?';
   
+  // Match FROM <table> [AS] [alias] and JOIN <table> [AS] [alias]
+  const fromJoinPattern = new RegExp(
+    `(?:FROM|JOIN)\\s+(${tableIdent})(?:\\s+(?:AS\\s+)?([a-z_][a-z0-9_]*))?`,
+    'gi'
+  );
+  
+  // Match UPDATE <table> [AS] [alias]
+  const updatePattern = new RegExp(
+    `UPDATE\\s+(${tableIdent})(?:\\s+(?:AS\\s+)?([a-z_][a-z0-9_]*))?`,
+    'gi'
+  );
+  
+  // Match INSERT INTO <table>
+  const insertPattern = new RegExp(
+    `INSERT\\s+INTO\\s+(${tableIdent})`,
+    'gi'
+  );
+  
+  // Process FROM/JOIN matches
   let match;
-  while ((match = tablePattern.exec(sql)) !== null) {
-    const tableName = match[1].toLowerCase();
+  while ((match = fromJoinPattern.exec(sql)) !== null) {
+    const tableName = normalizeTableName(match[1]);
     let alias = match[2]?.toLowerCase() || null;
     
     // Filter out SQL keywords from being treated as aliases
@@ -676,9 +772,32 @@ export function extractTableReferences(sql: string): Array<{table: string, alias
       alias = null;
     }
     
-    // Only track tenant tables (skip system tables like schema_migrations)
+    // Only track tenant tables
     if (TENANT_TABLES.has(tableName)) {
       refs.push({ table: tableName, alias });
+    }
+  }
+  
+  // Process UPDATE matches
+  while ((match = updatePattern.exec(sql)) !== null) {
+    const tableName = normalizeTableName(match[1]);
+    let alias = match[2]?.toLowerCase() || null;
+    
+    if (alias && SQL_KEYWORDS.has(alias)) {
+      alias = null;
+    }
+    
+    if (TENANT_TABLES.has(tableName)) {
+      refs.push({ table: tableName, alias });
+    }
+  }
+  
+  // Process INSERT matches
+  while ((match = insertPattern.exec(sql)) !== null) {
+    const tableName = normalizeTableName(match[1]);
+    
+    if (TENANT_TABLES.has(tableName)) {
+      refs.push({ table: tableName, alias: null });
     }
   }
   
@@ -688,32 +807,53 @@ export function extractTableReferences(sql: string): Array<{table: string, alias
 /**
  * Check if SQL has a household_key predicate for a specific table/alias.
  * 
- * For single-table queries: accepts unqualified "household_key = $N"
- * For multi-table queries: requires qualified "alias.household_key = $N"
+ * CONTRACT ENFORCEMENT:
+ * - $1 MUST be used for household_key (not $2, $3, etc.)
+ * - Literals are banned for tenant predicates
+ * - For single-table queries: accepts unqualified "household_key = $1"
+ * - For multi-table queries: requires qualified "alias.household_key = $1"
+ * 
+ * @returns true if valid predicate found, false otherwise
  */
 export function hasPredicateForTableOrAlias(sql: string, tableOrAlias: string, isSingleTable: boolean): boolean {
-  const patterns = [];
+  const patterns: RegExp[] = [];
   
   if (isSingleTable) {
-    // Single table: accept unqualified predicates
+    // Single table: accept unqualified predicates, but ONLY $1
     patterns.push(
-      new RegExp(`WHERE\\s+household_key\\s*=\\s*\\$`, 'i'),
-      new RegExp(`AND\\s+household_key\\s*=\\s*\\$`, 'i'),
-      new RegExp(`WHERE\\s+household_key\\s*=\\s*'`, 'i'),
-      new RegExp(`AND\\s+household_key\\s*=\\s*'`, 'i'),
+      new RegExp(`WHERE\\s+household_key\\s*=\\s*\\$1(?!\\d)`, 'i'),
+      new RegExp(`AND\\s+household_key\\s*=\\s*\\$1(?!\\d)`, 'i'),
     );
   }
   
-  // Always check for qualified predicates (alias.household_key or table.household_key)
+  // Always check for qualified predicates (alias.household_key = $1)
   const escaped = tableOrAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   patterns.push(
-    new RegExp(`WHERE\\s+${escaped}\\.household_key\\s*=\\s*\\$`, 'i'),
-    new RegExp(`AND\\s+${escaped}\\.household_key\\s*=\\s*\\$`, 'i'),
-    new RegExp(`WHERE\\s+${escaped}\\.household_key\\s*=\\s*'`, 'i'),
-    new RegExp(`AND\\s+${escaped}\\.household_key\\s*=\\s*'`, 'i'),
+    new RegExp(`WHERE\\s+${escaped}\\.household_key\\s*=\\s*\\$1(?!\\d)`, 'i'),
+    new RegExp(`AND\\s+${escaped}\\.household_key\\s*=\\s*\\$1(?!\\d)`, 'i'),
   );
   
   return patterns.some(p => p.test(sql));
+}
+
+/**
+ * Check if SQL uses wrong parameter index for tenant predicate.
+ * 
+ * CONTRACT: $1 is ALWAYS household_key.
+ * This detects violations like: WHERE de.household_key = $2
+ */
+export function hasWrongParamIndexForTenant(sql: string): boolean {
+  // Match household_key = $N where N is not 1
+  return /household_key\s*=\s*\$([2-9]|\d{2,})/i.test(sql);
+}
+
+/**
+ * Check if SQL uses string literal for tenant predicate.
+ * 
+ * Literals like household_key = 'abc' are banned.
+ */
+export function hasLiteralTenantPredicate(sql: string): boolean {
+  return /household_key\s*=\s*'/i.test(sql);
 }
 
 /**
@@ -807,9 +947,11 @@ export function checkTenantSafety(sql: string): {valid: boolean, missingPredicat
  * For tenant tables, ON CONFLICT MUST include household_key to prevent
  * cross-tenant overwrites.
  * 
- * @returns {valid: boolean, table: string | null, conflictTarget: string | null}
+ * ALSO: ON CONFLICT ON CONSTRAINT is always banned (must use column-based).
+ * 
+ * @returns {valid: boolean, table: string | null, conflictTarget: string | null, reason?: string}
  */
-export function checkOnConflictSafety(sql: string): {valid: boolean, table: string | null, conflictTarget: string | null} {
+export function checkOnConflictSafety(sql: string): {valid: boolean, table: string | null, conflictTarget: string | null, reason?: string} {
   const upperSql = sql.toUpperCase();
   
   // Only check INSERT statements
@@ -817,18 +959,26 @@ export function checkOnConflictSafety(sql: string): {valid: boolean, table: stri
     return { valid: true, table: null, conflictTarget: null };
   }
   
-  // Extract table from INSERT INTO <table>
-  const insertMatch = /INSERT\s+INTO\s+(\w+)/i.exec(sql);
-  if (!insertMatch) {
+  // FIRST: Ban ON CONFLICT ON CONSTRAINT (before any other check)
+  if (/ON\s+CONFLICT\s+ON\s+CONSTRAINT/i.test(sql)) {
+    return { 
+      valid: false, 
+      table: null, 
+      conflictTarget: 'ON CONSTRAINT', 
+      reason: 'ON CONFLICT ON CONSTRAINT is banned; use column-based ON CONFLICT (household_key, ...)' 
+    };
+  }
+  
+  // Extract table from INSERT INTO <table> (handles schema.table and "quoted")
+  const refs = extractTableReferences(sql);
+  const insertRef = refs.find(r => TENANT_TABLES.has(r.table));
+  
+  if (!insertRef) {
+    // Not inserting into a tenant table
     return { valid: true, table: null, conflictTarget: null };
   }
   
-  const tableName = insertMatch[1].toLowerCase();
-  
-  // If not a tenant table, no check needed
-  if (!TENANT_TABLES.has(tableName)) {
-    return { valid: true, table: tableName, conflictTarget: null };
-  }
+  const tableName = insertRef.table;
   
   // Check if ON CONFLICT exists
   const conflictMatch = /ON\s+CONFLICT\s*\(([^)]+)\)/i.exec(sql);

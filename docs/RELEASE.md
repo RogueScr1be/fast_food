@@ -968,15 +968,45 @@ WHERE household_key = $1 AND id = $3
 
 | Pattern | Why Banned |
 |---------|------------|
-| `WHERE household_key = $1` (unqualified with aliases) | Ambiguous in JOINs |
+| `WHERE household_key = $1` (unqualified in multi-table) | Ambiguous in JOINs |
 | `$1 = de.household_key` (reversed) | Non-standard, hard to parse |
+| `WHERE de.household_key = $2` (wrong param) | $1 MUST be household_key |
+| `WHERE de.household_key = 'literal'` | No literals for tenant key |
 | `WHERE de.household_key IN ($1, $2)` | Multi-tenant leak risk |
 | `WHERE de.household_key = $1 OR ...` | Tenant in OR = leak |
 | `ON CONFLICT (id)` on tenant table | Cross-tenant overwrite |
+| `ON CONFLICT ON CONSTRAINT ...` | Banned entirely (use columns) |
 | `UPDATE ... WHERE id = $1` (no household_key) | Cross-tenant mutation |
 | `DELETE FROM tenant_table` | Banned entirely |
 | SQL with `;` (multi-statement) | Injection risk |
 | DDL (`ALTER`, `CREATE`, `DROP`) | Not allowed at runtime |
+
+### Schema/Quote Handling
+
+The contract detects tenant tables even when schema-qualified or quoted:
+
+```sql
+-- All detected as 'receipt_imports':
+FROM receipt_imports ri
+FROM public.receipt_imports ri
+FROM "receipt_imports" ri
+FROM "public"."receipt_imports" ri
+UPDATE public.receipt_imports SET ...
+INSERT INTO "inventory_items" ...
+```
+
+### False Positive Prevention
+
+String literals are stripped before banned token scanning:
+
+```sql
+-- ALLOWED (semicolon/DROP are in string literals):
+SELECT ';' as semi FROM users
+SELECT 'DROP TABLE users' as note FROM users
+
+-- REJECTED (semicolon outside strings):
+SELECT 'ok'; DELETE FROM users
+```
 
 ### Helper Functions
 
