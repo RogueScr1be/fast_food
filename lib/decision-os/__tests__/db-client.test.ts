@@ -51,14 +51,15 @@ describe('Database Client', () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
       
-      const retrieved = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
+      // getDecisionEventById is now (householdKey, id) - household-first
+      const retrieved = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, testEvent.id);
       expect(retrieved).not.toBeNull();
       expect(retrieved?.id).toBe(testEvent.id);
       expect(retrieved?.user_action).toBe('approved');
       expect(retrieved?.notes).toBe('autopilot');
     });
 
-    it('retrieves events by user ID (household-scoped)', async () => {
+    it('retrieves events by household (household-first)', async () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
       await db.insertDecisionEvent({
@@ -67,7 +68,8 @@ describe('Database Client', () => {
         user_action: 'rejected',
       });
 
-      const events = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
+      // getDecisionEvents is now (householdKey, limit) - no userId
+      const events = await db.getDecisionEvents(TEST_HOUSEHOLD_KEY);
       expect(events.length).toBe(2);
     });
 
@@ -75,14 +77,15 @@ describe('Database Client', () => {
       const db = getDb();
       await db.insertDecisionEvent(testEvent);
 
-      const events = await db.getDecisionEventsByContextHash('test-hash', TEST_HOUSEHOLD_KEY);
+      // getDecisionEventsByContextHash is now (householdKey, contextHash) - household-first
+      const events = await db.getDecisionEventsByContextHash(TEST_HOUSEHOLD_KEY, 'test-hash');
       expect(events.length).toBe(1);
       expect(events[0].id).toBe(testEvent.id);
     });
 
     it('returns null for non-existent event', async () => {
       const db = getDb();
-      const event = await db.getDecisionEventById('non-existent', TEST_HOUSEHOLD_KEY);
+      const event = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, 'non-existent');
       expect(event).toBeNull();
     });
 
@@ -91,7 +94,7 @@ describe('Database Client', () => {
       await db.insertDecisionEvent(testEvent);
       
       // Query with different household key - should return null
-      const retrieved = await db.getDecisionEventById(testEvent.id, 'other-household');
+      const retrieved = await db.getDecisionEventById('other-household', testEvent.id);
       expect(retrieved).toBeNull();
     });
 
@@ -107,12 +110,12 @@ describe('Database Client', () => {
       });
 
       // Query for household A - should only get 1 event
-      const eventsA = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
+      const eventsA = await db.getDecisionEvents(TEST_HOUSEHOLD_KEY);
       expect(eventsA.length).toBe(1);
       expect(eventsA[0].id).toBe(testEvent.id);
 
       // Query for household B - should only get 1 event
-      const eventsB = await db.getDecisionEventsByUserId(1, 'other-household');
+      const eventsB = await db.getDecisionEvents('other-household');
       expect(eventsB.length).toBe(1);
       expect(eventsB[0].id).toBe('test-event-other-hh');
     });
@@ -134,17 +137,19 @@ describe('Database Client', () => {
       const db = getDb();
       await db.insertReceiptImport(testReceipt);
       
-      const retrieved = await db.getReceiptImportById(testReceipt.id, TEST_HOUSEHOLD_KEY);
+      // getReceiptImportById is now (householdKey, id) - household-first
+      const retrieved = await db.getReceiptImportById(TEST_HOUSEHOLD_KEY, testReceipt.id);
       expect(retrieved).not.toBeNull();
       expect(retrieved?.status).toBe('received');
     });
 
-    it('updates receipt import status', async () => {
+    it('updates receipt import status (household-scoped)', async () => {
       const db = getDb();
       await db.insertReceiptImport(testReceipt);
-      await db.updateReceiptImportStatus(testReceipt.id, 'parsed');
+      // updateReceiptImportStatus is now (householdKey, id, status) - household-first
+      await db.updateReceiptImportStatus(TEST_HOUSEHOLD_KEY, testReceipt.id, 'parsed');
 
-      const retrieved = await db.getReceiptImportById(testReceipt.id, TEST_HOUSEHOLD_KEY);
+      const retrieved = await db.getReceiptImportById(TEST_HOUSEHOLD_KEY, testReceipt.id);
       expect(retrieved?.status).toBe('parsed');
     });
 
@@ -180,7 +185,8 @@ describe('Database Client', () => {
       const db = getDb();
       await db.upsertInventoryItem(testItem);
       
-      const items = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
+      // getInventoryItems is now (householdKey) - household-first, renamed from getInventoryItemsByHousehold
+      const items = await db.getInventoryItems(TEST_HOUSEHOLD_KEY);
       expect(items.length).toBe(1);
       expect(items[0].item_name).toBe('Chicken');
     });
@@ -194,7 +200,7 @@ describe('Database Client', () => {
         quantity: 5,
       });
 
-      const items = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
+      const items = await db.getInventoryItems(TEST_HOUSEHOLD_KEY);
       expect(items.length).toBe(1);
       expect(items[0].remaining_qty).toBe(5);
     });
@@ -210,12 +216,12 @@ describe('Database Client', () => {
       });
 
       // Query for household A - should only get 1 item
-      const itemsA = await db.getInventoryItemsByHousehold(TEST_HOUSEHOLD_KEY);
+      const itemsA = await db.getInventoryItems(TEST_HOUSEHOLD_KEY);
       expect(itemsA.length).toBe(1);
       expect(itemsA[0].item_name).toBe('Chicken');
 
       // Query for household B - should only get 1 item
-      const itemsB = await db.getInventoryItemsByHousehold('other-household');
+      const itemsB = await db.getInventoryItems('other-household');
       expect(itemsB.length).toBe(1);
       expect(itemsB[0].item_name).toBe('Beef');
     });
@@ -252,7 +258,8 @@ describe('Database Client', () => {
         rejections: 1,
       });
 
-      const score = await db.getTasteMealScore(1, TEST_HOUSEHOLD_KEY, 42);
+      // getTasteMealScore is now (householdKey, mealId) - no userId, household-first
+      const score = await db.getTasteMealScore(TEST_HOUSEHOLD_KEY, 42);
       expect(score).not.toBeNull();
       expect(score?.score).toBe(0.8);
       expect(score?.approvals).toBe(5);
@@ -280,18 +287,78 @@ describe('Database Client', () => {
       });
 
       // Query for household A - should get 0.8 score
-      const scoreA = await db.getTasteMealScore(1, TEST_HOUSEHOLD_KEY, 42);
+      const scoreA = await db.getTasteMealScore(TEST_HOUSEHOLD_KEY, 42);
       expect(scoreA).not.toBeNull();
       expect(scoreA?.score).toBe(0.8);
 
       // Query for household B - should get 0.2 score
-      const scoreB = await db.getTasteMealScore(1, 'other-household', 42);
+      const scoreB = await db.getTasteMealScore('other-household', 42);
       expect(scoreB).not.toBeNull();
       expect(scoreB?.score).toBe(0.2);
 
       // Query for non-existent household - should return null
-      const scoreC = await db.getTasteMealScore(1, 'non-existent-hh', 42);
+      const scoreC = await db.getTasteMealScore('non-existent-hh', 42);
       expect(scoreC).toBeNull();
+    });
+
+    it('upsert does not overwrite across households (cross-tenant protection)', async () => {
+      const db = getDb();
+      
+      // Insert score in household A
+      await db.upsertTasteMealScore({
+        id: 'score-hh-a-upsert',
+        user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
+        meal_id: 99,
+        score: 0.9,
+        approvals: 10,
+        rejections: 1,
+      });
+      
+      // Attempt to "upsert" in household B with same meal_id
+      // This should create a separate record, not overwrite household A
+      await db.upsertTasteMealScore({
+        id: 'score-hh-b-upsert',
+        user_profile_id: 1,
+        household_key: 'other-household',
+        meal_id: 99,
+        score: 0.1,
+        approvals: 1,
+        rejections: 10,
+      });
+      
+      // Verify household A still has its original score
+      const scoreA = await db.getTasteMealScore(TEST_HOUSEHOLD_KEY, 99);
+      expect(scoreA).not.toBeNull();
+      expect(scoreA?.score).toBe(0.9);
+      expect(scoreA?.approvals).toBe(10);
+      
+      // Verify household B has its own score
+      const scoreB = await db.getTasteMealScore('other-household', 99);
+      expect(scoreB).not.toBeNull();
+      expect(scoreB?.score).toBe(0.1);
+      expect(scoreB?.approvals).toBe(1);
+    });
+
+    it('updateReceiptImportStatus only updates within household (tenant isolation)', async () => {
+      const db = getDb();
+      
+      // Insert receipt in household A
+      await db.insertReceiptImport({
+        id: 'receipt-tenant-test',
+        user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
+        created_at: new Date().toISOString(),
+        status: 'received',
+      });
+      
+      // Try to update with wrong household key - should NOT update
+      await db.updateReceiptImportStatus('other-household', 'receipt-tenant-test', 'parsed');
+      
+      // Verify original receipt is unchanged
+      const receipt = await db.getReceiptImportById(TEST_HOUSEHOLD_KEY, 'receipt-tenant-test');
+      expect(receipt).not.toBeNull();
+      expect(receipt?.status).toBe('received'); // Should NOT be 'parsed'
     });
   });
 
@@ -314,7 +381,7 @@ describe('Database Client', () => {
 
       await clearDb();
 
-      const events = await db.getDecisionEventsByUserId(1, TEST_HOUSEHOLD_KEY);
+      const events = await db.getDecisionEvents(TEST_HOUSEHOLD_KEY);
       expect(events.length).toBe(0);
     });
   });
@@ -356,11 +423,11 @@ describe('Database Client', () => {
       const db = getDb();
       setDbReadonly(true);
       
-      // These should work in readonly mode
-      const events = await db.getDecisionEventsByUserId(1);
+      // These should work in readonly mode (household-first methods)
+      const events = await db.getDecisionEvents(TEST_HOUSEHOLD_KEY);
       expect(events).toEqual([]);
       
-      const event = await db.getDecisionEventById('non-existent');
+      const event = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, 'non-existent');
       expect(event).toBeNull();
     });
 
@@ -411,7 +478,8 @@ describe('Database Client', () => {
       setDbReadonly(true);
       
       try {
-        await db.updateReceiptImportStatus('receipt-update-test', 'parsed');
+        // updateReceiptImportStatus is now (householdKey, id, status) - household-first
+        await db.updateReceiptImportStatus(TEST_HOUSEHOLD_KEY, 'receipt-update-test', 'parsed');
         fail('Expected readonly_mode error');
       } catch (error) {
         expect(isReadonlyModeError(error)).toBe(true);
@@ -492,7 +560,8 @@ describe('Database Client', () => {
       // Should work now
       await db.insertDecisionEvent(testEvent);
       
-      const event = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
+      // getDecisionEventById is now (householdKey, id) - household-first
+      const event = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, testEvent.id);
       expect(event).not.toBeNull();
       expect(event?.id).toBe(testEvent.id);
     });
@@ -506,8 +575,8 @@ describe('Database Client', () => {
       // Enable readonly
       setDbReadonly(true);
       
-      // Should still be able to read (household-scoped)
-      const event = await db.getDecisionEventById(testEvent.id, TEST_HOUSEHOLD_KEY);
+      // Should still be able to read (household-scoped, household-first)
+      const event = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, testEvent.id);
       expect(event).not.toBeNull();
       expect(event?.id).toBe(testEvent.id);
     });

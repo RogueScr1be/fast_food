@@ -95,9 +95,9 @@ jobs:
           npx ts-node scripts/db-verify-staging.ts
           echo "PASS schema_verified"
 
-      - name: DB write smoke test
+      - name: DB write smoke test + household isolation
         run: |
-          # Simple test: Insert a user_profile, decision_event, read it back
+          # Test: Insert data, read it back, verify household isolation
           npx ts-node -e "
           const { Client } = require('pg');
           async function test() {
@@ -112,33 +112,83 @@ jobs:
             \`);
             console.log('PASS insert_user_profile');
             
-            // Insert household
+            // Insert household A
             await client.query(\`
               INSERT INTO households (id, household_key, created_at)
-              VALUES ('test-hh-id', 'test-household-key', NOW())
+              VALUES ('test-hh-id-a', 'household-a', NOW())
               ON CONFLICT (household_key) DO NOTHING
             \`);
-            console.log('PASS insert_household');
+            // Insert household B
+            await client.query(\`
+              INSERT INTO households (id, household_key, created_at)
+              VALUES ('test-hh-id-b', 'household-b', NOW())
+              ON CONFLICT (household_key) DO NOTHING
+            \`);
+            console.log('PASS insert_households');
             
-            // Insert decision event with canonical columns
+            // Insert decision event in household A
             await client.query(\`
               INSERT INTO decision_events (
                 id, user_profile_id, household_key, decided_at, actioned_at,
                 user_action, decision_type, notes, decision_payload, context_hash
               ) VALUES (
-                'test-event-id', 999, 'test-household-key', NOW(), NOW(),
-                'approved', 'meal_decision', 'test', '{}', 'test-hash'
+                'test-event-hh-a', 999, 'household-a', NOW(), NOW(),
+                'approved', 'meal_decision', 'test', '{}', 'test-hash-a'
               )
             \`);
-            console.log('PASS insert_decision_event');
+            console.log('PASS insert_decision_event_hh_a');
             
-            // Read it back
-            const res = await client.query('SELECT * FROM decision_events WHERE id = \$1', ['test-event-id']);
-            if (res.rows.length === 1 && res.rows[0].household_key === 'test-household-key') {
-              console.log('PASS read_decision_event');
+            // Insert decision event in household B
+            await client.query(\`
+              INSERT INTO decision_events (
+                id, user_profile_id, household_key, decided_at, actioned_at,
+                user_action, decision_type, notes, decision_payload, context_hash
+              ) VALUES (
+                'test-event-hh-b', 999, 'household-b', NOW(), NOW(),
+                'rejected', 'meal_decision', 'test', '{}', 'test-hash-b'
+              )
+            \`);
+            console.log('PASS insert_decision_event_hh_b');
+            
+            // Household-scoped read: household A only gets its event
+            const resA = await client.query(
+              'SELECT * FROM decision_events WHERE household_key = \$1',
+              ['household-a']
+            );
+            if (resA.rows.length === 1 && resA.rows[0].id === 'test-event-hh-a') {
+              console.log('PASS household_isolation_read_a');
             } else {
-              console.log('FAIL read_decision_event');
+              console.log('FAIL household_isolation_read_a - expected 1 row, got', resA.rows.length);
               process.exit(1);
+            }
+            
+            // Household-scoped read: household B only gets its event
+            const resB = await client.query(
+              'SELECT * FROM decision_events WHERE household_key = \$1',
+              ['household-b']
+            );
+            if (resB.rows.length === 1 && resB.rows[0].id === 'test-event-hh-b') {
+              console.log('PASS household_isolation_read_b');
+            } else {
+              console.log('FAIL household_isolation_read_b - expected 1 row, got', resB.rows.length);
+              process.exit(1);
+            }
+            
+            // Verify NOT NULL constraint on household_key
+            try {
+              await client.query(\`
+                INSERT INTO decision_events (
+                  id, user_profile_id, household_key, decided_at, actioned_at,
+                  user_action, decision_type, decision_payload
+                ) VALUES (
+                  'test-null-hh', 999, NULL, NOW(), NOW(),
+                  'approved', 'meal_decision', '{}'
+                )
+              \`);
+              console.log('FAIL household_key_not_null - should have rejected NULL');
+              process.exit(1);
+            } catch (e) {
+              console.log('PASS household_key_not_null - rejected NULL as expected');
             }
             
             await client.end();

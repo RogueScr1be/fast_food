@@ -95,9 +95,9 @@ ON taste_meal_scores (household_key, meal_id);
 CREATE INDEX IF NOT EXISTS idx_receipt_imports_household 
 ON receipt_imports (household_key, created_at DESC);
 
--- inventory_items: household-based queries
+-- inventory_items: household-based queries sorted by time (for freshness)
 CREATE INDEX IF NOT EXISTS idx_inventory_items_household 
-ON inventory_items (household_key, item_name);
+ON inventory_items (household_key, last_seen_at DESC);
 
 -- =============================================================================
 -- PART D: COMMENTS

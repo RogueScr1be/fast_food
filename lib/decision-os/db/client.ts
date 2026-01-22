@@ -35,26 +35,28 @@ export interface DbAdapter {
   
   // Decision events (APPEND-ONLY - no update/delete methods)
   // ALL reads are household-scoped for tenant isolation
+  // householdKey is ALWAYS the primary partition key
   insertDecisionEvent(event: DecisionEventInsert): Promise<void>;
-  getDecisionEventsByUserId(userId: number, householdKey: string, limit?: number): Promise<DecisionEvent[]>;
-  getDecisionEventById(id: string, householdKey: string): Promise<DecisionEvent | null>;
-  getDecisionEventsByContextHash(contextHash: string, householdKey: string): Promise<DecisionEvent[]>;
+  getDecisionEvents(householdKey: string, limit?: number): Promise<DecisionEvent[]>;
+  getDecisionEventById(householdKey: string, id: string): Promise<DecisionEvent | null>;
+  getDecisionEventsByContextHash(householdKey: string, contextHash: string): Promise<DecisionEvent[]>;
   
-  // Receipt imports (household-scoped reads)
+  // Receipt imports (household-scoped reads + updates)
   insertReceiptImport(record: ReceiptImportRecord): Promise<void>;
-  updateReceiptImportStatus(id: string, status: string, errorMessage?: string): Promise<void>;
-  getReceiptImportById(id: string, householdKey: string): Promise<ReceiptImportRecord | null>;
+  updateReceiptImportStatus(householdKey: string, id: string, status: string, errorMessage?: string): Promise<void>;
+  getReceiptImportById(householdKey: string, id: string): Promise<ReceiptImportRecord | null>;
   getReceiptImportByImageHash(householdKey: string, imageHash: string): Promise<ReceiptImportRecord | null>;
   
   // Inventory (household-scoped reads)
   upsertInventoryItem(item: InventoryItem): Promise<void>;
-  getInventoryItemsByHousehold(householdKey: string): Promise<InventoryItem[]>;
+  getInventoryItems(householdKey: string): Promise<InventoryItem[]>;
   
   // Taste signals
   insertTasteSignal(signal: TasteSignal): Promise<void>;
   
   // Taste meal scores (household-scoped reads)
-  getTasteMealScore(userId: number, householdKey: string, mealId: number): Promise<TasteMealScore | null>;
+  // householdKey is primary, mealId is secondary - NO userId in interface
+  getTasteMealScore(householdKey: string, mealId: number): Promise<TasteMealScore | null>;
   upsertTasteMealScore(score: TasteMealScore): Promise<void>;
   
   // Health check
@@ -233,14 +235,16 @@ class InMemoryAdapter implements DbAdapter {
     });
   }
   
-  async getDecisionEventsByUserId(userId: number, householdKey: string, limit = 100): Promise<DecisionEvent[]> {
+  // Household-first: householdKey is the partition key
+  async getDecisionEvents(householdKey: string, limit = 100): Promise<DecisionEvent[]> {
     return Array.from(this.decisionEvents.values())
-      .filter(e => e.user_profile_id === userId && e.household_key === householdKey)
+      .filter(e => e.household_key === householdKey)
       .sort((a, b) => new Date(b.actioned_at || b.decided_at).getTime() - new Date(a.actioned_at || a.decided_at).getTime())
       .slice(0, limit);
   }
   
-  async getDecisionEventById(id: string, householdKey: string): Promise<DecisionEvent | null> {
+  // Household-first: householdKey is always first param
+  async getDecisionEventById(householdKey: string, id: string): Promise<DecisionEvent | null> {
     const event = this.decisionEvents.get(id);
     // Household isolation: only return if household matches
     if (event && event.household_key === householdKey) {
@@ -249,7 +253,8 @@ class InMemoryAdapter implements DbAdapter {
     return null;
   }
   
-  async getDecisionEventsByContextHash(contextHash: string, householdKey: string): Promise<DecisionEvent[]> {
+  // Household-first: householdKey is always first param
+  async getDecisionEventsByContextHash(householdKey: string, contextHash: string): Promise<DecisionEvent[]> {
     return Array.from(this.decisionEvents.values())
       .filter(e => e.context_hash === contextHash && e.household_key === householdKey);
   }
@@ -259,10 +264,12 @@ class InMemoryAdapter implements DbAdapter {
     this.receiptImports.set(record.id, record);
   }
   
-  async updateReceiptImportStatus(id: string, status: string, errorMessage?: string): Promise<void> {
+  // Household-scoped update: requires householdKey for tenant isolation
+  async updateReceiptImportStatus(householdKey: string, id: string, status: string, errorMessage?: string): Promise<void> {
     this.checkReadonly();
     const existing = this.receiptImports.get(id);
-    if (existing) {
+    // Only update if household matches (tenant isolation)
+    if (existing && existing.household_key === householdKey) {
       existing.status = status as ReceiptImportRecord['status'];
       if (errorMessage) {
         existing.error_message = errorMessage;
@@ -270,7 +277,8 @@ class InMemoryAdapter implements DbAdapter {
     }
   }
   
-  async getReceiptImportById(id: string, householdKey: string): Promise<ReceiptImportRecord | null> {
+  // Household-first: householdKey is always first param
+  async getReceiptImportById(householdKey: string, id: string): Promise<ReceiptImportRecord | null> {
     const record = this.receiptImports.get(id);
     // Household isolation: only return if household matches
     if (record && record.household_key === householdKey) {
@@ -289,7 +297,8 @@ class InMemoryAdapter implements DbAdapter {
     this.inventoryItems.set(item.id, item);
   }
   
-  async getInventoryItemsByHousehold(householdKey: string): Promise<InventoryItem[]> {
+  // Household-first: renamed from getInventoryItemsByHousehold
+  async getInventoryItems(householdKey: string): Promise<InventoryItem[]> {
     return Array.from(this.inventoryItems.values())
       .filter(i => i.household_key === householdKey)
       .sort((a, b) => new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime());
@@ -300,8 +309,8 @@ class InMemoryAdapter implements DbAdapter {
     this.tasteSignals.set(signal.id, signal);
   }
   
-  async getTasteMealScore(userId: number, householdKey: string, mealId: number): Promise<TasteMealScore | null> {
-    // Key is household-scoped: ${householdKey}-${mealId}
+  // Household-first: householdKey is the partition key, no userId in signature
+  async getTasteMealScore(householdKey: string, mealId: number): Promise<TasteMealScore | null> {
     const key = `${householdKey}-${mealId}`;
     const score = this.tasteMealScores.get(key);
     if (score) {
@@ -587,28 +596,31 @@ class PostgresAdapter implements DbAdapter {
     );
   }
   
-  async getDecisionEventsByUserId(userId: number, householdKey: string, limit = 100): Promise<DecisionEvent[]> {
+  // Household-first: householdKey is the partition key
+  async getDecisionEvents(householdKey: string, limit = 100): Promise<DecisionEvent[]> {
     return this.query<DecisionEvent>(
       `SELECT * FROM decision_events 
-       WHERE user_profile_id = $1 AND household_key = $2 
+       WHERE household_key = $1 
        ORDER BY actioned_at DESC NULLS LAST 
-       LIMIT $3`,
-      [userId, householdKey, limit]
+       LIMIT $2`,
+      [householdKey, limit]
     );
   }
   
-  async getDecisionEventById(id: string, householdKey: string): Promise<DecisionEvent | null> {
+  // Household-first: householdKey is always first param
+  async getDecisionEventById(householdKey: string, id: string): Promise<DecisionEvent | null> {
     const rows = await this.query<DecisionEvent>(
-      `SELECT * FROM decision_events WHERE id = $1 AND household_key = $2 LIMIT 1`,
-      [id, householdKey]
+      `SELECT * FROM decision_events WHERE household_key = $1 AND id = $2 LIMIT 1`,
+      [householdKey, id]
     );
     return rows[0] || null;
   }
   
-  async getDecisionEventsByContextHash(contextHash: string, householdKey: string): Promise<DecisionEvent[]> {
+  // Household-first: householdKey is always first param
+  async getDecisionEventsByContextHash(householdKey: string, contextHash: string): Promise<DecisionEvent[]> {
     return this.query<DecisionEvent>(
-      `SELECT * FROM decision_events WHERE context_hash = $1 AND household_key = $2`,
-      [contextHash, householdKey]
+      `SELECT * FROM decision_events WHERE household_key = $1 AND context_hash = $2`,
+      [householdKey, contextHash]
     );
   }
   
@@ -630,17 +642,19 @@ class PostgresAdapter implements DbAdapter {
     );
   }
   
-  async updateReceiptImportStatus(id: string, status: string, errorMessage?: string): Promise<void> {
+  // Household-scoped update: requires householdKey for tenant isolation
+  async updateReceiptImportStatus(householdKey: string, id: string, status: string, errorMessage?: string): Promise<void> {
     await this.query(
-      `UPDATE receipt_imports SET status = $1, error_message = $2 WHERE id = $3`,
-      [status, errorMessage || null, id]
+      `UPDATE receipt_imports SET status = $1, error_message = $2 WHERE household_key = $3 AND id = $4`,
+      [status, errorMessage || null, householdKey, id]
     );
   }
   
-  async getReceiptImportById(id: string, householdKey: string): Promise<ReceiptImportRecord | null> {
+  // Household-first: householdKey is always first param
+  async getReceiptImportById(householdKey: string, id: string): Promise<ReceiptImportRecord | null> {
     const rows = await this.query<ReceiptImportRecord>(
-      `SELECT * FROM receipt_imports WHERE id = $1 AND household_key = $2 LIMIT 1`,
-      [id, householdKey]
+      `SELECT * FROM receipt_imports WHERE household_key = $1 AND id = $2 LIMIT 1`,
+      [householdKey, id]
     );
     return rows[0] || null;
   }
@@ -685,7 +699,8 @@ class PostgresAdapter implements DbAdapter {
     );
   }
   
-  async getInventoryItemsByHousehold(householdKey: string): Promise<InventoryItem[]> {
+  // Household-first: renamed from getInventoryItemsByHousehold
+  async getInventoryItems(householdKey: string): Promise<InventoryItem[]> {
     return this.query<InventoryItem>(
       `SELECT * FROM inventory_items WHERE household_key = $1 ORDER BY last_seen_at DESC NULLS LAST`,
       [householdKey]
@@ -710,10 +725,11 @@ class PostgresAdapter implements DbAdapter {
     );
   }
   
-  async getTasteMealScore(userId: number, householdKey: string, mealId: number): Promise<TasteMealScore | null> {
+  // Household-first: householdKey is the partition key, no userId in signature
+  async getTasteMealScore(householdKey: string, mealId: number): Promise<TasteMealScore | null> {
     const rows = await this.query<TasteMealScore>(
-      `SELECT * FROM taste_meal_scores WHERE user_profile_id = $1 AND household_key = $2 AND meal_id = $3 LIMIT 1`,
-      [userId, householdKey, mealId]
+      `SELECT * FROM taste_meal_scores WHERE household_key = $1 AND meal_id = $2 LIMIT 1`,
+      [householdKey, mealId]
     );
     return rows[0] || null;
   }
