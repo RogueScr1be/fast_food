@@ -5,7 +5,7 @@
  * Postgres adapter is tested via integration/smoke tests.
  */
 
-import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, requiresHouseholdKeyButMissing, assertHouseholdScoped } from '../db/client';
+import { getDb, resetDb, clearDb, isRealDb, setDbReadonly, isDbReadonly, isReadonlyModeError, isReadOnlySql, requiresHouseholdKeyButMissing, assertHouseholdScoped, hasHouseholdKeyPredicate } from '../db/client';
 import type { DecisionEventInsert, ReceiptImportRecord, InventoryItem } from '../../../types/decision-os';
 
 describe('Database Client', () => {
@@ -895,6 +895,82 @@ describe('Database Client', () => {
       expect(() => {
         assertHouseholdScoped('SELECT * FROM users WHERE id = $1');
       }).not.toThrow();
+    });
+  });
+
+  describe('hasHouseholdKeyPredicate (strengthened predicate check)', () => {
+    describe('returns true for valid predicates', () => {
+      it('WHERE household_key = $1', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE household_key = $1')).toBe(true);
+      });
+
+      it('AND household_key = $2', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE id = $1 AND household_key = $2')).toBe(true);
+      });
+
+      it('WHERE household_key=$1 (no spaces)', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE household_key=$1')).toBe(true);
+      });
+
+      it("WHERE household_key = 'value'", () => {
+        expect(hasHouseholdKeyPredicate("SELECT * FROM decision_events WHERE household_key = 'hh-123'")).toBe(true);
+      });
+
+      it('case insensitive', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE HOUSEHOLD_KEY = $1')).toBe(true);
+      });
+    });
+
+    describe('returns false for invalid predicates (substring only)', () => {
+      it('just contains household_key as column name', () => {
+        expect(hasHouseholdKeyPredicate('SELECT household_key FROM decision_events WHERE id = $1')).toBe(false);
+      });
+
+      it('household_key in ORDER BY', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE id = $1 ORDER BY household_key')).toBe(false);
+      });
+
+      it('household_key in SELECT list only', () => {
+        expect(hasHouseholdKeyPredicate('SELECT id, household_key FROM decision_events WHERE id = $1')).toBe(false);
+      });
+
+      it('no household_key at all', () => {
+        expect(hasHouseholdKeyPredicate('SELECT * FROM decision_events WHERE user_profile_id = $1')).toBe(false);
+      });
+    });
+  });
+
+  describe('guard wired into adapter (integration)', () => {
+    beforeEach(async () => {
+      resetDb();
+      await clearDb();
+    });
+
+    it('adapter methods work with valid household-scoped queries', async () => {
+      const db = getDb();
+      const TEST_HOUSEHOLD_KEY = 'test-hh-guard';
+      
+      // Insert test data
+      await db.insertDecisionEvent({
+        id: 'guard-test-event',
+        user_profile_id: 1,
+        household_key: TEST_HOUSEHOLD_KEY,
+        decided_at: new Date().toISOString(),
+        actioned_at: new Date().toISOString(),
+        user_action: 'approved',
+        decision_payload: {},
+        decision_type: 'meal_decision',
+      });
+      
+      // All these should work (valid household-scoped queries)
+      const events = await db.getDecisionEvents(TEST_HOUSEHOLD_KEY, 10);
+      expect(events.length).toBe(1);
+      
+      const event = await db.getDecisionEventById(TEST_HOUSEHOLD_KEY, 'guard-test-event');
+      expect(event).not.toBeNull();
+      
+      const byHash = await db.getDecisionEventsByContextHash(TEST_HOUSEHOLD_KEY, 'some-hash');
+      expect(byHash).toBeDefined();
     });
   });
 });

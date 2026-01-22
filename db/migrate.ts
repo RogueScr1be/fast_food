@@ -287,17 +287,25 @@ export async function verifyRequiredColumns(
 /**
  * Required column types for critical columns.
  * Map of "table.column" -> expected type (lowercase).
+ * 
+ * ALL tenant tables must have household_key as TEXT type.
  */
 export const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
+  // Runtime infrastructure
   ['runtime_flags.enabled', 'boolean'],
   ['runtime_flags.key', 'text'],
   ['runtime_metrics_daily.count', 'bigint'],
-  ['decision_events.user_action', 'text'],
-  ['decision_events.household_key', 'text'],
   ['runtime_deployments_log.env', 'text'],
   ['runtime_deployments_log.deployment_url', 'text'],
   ['runtime_deployments_log.git_sha', 'text'],
   ['runtime_deployments_log.run_id', 'text'],
+  // Tenant tables - household_key MUST be TEXT
+  ['decision_events.user_action', 'text'],
+  ['decision_events.household_key', 'text'],
+  ['taste_signals.household_key', 'text'],
+  ['taste_meal_scores.household_key', 'text'],
+  ['inventory_items.household_key', 'text'],
+  ['receipt_imports.household_key', 'text'],
 ]);
 
 /**

@@ -523,15 +523,21 @@ describe('Migration Logic', () => {
 
     it('passes when all required column types match', async () => {
       const columnTypes: Record<string, string> = {
+        // Runtime infrastructure
         'runtime_flags.enabled': 'boolean',
         'runtime_flags.key': 'text',
         'runtime_metrics_daily.count': 'bigint',
-        'decision_events.user_action': 'text',
-        'decision_events.household_key': 'text',
         'runtime_deployments_log.env': 'text',
         'runtime_deployments_log.deployment_url': 'text',
         'runtime_deployments_log.git_sha': 'text',
         'runtime_deployments_log.run_id': 'text',
+        // Tenant tables - household_key MUST be TEXT
+        'decision_events.user_action': 'text',
+        'decision_events.household_key': 'text',
+        'taste_signals.household_key': 'text',
+        'taste_meal_scores.household_key': 'text',
+        'inventory_items.household_key': 'text',
+        'receipt_imports.household_key': 'text',
       };
       const client = new TypeVerifyMockClient(columnTypes);
 
@@ -544,15 +550,21 @@ describe('Migration Logic', () => {
 
     it('fails when a column type mismatches', async () => {
       const columnTypes: Record<string, string> = {
+        // Runtime infrastructure
         'runtime_flags.enabled': 'text', // Should be boolean
         'runtime_flags.key': 'text',
         'runtime_metrics_daily.count': 'bigint',
-        'decision_events.user_action': 'text',
-        'decision_events.household_key': 'text',
         'runtime_deployments_log.env': 'text',
         'runtime_deployments_log.deployment_url': 'text',
         'runtime_deployments_log.git_sha': 'text',
         'runtime_deployments_log.run_id': 'text',
+        // Tenant tables
+        'decision_events.user_action': 'text',
+        'decision_events.household_key': 'text',
+        'taste_signals.household_key': 'text',
+        'taste_meal_scores.household_key': 'text',
+        'inventory_items.household_key': 'text',
+        'receipt_imports.household_key': 'text',
       };
       const client = new TypeVerifyMockClient(columnTypes);
 

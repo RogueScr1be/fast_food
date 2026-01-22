@@ -143,6 +143,7 @@ class InMemoryAdapter implements DbAdapter {
    * Generic query support for InMemory adapter.
    * Implements a subset of SQL needed for auth operations.
    * Respects readonly mode for write operations.
+   * Also enforces tenant isolation via assertHouseholdScoped.
    */
   async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const normalizedSql = sql.toLowerCase().trim();
@@ -154,6 +155,10 @@ class InMemoryAdapter implements DbAdapter {
     if (this._readonlyMode && isWriteOp) {
       throw new Error('readonly_mode');
     }
+    
+    // TENANT ISOLATION: Assert household_key predicate for SELECT from tenant tables
+    // This is a runtime guard against cross-tenant data leakage
+    assertHouseholdScoped(sql);
     
     // SELECT id FROM user_profiles WHERE auth_user_id = $1
     if (normalizedSql.includes('select') && normalizedSql.includes('user_profiles') && normalizedSql.includes('auth_user_id')) {
@@ -468,19 +473,48 @@ const HOUSEHOLD_SCOPED_TABLES = [
 ];
 
 /**
- * Check if a SQL query requires household_key filter but is missing it.
+ * Check if a SQL query has a proper household_key predicate (not just substring).
+ * Looks for patterns like:
+ *   - WHERE household_key = $1
+ *   - AND household_key = $2
+ *   - WHERE household_key=$1 (no spaces)
+ * 
+ * @param sql - SQL statement to check
+ * @returns true if the query has a proper household_key predicate
+ */
+export function hasHouseholdKeyPredicate(sql: string): boolean {
+  // Check for proper predicate patterns:
+  // - WHERE household_key = or WHERE household_key=
+  // - AND household_key = or AND household_key=
+  // Must be followed by a parameter placeholder ($N) or a value
+  const predicatePatterns = [
+    /WHERE\s+household_key\s*=\s*\$/i,    // WHERE household_key = $1
+    /AND\s+household_key\s*=\s*\$/i,      // AND household_key = $2
+    /WHERE\s+household_key\s*=\s*'/i,     // WHERE household_key = 'value'
+    /AND\s+household_key\s*=\s*'/i,       // AND household_key = 'value'
+  ];
+  
+  return predicatePatterns.some(pattern => pattern.test(sql));
+}
+
+/**
+ * Check if a SQL query requires household_key predicate but is missing it.
+ * 
+ * STRENGTHENED: Requires actual predicate pattern (WHERE/AND household_key = $N),
+ * not just substring match on 'household_key'.
  * 
  * This is a belt-and-suspenders guard to catch tenant isolation bugs.
  * Only applies to SELECT queries from household-scoped tables.
  * 
  * @param sql - SQL statement to check
- * @returns true if the query requires household_key but doesn't have it
+ * @returns true if the query requires household_key but doesn't have it as proper predicate
  */
 export function requiresHouseholdKeyButMissing(sql: string): boolean {
   const upperSql = sql.toUpperCase();
   
-  // Only check SELECT queries
-  if (!upperSql.trimStart().startsWith('SELECT') && !upperSql.trimStart().startsWith('WITH')) {
+  // Only check SELECT/WITH queries (reads)
+  const trimmed = upperSql.trimStart();
+  if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
     return false;
   }
   
@@ -489,9 +523,9 @@ export function requiresHouseholdKeyButMissing(sql: string): boolean {
     const tableUpper = table.toUpperCase();
     // Check for FROM <table> or JOIN <table> patterns
     if (upperSql.includes(`FROM ${tableUpper}`) || upperSql.includes(`JOIN ${tableUpper}`)) {
-      // Must contain household_key in WHERE clause
-      if (!upperSql.includes('HOUSEHOLD_KEY')) {
-        return true; // Missing household_key filter!
+      // STRENGTHENED: Must have a proper predicate, not just contain 'household_key'
+      if (!hasHouseholdKeyPredicate(sql)) {
+        return true; // Missing household_key predicate!
       }
     }
   }
@@ -500,15 +534,17 @@ export function requiresHouseholdKeyButMissing(sql: string): boolean {
 }
 
 /**
- * Assert that a SQL query has proper household_key filter if reading from tenant tables.
+ * Assert that a SQL query has proper household_key predicate if reading from tenant tables.
  * Throws if tenant isolation would be violated.
  * 
+ * This is called automatically by PostgresAdapter.query() for SELECT statements.
+ * 
  * @param sql - SQL statement to check
- * @throws Error if household_key is required but missing
+ * @throws Error if household_key predicate is required but missing
  */
 export function assertHouseholdScoped(sql: string): void {
   if (requiresHouseholdKeyButMissing(sql)) {
-    throw new Error('household_key_missing: SELECT from tenant table must include household_key filter');
+    throw new Error('household_key_missing: SELECT from tenant table must include household_key predicate (WHERE/AND household_key = $N)');
   }
 }
 
@@ -549,6 +585,10 @@ class PostgresAdapter implements DbAdapter {
     if (this._readonlyMode && isWriteStatement(sql)) {
       throw new Error('readonly_mode');
     }
+    
+    // TENANT ISOLATION: Assert household_key predicate for SELECT from tenant tables
+    // This is a runtime guard against cross-tenant data leakage
+    assertHouseholdScoped(sql);
     
     // Dynamic import to avoid bundling pg in client code
     try {
