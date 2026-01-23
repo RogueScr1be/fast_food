@@ -17,6 +17,8 @@ import {
   satisfiesConstraints,
   sortCandidates,
   buildContextFromIntent,
+  passesTimePressureGate,
+  calculateTimePressure,
 } from '../arbiter';
 import type {
   ArbiterInput,
@@ -461,5 +463,101 @@ describe('buildContextFromIntent', () => {
     );
     
     expect(context.timeCategory).toBe('dinner');
+  });
+  
+  // Time Pressure Tests (Phase 7)
+  it('sets timePressure to "high" at 18:00 or later', () => {
+    const context = buildContextFromIntent(
+      { selected: [] },
+      2000,
+      18 // 6pm
+    );
+    
+    expect(context.timePressure).toBe('high');
+  });
+  
+  it('sets timePressure to "normal" before 18:00', () => {
+    const context = buildContextFromIntent(
+      { selected: [] },
+      2000,
+      17 // 5pm
+    );
+    
+    expect(context.timePressure).toBe('normal');
+  });
+  
+  it('sets timePressure to "high" at 19:00', () => {
+    const context = buildContextFromIntent(
+      { selected: [] },
+      2000,
+      19 // 7pm
+    );
+    
+    expect(context.timePressure).toBe('high');
+  });
+});
+
+// =============================================================================
+// TIME PRESSURE GATE TESTS (Phase 7)
+// =============================================================================
+
+describe('Time Pressure Gate', () => {
+  it('normal pressure allows all meals', () => {
+    const meal = createMeal({ prep_time_minutes: 45, difficulty: 'hard' });
+    expect(passesTimePressureGate(meal, 'normal')).toBe(true);
+  });
+  
+  it('undefined pressure allows all meals', () => {
+    const meal = createMeal({ prep_time_minutes: 45, difficulty: 'hard' });
+    expect(passesTimePressureGate(meal, undefined)).toBe(true);
+  });
+  
+  it('high pressure discards meals with prep > 25 min', () => {
+    const longPrepMeal = createMeal({ prep_time_minutes: 30 });
+    expect(passesTimePressureGate(longPrepMeal, 'high')).toBe(false);
+  });
+  
+  it('high pressure allows meals with prep <= 25 min', () => {
+    const shortPrepMeal = createMeal({ prep_time_minutes: 25, difficulty: 'medium' });
+    expect(passesTimePressureGate(shortPrepMeal, 'high')).toBe(true);
+  });
+  
+  it('high pressure discards hard difficulty meals', () => {
+    const hardMeal = createMeal({ prep_time_minutes: 20, difficulty: 'hard' });
+    expect(passesTimePressureGate(hardMeal, 'high')).toBe(false);
+  });
+  
+  it('high pressure allows easy and medium difficulty meals', () => {
+    const easyMeal = createMeal({ prep_time_minutes: 15, difficulty: 'easy' });
+    const mediumMeal = createMeal({ prep_time_minutes: 20, difficulty: 'medium' });
+    
+    expect(passesTimePressureGate(easyMeal, 'high')).toBe(true);
+    expect(passesTimePressureGate(mediumMeal, 'high')).toBe(true);
+  });
+});
+
+describe('Calculate Time Pressure', () => {
+  it('returns "high" at hour 18', () => {
+    expect(calculateTimePressure(18)).toBe('high');
+  });
+  
+  it('returns "high" at hour 19', () => {
+    expect(calculateTimePressure(19)).toBe('high');
+  });
+  
+  it('returns "high" at hour 23', () => {
+    expect(calculateTimePressure(23)).toBe('high');
+  });
+  
+  it('returns "normal" at hour 17', () => {
+    expect(calculateTimePressure(17)).toBe('normal');
+  });
+  
+  it('returns "normal" at hour 12', () => {
+    expect(calculateTimePressure(12)).toBe('normal');
+  });
+  
+  it('returns "normal" at hour 0', () => {
+    expect(calculateTimePressure(0)).toBe('normal');
   });
 });

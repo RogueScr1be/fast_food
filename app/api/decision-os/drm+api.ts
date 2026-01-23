@@ -51,7 +51,9 @@ import {
   getFallbackConfig,
   getServerTimeHHMM,
   shouldTriggerOnTime,
+  FALLBACK_ROTATION_WINDOW_HOURS,
   type DrmTriggerReason,
+  type LastRescueInfo,
 } from '../../../lib/decision-os/drm/fallback';
 import type { DecisionEventInsert, DrmOutput } from '../../../types/decision-os';
 
@@ -225,6 +227,54 @@ function generateDrmEventId(): string {
   return `drm-evt-${timestamp}-${random}`;
 }
 
+/**
+ * Get last rescue info for fallback rotation.
+ * Queries for most recent rescued session within rotation window.
+ */
+async function getLastRescueInfo(
+  db: ReturnType<typeof getDb>,
+  householdKey: string
+): Promise<LastRescueInfo | null> {
+  try {
+    // Query for most recent rescued session within rotation window
+    const windowHours = FALLBACK_ROTATION_WINDOW_HOURS;
+    const result = await db.query<{
+      decision_payload: Record<string, unknown>;
+      ended_at: string;
+    }>(
+      `SELECT decision_payload, ended_at
+       FROM sessions
+       WHERE household_key = $1
+         AND outcome = 'rescued'
+         AND ended_at >= NOW() - INTERVAL '${windowHours} hours'
+       ORDER BY ended_at DESC
+       LIMIT 1`,
+      [householdKey]
+    );
+    
+    if (!result || result.length === 0) {
+      return null;
+    }
+    
+    const row = result[0];
+    const payload = row.decision_payload;
+    
+    // Extract fallback type from decision payload
+    if (payload && typeof payload.fallback_type === 'string') {
+      return {
+        fallback_type: payload.fallback_type,
+        meal_id: typeof payload.meal_id === 'number' ? payload.meal_id : undefined,
+        timestamp: row.ended_at,
+      };
+    }
+    
+    return null;
+  } catch {
+    // If query fails, proceed without rotation (fail-safe)
+    return null;
+  }
+}
+
 // =============================================================================
 // POST HANDLER
 // =============================================================================
@@ -302,7 +352,8 @@ export async function POST(request: Request): Promise<Response> {
     if (flags.readonlyMode) {
       record('readonly_hit');
       // Execute DRM (no DB write) and return decision
-      const drmDecision = executeDrmOverride('readonly-session', fallbackConfig, actualReason);
+      // No rotation in readonly mode (can't query last rescue)
+      const drmDecision = executeDrmOverride('readonly-session', fallbackConfig, actualReason, null);
       const response = buildResponse(true, actualReason, drmDecision);
       return Response.json(response, { status: 200 });
     }
@@ -321,8 +372,11 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json(response, { status: 200 });
     }
     
-    // Execute DRM override - select first valid fallback (deterministic, no randomness)
-    const drmDecision = executeDrmOverride(session.id, fallbackConfig, actualReason);
+    // Get last rescue info for fallback rotation (prevents "cereal fatigue")
+    const lastRescue = await getLastRescueInfo(db, householdKey);
+    
+    // Execute DRM override - selects fallback with rotation to avoid repetition
+    const drmDecision = executeDrmOverride(session.id, fallbackConfig, actualReason, lastRescue);
     
     if (!drmDecision) {
       // Catastrophic failure - no fallback available

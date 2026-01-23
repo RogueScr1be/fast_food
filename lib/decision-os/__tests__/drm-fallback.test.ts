@@ -16,6 +16,10 @@ import {
   executeDrmOverride,
   getFallbackConfig,
   DEFAULT_FALLBACK_CONFIG,
+  getRotationIndex,
+  wasRecentlyUsed,
+  FALLBACK_ROTATION_WINDOW_HOURS,
+  type LastRescueInfo,
 } from '../drm/fallback';
 import type { FallbackConfig, ArbiterOutput } from '../../../types/decision-os';
 
@@ -299,5 +303,159 @@ describe('DEFAULT_FALLBACK_CONFIG', () => {
   
   it('default rejection threshold is 2', () => {
     expect(DEFAULT_FALLBACK_CONFIG.rejection_threshold).toBe(2);
+  });
+});
+
+// =============================================================================
+// FALLBACK ROTATION TESTS (Phase 7 - Anti-loop for "cereal fatigue")
+// =============================================================================
+
+describe('Fallback Rotation', () => {
+  const config = DEFAULT_FALLBACK_CONFIG;
+  
+  describe('wasRecentlyUsed', () => {
+    it('returns false when no last rescue', () => {
+      expect(wasRecentlyUsed('no_cook', 11, null)).toBe(false);
+    });
+    
+    it('returns false for different fallback type', () => {
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'delivery',
+        meal_id: 100,
+        timestamp: new Date().toISOString(),
+      };
+      expect(wasRecentlyUsed('no_cook', 11, lastRescue)).toBe(false);
+    });
+    
+    it('returns true for same type within window', () => {
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11,
+        timestamp: new Date().toISOString(),
+      };
+      expect(wasRecentlyUsed('no_cook', 11, lastRescue)).toBe(true);
+    });
+    
+    it('returns false when outside rotation window', () => {
+      const oldTimestamp = new Date(
+        Date.now() - (FALLBACK_ROTATION_WINDOW_HOURS + 1) * 60 * 60 * 1000
+      ).toISOString();
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11,
+        timestamp: oldTimestamp,
+      };
+      expect(wasRecentlyUsed('no_cook', 11, lastRescue)).toBe(false);
+    });
+  });
+  
+  describe('getRotationIndex', () => {
+    it('returns 0 when no last rescue', () => {
+      expect(getRotationIndex(config, null)).toBe(0);
+    });
+    
+    it('returns 0 when last rescue outside window', () => {
+      const oldTimestamp = new Date(
+        Date.now() - (FALLBACK_ROTATION_WINDOW_HOURS + 1) * 60 * 60 * 1000
+      ).toISOString();
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11, // Cereal (index 0)
+        timestamp: oldTimestamp,
+      };
+      expect(getRotationIndex(config, lastRescue)).toBe(0);
+    });
+    
+    it('rotates to next fallback when same was used recently', () => {
+      const recentTimestamp = new Date().toISOString();
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11, // Cereal (index 0)
+        timestamp: recentTimestamp,
+      };
+      expect(getRotationIndex(config, lastRescue)).toBe(1); // PB&J
+    });
+    
+    it('rotates circularly (last to first)', () => {
+      const recentTimestamp = new Date().toISOString();
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 13, // Cheese and Crackers (index 2)
+        timestamp: recentTimestamp,
+      };
+      expect(getRotationIndex(config, lastRescue)).toBe(0); // Back to Cereal
+    });
+  });
+  
+  describe('selectFallback with rotation', () => {
+    it('selects first fallback without last rescue', () => {
+      const fallback = selectFallback(config, null);
+      expect(fallback?.meal_id).toBe(11); // Cereal
+    });
+    
+    it('selects rotated fallback when last rescue is recent', () => {
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11,
+        timestamp: new Date().toISOString(),
+      };
+      const fallback = selectFallback(config, lastRescue);
+      expect(fallback?.meal_id).toBe(12); // PB&J
+    });
+    
+    it('cycles through all three fallbacks', () => {
+      // First rescue: Cereal
+      const firstRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11,
+        timestamp: new Date().toISOString(),
+      };
+      
+      // Second rescue: PB&J (because Cereal was just used)
+      const secondFallback = selectFallback(config, firstRescue);
+      expect(secondFallback?.meal_id).toBe(12);
+      
+      // Third rescue: Cheese and Crackers (because PB&J was just used)
+      const secondRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 12,
+        timestamp: new Date().toISOString(),
+      };
+      const thirdFallback = selectFallback(config, secondRescue);
+      expect(thirdFallback?.meal_id).toBe(13);
+      
+      // Fourth rescue: Back to Cereal (circular)
+      const thirdRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 13,
+        timestamp: new Date().toISOString(),
+      };
+      const fourthFallback = selectFallback(config, thirdRescue);
+      expect(fourthFallback?.meal_id).toBe(11);
+    });
+  });
+  
+  describe('executeDrmOverride with rotation', () => {
+    it('respects rotation when lastRescue provided', () => {
+      const lastRescue: LastRescueInfo = {
+        fallback_type: 'no_cook',
+        meal_id: 11,
+        timestamp: new Date().toISOString(),
+      };
+      
+      const decision = executeDrmOverride('test-session', config, 'explicit_done', lastRescue);
+      
+      expect(decision).not.toBeNull();
+      expect(decision?.meal_id).toBe(12); // PB&J (rotated from Cereal)
+      expect(decision?.meal).toBe('PB&J Sandwich');
+    });
+    
+    it('uses first fallback when no lastRescue', () => {
+      const decision = executeDrmOverride('test-session', config, 'explicit_done', null);
+      
+      expect(decision).not.toBeNull();
+      expect(decision?.meal_id).toBe(11); // Cereal (first)
+      expect(decision?.meal).toBe('Cereal with Milk');
+    });
   });
 });

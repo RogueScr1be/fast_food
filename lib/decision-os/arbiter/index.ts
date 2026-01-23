@@ -54,6 +54,19 @@ const QUICK_MEAL_THRESHOLD_MINUTES = 30;
  */
 const DRM_IMMUNITY_HOURS = 72;
 
+/**
+ * Time pressure constants
+ * When time pressure is high (server time >= 18:00):
+ * - Discard meals with prep time > HIGH_PRESSURE_MAX_PREP_MINUTES
+ * - Prefer shortest prep time
+ */
+const HIGH_PRESSURE_MAX_PREP_MINUTES = 25;
+
+/**
+ * Server hour (24h format) when time pressure becomes high
+ */
+const TIME_PRESSURE_THRESHOLD_HOUR = 18; // 6:00 PM
+
 // =============================================================================
 // RULE 1: EXECUTABILITY GATE
 // =============================================================================
@@ -91,6 +104,50 @@ export function isExecutable(
   }
   
   return true;
+}
+
+// =============================================================================
+// RULE 1B: TIME PRESSURE GATE (HIGH PRESSURE MODE)
+// =============================================================================
+
+/**
+ * Check if meal passes time pressure gate.
+ * When time pressure is 'high', discard meals with long prep times.
+ * 
+ * This is a BOOLEAN gate, not weighted scoring.
+ * 
+ * @param meal - Meal to check
+ * @param timePressure - Current time pressure level
+ * @returns true if meal passes the gate (should be kept)
+ */
+export function passesTimePressureGate(
+  meal: Meal,
+  timePressure: 'normal' | 'high' | undefined
+): boolean {
+  // Normal pressure: all meals pass
+  if (!timePressure || timePressure === 'normal') {
+    return true;
+  }
+  
+  // High pressure: discard meals with prep time > threshold
+  if (meal.prep_time_minutes > HIGH_PRESSURE_MAX_PREP_MINUTES) {
+    return false;
+  }
+  
+  // Also gate out "hard" difficulty meals in high pressure
+  if (meal.difficulty === 'hard') {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Calculate time pressure from server time.
+ * Returns 'high' if server hour >= 18:00.
+ */
+export function calculateTimePressure(serverHour: number): 'normal' | 'high' {
+  return serverHour >= TIME_PRESSURE_THRESHOLD_HOUR ? 'high' : 'normal';
 }
 
 // =============================================================================
@@ -335,6 +392,12 @@ export function decide(
       continue;
     }
     
+    // RULE 1B: Time pressure gate (high pressure mode)
+    // Boolean gate: discard long-prep or hard meals when time pressure is high
+    if (!passesTimePressureGate(meal, context.timePressure)) {
+      continue;
+    }
+    
     // RULE 2: Rejection immunity
     if (isRejectionImmune(meal, tasteSignals.rejectedMeals, recentDrmMealIds)) {
       continue;
@@ -438,6 +501,10 @@ export function buildContextFromIntent(
   const energyLevel = intent.energyLevel ?? 
     (intent.selected.includes('no_energy') ? 'low' : 'medium');
   
+  // Calculate time pressure from server hour
+  // High pressure: >= 18:00 (6pm)
+  const timePressure = calculateTimePressure(currentHour);
+  
   return {
     timeCategory,
     wantsCheap,
@@ -445,5 +512,6 @@ export function buildContextFromIntent(
     wantsNoCook,
     energyLevel,
     budgetCeilingCents,
+    timePressure,
   };
 }

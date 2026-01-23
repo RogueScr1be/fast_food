@@ -1013,16 +1013,26 @@ WHERE key = 'ff_mvp_enabled';
 **When to use:** QA panel accidentally accessible to non-testers or causing issues.
 
 ```sql
--- Disable QA panel:
+-- Disable QA panel (staging/prod):
 UPDATE runtime_flags 
 SET enabled = false, updated_at = NOW() 
 WHERE key = 'ff_qa_enabled';
 
--- Re-enable:
+-- Re-enable (staging/prod):
 UPDATE runtime_flags 
 SET enabled = true, updated_at = NOW() 
 WHERE key = 'ff_qa_enabled';
 ```
+
+**Environment Variable Override:**
+
+In addition to DB flag, the client-side also checks `EXPO_PUBLIC_FF_QA_ENABLED`:
+- `development` and `preview` profiles: Set to `"true"` by default in `eas.json`
+- `production` profile: Set to `"false"` by default
+
+Both conditions must be met for QA panel access:
+1. Long-press gesture performed on Tonight screen title
+2. `ff_qa_enabled` DB flag is `true` OR `EXPO_PUBLIC_FF_QA_ENABLED=true`
 
 ---
 

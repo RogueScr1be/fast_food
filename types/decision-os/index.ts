@@ -285,6 +285,8 @@ export interface ArbiterContextInput {
   wantsNoCook: boolean;
   energyLevel: 'low' | 'medium' | 'high';
   budgetCeilingCents: number;
+  /** Time pressure flag - set to 'high' when server time >= 18:00 */
+  timePressure?: 'normal' | 'high';
 }
 
 /**

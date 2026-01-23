@@ -42,6 +42,12 @@ export const DEFAULT_DRM_TIME_THRESHOLD = '18:15';
  */
 export const DEFAULT_DRM_REJECTION_THRESHOLD = 2;
 
+/**
+ * Fallback rotation window in hours.
+ * If the same fallback type was used within this window, rotate to next.
+ */
+export const FALLBACK_ROTATION_WINDOW_HOURS = 72;
+
 // =============================================================================
 // TIME UTILITIES
 // =============================================================================
@@ -134,20 +140,118 @@ export type DrmTriggerReason =
   | 'none';
 
 // =============================================================================
+// FALLBACK ROTATION (anti-loop for "cereal fatigue")
+// =============================================================================
+
+/**
+ * Last rescue information for rotation logic
+ */
+export interface LastRescueInfo {
+  fallback_type: string;
+  meal_id?: number;
+  timestamp: string; // ISO timestamp
+}
+
+/**
+ * Check if a fallback type was recently used (within rotation window)
+ */
+export function wasRecentlyUsed(
+  fallbackType: string,
+  mealId: number | undefined,
+  lastRescue: LastRescueInfo | null,
+  rotationWindowHours: number = FALLBACK_ROTATION_WINDOW_HOURS
+): boolean {
+  if (!lastRescue) {
+    return false;
+  }
+  
+  // Check if same type/meal
+  const sameType = lastRescue.fallback_type === fallbackType;
+  const sameMeal = mealId !== undefined && lastRescue.meal_id === mealId;
+  
+  if (!sameType && !sameMeal) {
+    return false;
+  }
+  
+  // Check if within rotation window
+  const lastTime = new Date(lastRescue.timestamp).getTime();
+  const now = Date.now();
+  const windowMs = rotationWindowHours * 60 * 60 * 1000;
+  
+  return (now - lastTime) < windowMs;
+}
+
+/**
+ * Get rotation index based on last rescue.
+ * Returns 0 if no rotation needed, 1 for next fallback, etc.
+ */
+export function getRotationIndex(
+  config: FallbackConfig,
+  lastRescue: LastRescueInfo | null
+): number {
+  if (!lastRescue || !config.hierarchy || config.hierarchy.length <= 1) {
+    return 0;
+  }
+  
+  // Find the index of the last used fallback
+  const lastIndex = config.hierarchy.findIndex(
+    fb => fb.type === lastRescue.fallback_type && 
+         (lastRescue.meal_id === undefined || fb.meal_id === lastRescue.meal_id)
+  );
+  
+  if (lastIndex === -1) {
+    return 0;
+  }
+  
+  // Check if within rotation window
+  const lastTime = new Date(lastRescue.timestamp).getTime();
+  const now = Date.now();
+  const windowMs = FALLBACK_ROTATION_WINDOW_HOURS * 60 * 60 * 1000;
+  
+  if ((now - lastTime) >= windowMs) {
+    return 0; // Window expired, start from first
+  }
+  
+  // Rotate to next (circular)
+  return (lastIndex + 1) % config.hierarchy.length;
+}
+
+// =============================================================================
 // FALLBACK SELECTION
 // =============================================================================
 
 /**
- * Select first valid fallback from hierarchy.
+ * Select fallback from hierarchy with rotation logic.
+ * 
+ * If same fallback type was used within 72 hours, rotate to next.
  * DRM ignores taste, inventory, cost optimization.
- * First valid = first in array that exists.
+ * 
+ * @param config - Fallback configuration
+ * @param lastRescue - Info about last rescue (for rotation)
+ * @returns Selected fallback or null if none configured
  */
-export function selectFallback(config: FallbackConfig): FallbackOption | null {
+export function selectFallback(
+  config: FallbackConfig,
+  lastRescue?: LastRescueInfo | null
+): FallbackOption | null {
   if (!config.hierarchy || config.hierarchy.length === 0) {
     return null;
   }
   
-  // Return first fallback (DRM doesn't optimize, just selects)
+  // Get rotation index based on last rescue
+  const rotationIndex = getRotationIndex(config, lastRescue ?? null);
+  
+  // Return fallback at rotation index
+  return config.hierarchy[rotationIndex];
+}
+
+/**
+ * Select fallback without rotation (legacy behavior)
+ */
+export function selectFallbackFirst(config: FallbackConfig): FallbackOption | null {
+  if (!config.hierarchy || config.hierarchy.length === 0) {
+    return null;
+  }
   return config.hierarchy[0];
 }
 
@@ -179,18 +283,25 @@ function buildFallbackExecutionPayload(fallback: FallbackOption): ExecutionPaylo
  * 
  * This function:
  * 1. Ignores all optimization
- * 2. Selects first valid fallback
+ * 2. Selects fallback with rotation (to avoid "cereal fatigue")
  * 3. Returns DRM output immediately
  * 
  * DRM NEVER asks permission.
+ * 
+ * @param sessionId - Current session ID
+ * @param config - Fallback configuration
+ * @param reason - Why DRM was triggered
+ * @param lastRescue - Info about last rescue (for rotation, optional)
+ * @returns DRM output or null if no fallbacks configured
  */
 export function executeDrmOverride(
   sessionId: string,
   config: FallbackConfig,
-  reason: DrmTriggerReason
+  reason: DrmTriggerReason,
+  lastRescue?: LastRescueInfo | null
 ): DrmOutput | null {
-  // Select first fallback (no optimization)
-  const fallback = selectFallback(config);
+  // Select fallback with rotation (prevents "cereal fatigue")
+  const fallback = selectFallback(config, lastRescue);
   
   if (!fallback) {
     // If no fallback configured, return null (catastrophic failure)
