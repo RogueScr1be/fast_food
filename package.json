@@ -35,6 +35,7 @@
     "build:sanity": "npx ts-node scripts/build-sanity.ts",
     "dogfood:report": "npx ts-node scripts/dogfood-report.ts",
     "sessions:prune": "npx ts-node scripts/prune-abandoned-sessions.ts",
+    "staging:healthcheck": "npx ts-node scripts/staging-healthcheck.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "type-check": "tsc --noEmit",
     "eas:build:dev": "eas build --profile development --platform ios",

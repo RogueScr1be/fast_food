@@ -84,6 +84,44 @@ npm run release:testflight
 - [ ] All changes committed
 - [ ] EAS secrets configured
 
+## TestFlight Cut Sequence
+
+**Exact sequence for cutting a TestFlight build:**
+
+```bash
+# Step 1: Run all tests
+npm test
+# Must pass: all 945+ tests
+
+# Step 2: Build configuration sanity check
+npm run build:sanity
+# Must pass: no errors (warnings OK)
+# Verifies:
+#   - EXPO_PUBLIC_FF_QA_ENABLED is false in production
+#   - INTERNAL_METRICS_ENABLED is false in production
+#   - No auth token in production profile
+#   - Bundle ID in allowlist (if configured)
+
+# Step 3: Staging healthcheck (smoke + dogfood report)
+npm run staging:healthcheck
+# Must pass: both smoke tests and metrics report
+# Requires: STAGING_URL and STAGING_AUTH_TOKEN in .env.local or env
+
+# Step 4: Cut the build
+npm run release:testflight
+# Builds + submits to TestFlight in one command
+```
+
+**If any step fails:**
+1. Fix the issue
+2. Start from Step 1 again
+3. Do NOT skip steps even if "nothing changed"
+
+**After submission:**
+1. Wait for Apple processing (10-30 min)
+2. Install TestFlight build
+3. Run post-build verification (see below)
+
 ## Build Profiles
 
 | Profile | Distribution | API URL | Auth Token | Use Case |

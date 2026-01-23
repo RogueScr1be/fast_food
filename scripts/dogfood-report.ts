@@ -12,12 +12,54 @@
  *   STAGING_URL - Base URL for staging API (required)
  *   STAGING_AUTH_TOKEN - JWT token for authenticated requests (optional)
  * 
+ * Dotenv support:
+ *   Create .env.local with STAGING_URL and STAGING_AUTH_TOKEN for local dev.
+ *   The script will automatically load from .env.local if present.
+ * 
  * Red flags (prints warnings):
  *   - median time_to_decision > 180s
  *   - rescue_rate > 40%
  *   - acceptance_rate < 40%
  *   - any day with 0 sessions
  */
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// =============================================================================
+// DOTENV SUPPORT (load .env.local if exists)
+// =============================================================================
+
+function loadEnvFile(): void {
+  const envFiles = ['.env.local', '.env.staging', '.env'];
+  
+  for (const file of envFiles) {
+    const envPath = path.resolve(process.cwd(), file);
+    if (fs.existsSync(envPath)) {
+      console.log(`Loading environment from ${file}...`);
+      const content = fs.readFileSync(envPath, 'utf8');
+      
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        // Skip comments and empty lines
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        
+        const [key, ...valueParts] = trimmed.split('=');
+        if (key && valueParts.length > 0) {
+          const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+          // Only set if not already defined (env vars take precedence)
+          if (!process.env[key]) {
+            process.env[key] = value;
+          }
+        }
+      }
+      return; // Load only first matching file
+    }
+  }
+}
+
+// Load env file at startup
+loadEnvFile();
 
 // =============================================================================
 // CONFIGURATION

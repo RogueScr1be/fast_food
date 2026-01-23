@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
   schedule:
+    # Daily sessions prune: Every day at 02:00 UTC
+    - cron: '0 2 * * *'
     # Weekly metrics prune: Sunday at 03:00 UTC
     - cron: '0 3 * * 0'
 
@@ -611,7 +613,34 @@ jobs:
         run: npm run deploy:provenance:proof
 
   # =============================================================================
-  # JOB: Weekly Metrics Prune (scheduled only)
+  # JOB: Daily Sessions Prune (scheduled only - daily at 02:00 UTC)
+  # Marks pending sessions older than 30 min as abandoned
+  # =============================================================================
+  sessions_prune:
+    name: Daily Sessions Prune
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune abandoned sessions
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          ABANDONED_TTL_MINUTES: '30'
+        run: npm run sessions:prune
+
+  # =============================================================================
+  # JOB: Weekly Metrics Prune (scheduled only - Sunday at 03:00 UTC)
   # Deletes old metrics to prevent unbounded DB growth
   # =============================================================================
   metrics_prune:

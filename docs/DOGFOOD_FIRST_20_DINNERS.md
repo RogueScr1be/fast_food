@@ -211,6 +211,51 @@ After each test, note:
 
 ---
 
+## Running the Dogfood Report
+
+The dogfood report script provides an aggregated view of session metrics directly from staging.
+
+### Quick Start (with .env.local)
+
+1. Create `.env.local` in the project root:
+
+```bash
+STAGING_URL=https://your-staging-url.vercel.app
+STAGING_AUTH_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+2. Run the report:
+
+```bash
+npm run dogfood:report
+```
+
+### Manual Override
+
+You can also pass env vars directly:
+
+```bash
+STAGING_URL=https://your-staging-url.vercel.app STAGING_AUTH_TOKEN=xxx npm run dogfood:report
+```
+
+### What the Report Shows
+
+- **Last 1 Day**: Sessions, acceptance/rescue rates, time-to-decision
+- **Last 7 Days**: Same metrics over a week
+- **Red Flags**: Warnings if thresholds exceeded:
+  - Median time-to-decision > 180s
+  - Rescue rate > 40%
+  - Acceptance rate < 40%
+  - Zero sessions (broken logging)
+
+### Recommended Cadence
+
+- Run daily during active dogfooding
+- Run before each TestFlight cut
+- Run after any significant backend changes
+
+---
+
 ## Contact for Issues
 
 If you encounter a critical issue:

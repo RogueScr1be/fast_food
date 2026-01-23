@@ -24,10 +24,27 @@ interface EasConfig {
   build: {
     [profile: string]: {
       env?: Record<string, string>;
+      ios?: {
+        bundleIdentifier?: string;
+      };
       [key: string]: unknown;
     };
   };
 }
+
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
+
+/**
+ * Allowed bundle identifiers for production builds.
+ * Add your production bundle ID here to prevent accidental mismatches.
+ */
+const ALLOWED_BUNDLE_IDENTIFIERS = [
+  'com.fastfood.app',
+  'com.roguescr1be.fastfood',
+  // Add more as needed
+];
 
 interface CheckResult {
   name: string;
@@ -135,6 +152,38 @@ function checkProfile(config: EasConfig, profileName: string): void {
         log('No auth token in production', false, 'SECURITY: Remove EXPO_PUBLIC_STAGING_AUTH_TOKEN');
       } else {
         log('No auth token in production', true, 'Correct');
+      }
+      
+      // QA panel must be disabled in production
+      const qaEnabled = env.EXPO_PUBLIC_FF_QA_ENABLED;
+      if (qaEnabled === 'false') {
+        log('QA panel disabled in production', true, 'Correct');
+      } else if (qaEnabled === 'true') {
+        log('QA panel disabled in production', false, 'SECURITY: Set EXPO_PUBLIC_FF_QA_ENABLED=false');
+      } else {
+        log('QA panel disabled in production', true, 'Not set - will default to false', true);
+      }
+      
+      // INTERNAL_METRICS_ENABLED must be false in production (unless explicitly allowed)
+      const internalMetrics = env.INTERNAL_METRICS_ENABLED;
+      if (internalMetrics === 'true') {
+        log('Internal metrics disabled in production', false, 'SECURITY: Remove INTERNAL_METRICS_ENABLED or set to false');
+      } else {
+        log('Internal metrics disabled in production', true, 'Correct');
+      }
+      
+      // Bundle identifier check (prevent accidental mismatch)
+      const bundleId = profile.ios?.bundleIdentifier;
+      if (bundleId) {
+        if (ALLOWED_BUNDLE_IDENTIFIERS.length === 0) {
+          log('Bundle identifier configured', true, `${bundleId} (no allowlist configured)`, true);
+        } else if (ALLOWED_BUNDLE_IDENTIFIERS.includes(bundleId)) {
+          log('Bundle identifier in allowlist', true, bundleId);
+        } else {
+          log('Bundle identifier in allowlist', false, `${bundleId} not in: ${ALLOWED_BUNDLE_IDENTIFIERS.join(', ')}`);
+        }
+      } else {
+        log('Bundle identifier configured', true, 'Using app.json default', true);
       }
     }
   }
