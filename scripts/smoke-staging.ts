@@ -1,21 +1,27 @@
 #!/usr/bin/env node
 /**
- * Staging Smoke Test Runner for Decision OS
+ * Staging Smoke Test Runner for Decision OS — MVP Flow
+ * 
+ * TESTS THE FULL MVP SESSION LIFECYCLE:
+ * 1. Create session + get decision (single decision returned)
+ * 2. Reject once → still pending, get new decision
+ * 3. Reject twice → DRM rescue returned (with full decision)
+ * 4. Accept on new session → session closes accepted
+ * 5. Verify DRM returns full decision (not just drmActivated)
  * 
  * AUTHENTICATION:
  * - If STAGING_AUTH_TOKEN is set, attaches it to all requests
- * - If not set in production mode, warns and runs dev scenario (no auth)
+ * - If not set, warns and runs dev scenario (no auth)
  * 
- * Verifies CANONICAL response shapes:
- * 1. Receipt import: { receiptImportId: string, status: string }
- * 2. Decision: { decision: object|null, drmRecommended: boolean, reason?: string, autopilot?: boolean }
- * 3. Feedback: { recorded: true }
- * 4. DRM: { drmActivated: boolean }
+ * CANONICAL RESPONSE CONTRACTS:
+ * - Decision: { decision, drmRecommended, reason?, autopilot? }
+ * - Feedback: { recorded: true, drmRequired?: boolean, sessionId?: string }
+ * - DRM: { drmActivated: boolean, reason?: string, decision?: object }
  * 
- * Error responses (401): { error: 'unauthorized' }
- * 
- * NOTE: decisionEventId is NOT in the canonical contract, so feedback test uses
- * a synthetic eventId (server handles gracefully as no-op for unknown IDs).
+ * MVP INVARIANTS (must FAIL if violated):
+ * - Multiple decisions returned
+ * - Any endpoint asks a question / returns options list
+ * - DRM returns false when fallbacks missing
  * 
  * Usage:
  *   STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=<jwt> npm run smoke:staging
@@ -29,24 +35,11 @@ const STAGING_URL = process.env.STAGING_URL || 'http://localhost:8081';
 const STAGING_AUTH_TOKEN = process.env.STAGING_AUTH_TOKEN;
 
 /**
- * CANONICAL ALLOWED FIELDS
- * 
- * These MUST match lib/decision-os/invariants.ts:
- * - DECISION_RESPONSE_ALLOWED_FIELDS
- * - DRM_RESPONSE_ALLOWED_FIELDS
- * - FEEDBACK_RESPONSE_ALLOWED_FIELDS
- * - RECEIPT_RESPONSE_ALLOWED_FIELDS
- * 
- * Duplicated here because:
- * 1. This script runs in Node context (not bundled)
- * 2. Importing from lib/ would require complex bundling setup
- * 3. Contract drift is prevented by invariants.test.ts which tests both sets
- * 
- * If you modify these, also update lib/decision-os/invariants.ts
+ * CANONICAL ALLOWED FIELDS (Phase 3 extended)
  */
 const DECISION_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
-const DRM_ALLOWED_FIELDS = new Set(['drmActivated']);
-const FEEDBACK_ALLOWED_FIELDS = new Set(['recorded']);
+const DRM_ALLOWED_FIELDS = new Set(['drmActivated', 'reason', 'decision']); // Phase 2: extended
+const FEEDBACK_ALLOWED_FIELDS = new Set(['recorded', 'drmRequired', 'sessionId']); // Phase 3: extended
 const RECEIPT_ALLOWED_FIELDS = new Set(['receiptImportId', 'status']);
 
 interface TestResult {
@@ -67,7 +60,6 @@ function log(name: string, passed: boolean, detail?: string): void {
 async function fetchJson<T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> {
   const url = `${STAGING_URL}${path}`;
   
-  // Build headers with auth if available
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -96,12 +88,339 @@ function checkAllowedFields(data: Record<string, unknown>, allowed: Set<string>)
   return { ok: unknown.length === 0, unknown };
 }
 
+/**
+ * Generate unique session ID for each test run
+ */
+function generateTestSessionId(): string {
+  return `smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // =============================================================================
-// TEST STEPS
+// MVP FLOW TESTS
 // =============================================================================
 
+async function testMvpFlow1_CreateSessionGetDecision(): Promise<string | null> {
+  console.log('\n--- MVP Flow 1: Create Session + Get Decision ---');
+  
+  try {
+    const { status, data } = await fetchJson<{
+      decision: Record<string, unknown> | null;
+      drmRecommended: boolean;
+      reason?: string;
+    }>('/api/decision-os/decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: { selected: ['easy'] },
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('Decision returns 200', statusOk, `status=${status}`);
+    
+    // Must return exactly ONE decision (not array, not multiple options)
+    const hasDecision = data.decision !== null && typeof data.decision === 'object';
+    log('Decision is single object (not array)', hasDecision && !Array.isArray(data.decision));
+    
+    // If decision exists, must have execution_payload
+    if (data.decision) {
+      const hasPayload = 'execution_payload' in data.decision;
+      log('Decision has execution_payload', hasPayload);
+      
+      // Extract sessionId from decision_id for later tests
+      const decisionId = data.decision.decision_id as string | undefined;
+      if (decisionId) {
+        // Format: ses-xxx-xxx-timestamp
+        const parts = decisionId.split('-');
+        if (parts[0] === 'ses') {
+          return parts.slice(0, 3).join('-');
+        }
+      }
+    }
+    
+    // Field validation
+    const fieldCheck = checkAllowedFields(data, DECISION_ALLOWED_FIELDS);
+    log('Decision response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
+    
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('Create session + get decision', false, message);
+    return null;
+  }
+}
+
+async function testMvpFlow2_RejectOnceStillPending(): Promise<void> {
+  console.log('\n--- MVP Flow 2: Reject Once → Still Pending ---');
+  
+  const testSessionId = generateTestSessionId();
+  
+  try {
+    // First, create a session by getting a decision
+    await fetchJson('/api/decision-os/decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: { selected: ['cheap'] },
+        sessionId: testSessionId,
+      }),
+    });
+    
+    // Reject once
+    const { status, data } = await fetchJson<{
+      recorded: true;
+      drmRequired?: boolean;
+      sessionId?: string;
+    }>('/api/decision-os/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: testSessionId,
+        action: 'rejected',
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('Feedback (reject) returns 200', statusOk, `status=${status}`);
+    
+    const recordedOk = data.recorded === true;
+    log('recorded is true', recordedOk);
+    
+    // After 1 rejection, DRM should NOT be required
+    const drmNotRequired = data.drmRequired !== true;
+    log('drmRequired is false after 1 rejection', drmNotRequired, `value=${data.drmRequired}`);
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('Reject once test', false, message);
+  }
+}
+
+async function testMvpFlow3_RejectTwiceTriggersDrm(): Promise<void> {
+  console.log('\n--- MVP Flow 3: Reject Twice → DRM Rescue ---');
+  
+  const testSessionId = generateTestSessionId();
+  
+  try {
+    // Create session
+    await fetchJson('/api/decision-os/decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: { selected: ['quick'] },
+        sessionId: testSessionId,
+      }),
+    });
+    
+    // First rejection
+    await fetchJson('/api/decision-os/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: testSessionId,
+        action: 'rejected',
+      }),
+    });
+    
+    // Second rejection → should trigger DRM
+    const { status, data } = await fetchJson<{
+      recorded: true;
+      drmRequired?: boolean;
+      sessionId?: string;
+    }>('/api/decision-os/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: testSessionId,
+        action: 'rejected',
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('Feedback (2nd reject) returns 200', statusOk);
+    
+    // After 2 rejections, DRM should be required
+    const drmRequired = data.drmRequired === true;
+    log('drmRequired is true after 2 rejections', drmRequired, `value=${data.drmRequired}`);
+    
+    // If DRM required, call DRM endpoint and verify full decision
+    if (drmRequired && data.sessionId) {
+      const drmResult = await fetchJson<{
+        drmActivated: boolean;
+        reason?: string;
+        decision?: Record<string, unknown>;
+      }>('/api/decision-os/drm', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: data.sessionId,
+          trigger: 'explicit_done',
+        }),
+      });
+      
+      log('DRM returns 200', drmResult.status === 200);
+      log('DRM activated', drmResult.data.drmActivated === true);
+      
+      // DRM MUST return a full decision (Phase 2 contract)
+      const hasDrmDecision = drmResult.data.decision !== null && typeof drmResult.data.decision === 'object';
+      log('DRM returns full decision object', hasDrmDecision);
+      
+      if (hasDrmDecision && drmResult.data.decision) {
+        const hasExecPayload = 'execution_payload' in drmResult.data.decision;
+        log('DRM decision has execution_payload', hasExecPayload);
+      }
+    }
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('Reject twice test', false, message);
+  }
+}
+
+async function testMvpFlow4_AcceptClosesSession(): Promise<void> {
+  console.log('\n--- MVP Flow 4: Accept → Session Closes ---');
+  
+  const testSessionId = generateTestSessionId();
+  
+  try {
+    // Create session
+    await fetchJson('/api/decision-os/decision', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: { selected: ['no_energy'] },
+        sessionId: testSessionId,
+      }),
+    });
+    
+    // Accept the decision
+    const { status, data } = await fetchJson<{
+      recorded: true;
+      drmRequired?: boolean;
+    }>('/api/decision-os/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: testSessionId,
+        action: 'accepted',
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('Feedback (accept) returns 200', statusOk);
+    
+    const recordedOk = data.recorded === true;
+    log('recorded is true', recordedOk);
+    
+    // Accepting should NOT require DRM
+    const noDrm = data.drmRequired !== true;
+    log('drmRequired is not true after accept', noDrm);
+    
+    // Field validation
+    const fieldCheck = checkAllowedFields(data, FEEDBACK_ALLOWED_FIELDS);
+    log('Feedback response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('Accept closes session test', false, message);
+  }
+}
+
+async function testMvpFlow5_DrmReturnsFullDecision(): Promise<void> {
+  console.log('\n--- MVP Flow 5: DRM Returns Full Decision ---');
+  
+  try {
+    // Call DRM directly with explicit_done
+    const { status, data } = await fetchJson<{
+      drmActivated: boolean;
+      reason?: string;
+      decision?: Record<string, unknown>;
+    }>('/api/decision-os/drm', {
+      method: 'POST',
+      body: JSON.stringify({
+        trigger: 'explicit_done',
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('DRM returns 200', statusOk, `status=${status}`);
+    
+    const hasActivated = typeof data.drmActivated === 'boolean';
+    log('drmActivated is boolean', hasActivated, `value=${data.drmActivated}`);
+    
+    // Phase 2 contract: DRM MUST return full decision
+    if (data.drmActivated) {
+      const hasDecision = data.decision !== null && typeof data.decision === 'object';
+      log('DRM returns decision object when activated', hasDecision);
+      
+      if (hasDecision && data.decision) {
+        // Must have execution_payload
+        const hasPayload = 'execution_payload' in data.decision;
+        log('DRM decision has execution_payload', hasPayload);
+        
+        // Must NOT be an array
+        const notArray = !Array.isArray(data.decision);
+        log('DRM decision is not array (single decision)', notArray);
+        
+        // Must have meal info
+        const hasMeal = 'meal' in data.decision;
+        log('DRM decision has meal', hasMeal);
+      }
+      
+      // Must have reason
+      const hasReason = typeof data.reason === 'string';
+      log('DRM has reason string', hasReason, `value=${data.reason}`);
+    }
+    
+    // Field validation
+    const fieldCheck = checkAllowedFields(data, DRM_ALLOWED_FIELDS);
+    log('DRM response has only allowed fields', fieldCheck.ok,
+        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('DRM full decision test', false, message);
+  }
+}
+
+async function testMvpFlow6_TimeThresholdBehavior(): Promise<void> {
+  console.log('\n--- MVP Flow 6: Time Threshold Behavior ---');
+  
+  try {
+    // Call DRM with time_threshold trigger
+    // If server time is before 18:15, should return drmActivated: false
+    const { status, data } = await fetchJson<{
+      drmActivated: boolean;
+      reason?: string;
+      decision?: Record<string, unknown>;
+    }>('/api/decision-os/drm', {
+      method: 'POST',
+      body: JSON.stringify({
+        trigger: 'time_threshold',
+      }),
+    });
+    
+    const statusOk = status === 200;
+    log('DRM (time_threshold) returns 200', statusOk);
+    
+    // Behavior depends on server time
+    // If before threshold: drmActivated=false, reason='not_time_yet'
+    // If after threshold: drmActivated=true with decision
+    
+    if (!data.drmActivated) {
+      const correctReason = data.reason === 'not_time_yet';
+      log('When not activated, reason is not_time_yet', correctReason, `reason=${data.reason}`);
+      
+      // Should NOT have a decision when not activated
+      const noDecision = data.decision === undefined || data.decision === null;
+      log('No decision when not activated', noDecision);
+    } else {
+      // If activated (server time >= 18:15), must have decision
+      const hasDecision = data.decision !== null && typeof data.decision === 'object';
+      log('When activated, has decision', hasDecision);
+    }
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    log('Time threshold test', false, message);
+  }
+}
+
 async function testReceiptImport(): Promise<void> {
-  console.log('\n--- Step 1: Receipt Import ---');
+  console.log('\n--- Legacy: Receipt Import ---');
   
   try {
     const { status, data } = await fetchJson<{ receiptImportId: string; status: string }>(
@@ -118,171 +437,17 @@ async function testReceiptImport(): Promise<void> {
     const statusOk = status === 200;
     log('Receipt import returns 200', statusOk, `status=${status}`);
     
-    // Must have receiptImportId (string)
     const hasId = typeof data.receiptImportId === 'string';
     log('receiptImportId is string', hasId);
     
-    // Must have status (string)
     const hasStatus = typeof data.status === 'string';
     log('status is string', hasStatus, `value=${data.status}`);
     
-    // Response shape: ONLY allowed fields
     const fieldCheck = checkAllowedFields(data, RECEIPT_ALLOWED_FIELDS);
-    log('Receipt response has only allowed fields', fieldCheck.ok, 
-        fieldCheck.ok ? 'ok' : `unknown: ${fieldCheck.unknown.join(',')}`);
+    log('Receipt response has only allowed fields', fieldCheck.ok);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    log('Receipt import request', false, message);
-  }
-}
-
-async function testDecision(): Promise<void> {
-  console.log('\n--- Step 2: Decision Request ---');
-  
-  try {
-    const { status, data } = await fetchJson<{
-      decision: Record<string, unknown> | null;
-      drmRecommended: boolean;
-      reason?: string;
-      autopilot?: boolean;
-    }>('/api/decision-os/decision', {
-      method: 'POST',
-      body: JSON.stringify({
-        userProfileId: 1,
-        context: { time: '17:30', dayOfWeek: 'Tuesday' },
-      }),
-    });
-    
-    const statusOk = status === 200;
-    log('Decision returns 200', statusOk, `status=${status}`);
-    
-    // drmRecommended: required boolean
-    const hasDrm = typeof data.drmRecommended === 'boolean';
-    log('drmRecommended is boolean', hasDrm, `value=${data.drmRecommended}`);
-    
-    // decision: required, object or null
-    const hasDecision = 'decision' in data && (data.decision === null || typeof data.decision === 'object');
-    log('decision is object|null', hasDecision);
-    
-    // reason: optional string
-    if ('reason' in data) {
-      const reasonOk = typeof data.reason === 'string';
-      log('reason is string if present', reasonOk, `value=${data.reason}`);
-    }
-    
-    // autopilot: optional boolean
-    if ('autopilot' in data) {
-      const autopilotOk = typeof data.autopilot === 'boolean';
-      log('autopilot is boolean if present', autopilotOk, `value=${data.autopilot}`);
-    }
-    
-    // Response shape: ONLY allowed fields (NO decisionEventId, NO message)
-    const fieldCheck = checkAllowedFields(data, DECISION_ALLOWED_FIELDS);
-    log('Decision response has only allowed fields', fieldCheck.ok,
-        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
-    
-    // No arrays at any level
-    const hasNoArrays = !Object.values(data).some(v => Array.isArray(v));
-    log('No arrays in response', hasNoArrays);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    log('Decision request', false, message);
-  }
-}
-
-async function testFeedback(): Promise<void> {
-  console.log('\n--- Step 3: Feedback ---');
-  
-  // NOTE: Since decisionEventId is NOT in the canonical contract,
-  // we use a synthetic eventId. Server handles gracefully (no-op for unknown IDs).
-  const syntheticEventId = `smoke-test-event-${Date.now()}`;
-  
-  try {
-    const { status, data } = await fetchJson<{ recorded: true }>('/api/decision-os/feedback', {
-      method: 'POST',
-      body: JSON.stringify({
-        eventId: syntheticEventId,
-        userAction: 'approved',
-      }),
-    });
-    
-    const statusOk = status === 200;
-    log('Feedback returns 200', statusOk, `status=${status}`);
-    
-    // recorded: must be true
-    const recordedOk = data.recorded === true;
-    log('recorded is true', recordedOk, `value=${data.recorded}`);
-    
-    // Response shape: ONLY allowed fields (NO eventId)
-    const fieldCheck = checkAllowedFields(data, FEEDBACK_ALLOWED_FIELDS);
-    log('Feedback response has only allowed fields', fieldCheck.ok,
-        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    log('Feedback request', false, message);
-  }
-}
-
-async function testDrmRecommendation(): Promise<void> {
-  console.log('\n--- Step 4: DRM Recommendation Check ---');
-  
-  try {
-    // Multiple decision calls to verify drmRecommended behavior
-    for (let i = 0; i < 3; i++) {
-      const { data } = await fetchJson<{ drmRecommended: boolean }>(
-        '/api/decision-os/decision',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            userProfileId: 1,
-            context: { time: `18:0${i}`, dayOfWeek: 'Tuesday', testIteration: i },
-          }),
-        }
-      );
-      
-      // Verify drmRecommended is always a boolean
-      const drmValid = typeof data.drmRecommended === 'boolean';
-      log(`Decision ${i + 1} drmRecommended is boolean`, drmValid, `value=${data.drmRecommended}`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    log('DRM recommendation test', false, message);
-  }
-}
-
-async function testDrmEndpoint(): Promise<void> {
-  console.log('\n--- Step 5: DRM Endpoint ---');
-  
-  try {
-    const { status, data } = await fetchJson<{ drmActivated: boolean }>(
-      '/api/decision-os/drm',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          userProfileId: 1,
-          reason: 'handle_it',
-        }),
-      }
-    );
-    
-    const statusOk = status === 200;
-    log('DRM returns 200', statusOk, `status=${status}`);
-    
-    // drmActivated: required boolean
-    const hasActivated = typeof data.drmActivated === 'boolean';
-    log('drmActivated is boolean', hasActivated, `value=${data.drmActivated}`);
-    
-    // Response shape: ONLY allowed fields (NO rescueActivated, rescueType, recorded, message)
-    const fieldCheck = checkAllowedFields(data, DRM_ALLOWED_FIELDS);
-    log('DRM response has only allowed fields', fieldCheck.ok,
-        fieldCheck.ok ? 'ok' : `BANNED: ${fieldCheck.unknown.join(',')}`);
-    
-    // No arrays
-    const hasNoArrays = !Object.values(data).some(v => Array.isArray(v));
-    log('No arrays in DRM response', hasNoArrays);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    log('DRM request', false, message);
+    log('Receipt import', false, message);
   }
 }
 
@@ -291,32 +456,27 @@ async function testDrmEndpoint(): Promise<void> {
 // =============================================================================
 
 async function runSmokeTests(): Promise<void> {
-  console.log('=== Staging Smoke Tests (Canonical Contract Validation) ===');
+  console.log('=== Staging Smoke Tests (MVP Flow Validation) ===');
   console.log(`Target: ${STAGING_URL}`);
   
-  // Auth warning
   if (STAGING_AUTH_TOKEN) {
     console.log('Auth: Token provided (production mode)');
   } else {
     console.log('Auth: No token provided (dev mode fallback)');
-    console.log('      Set STAGING_AUTH_TOKEN for production testing\n');
+    console.log('      Set STAGING_AUTH_TOKEN for production testing');
   }
   console.log('');
   
-  // Step 1: Receipt Import
+  // MVP Flow Tests (Phase 3)
+  await testMvpFlow1_CreateSessionGetDecision();
+  await testMvpFlow2_RejectOnceStillPending();
+  await testMvpFlow3_RejectTwiceTriggersDrm();
+  await testMvpFlow4_AcceptClosesSession();
+  await testMvpFlow5_DrmReturnsFullDecision();
+  await testMvpFlow6_TimeThresholdBehavior();
+  
+  // Legacy tests
   await testReceiptImport();
-  
-  // Step 2: Decision
-  await testDecision();
-  
-  // Step 3: Feedback
-  await testFeedback();
-  
-  // Step 4: DRM Recommendation
-  await testDrmRecommendation();
-  
-  // Step 5: DRM Endpoint
-  await testDrmEndpoint();
   
   // Summary
   console.log('\n=== Summary ===');

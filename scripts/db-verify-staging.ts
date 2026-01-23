@@ -68,12 +68,18 @@ const REQUIRED_TABLES = [
   'runtime_flags',
   'runtime_metrics_daily',
   'runtime_deployments_log',
+  'sessions', // MVP Phase 3: Session tracking
 ];
 
 const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['user_profiles', ['id', 'auth_user_id', 'created_at']],
-  ['households', ['id', 'household_key', 'created_at']],
+  // MVP Phase 3: Extended households with budget and fallback config
+  ['households', ['id', 'household_key', 'created_at', 'budget_ceiling_cents', 'fallback_config']],
   ['household_members', ['household_id', 'user_profile_id', 'created_at']],
+  // MVP Phase 3: Extended meals with MVP arbiter fields
+  ['meals', ['id', 'name', 'category', 'prep_time_minutes', 'tags', 'estimated_cost_cents', 'difficulty', 'cook_steps', 'mode']],
+  // MVP Phase 3: Sessions for decision tracking
+  ['sessions', ['id', 'household_key', 'started_at', 'context', 'outcome', 'rejection_count']],
   ['decision_events', [
     'id', 'user_profile_id', 'household_key', 'user_action', 'actioned_at',
     'decided_at', 'notes', 'decision_payload', 'decision_type', 'meal_id', 'context_hash',
@@ -108,6 +114,10 @@ const NOT_NULL_COLUMNS: string[] = [
   'runtime_deployments_log.deployment_url',
   'runtime_deployments_log.git_sha',
   'runtime_deployments_log.run_id',
+  // MVP Phase 3: Sessions household isolation
+  'sessions.household_key',
+  'sessions.started_at',
+  'sessions.outcome',
 ];
 
 async function verifyRequiredTables(client: DbClient): Promise<{ valid: boolean; missing: string[] }> {

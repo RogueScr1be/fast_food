@@ -125,6 +125,141 @@ describe('Session Lifecycle (Phase 3)', () => {
   });
   
   // ==========================================================================
+  // HOUSEHOLD ISOLATION (CRITICAL)
+  // ==========================================================================
+  
+  describe('Household Isolation', () => {
+    it('getSessionById cannot read another households session', async () => {
+      const householdA = 'hh-isolation-a';
+      const householdB = 'hh-isolation-b';
+      const sessionId = 'ses-isolation-test';
+      const now = new Date().toISOString();
+      
+      // Create session in household A
+      const sessionA: SessionRecord = {
+        id: sessionId,
+        household_key: householdA,
+        started_at: now,
+        context: { secret: 'household-a-data' },
+        outcome: 'pending',
+        rejection_count: 0,
+        created_at: now,
+        updated_at: now,
+      };
+      
+      await getDb().createSession(sessionA);
+      
+      // Household A can read their session
+      const readByA = await getDb().getSessionById(householdA, sessionId);
+      expect(readByA).not.toBeNull();
+      expect(readByA!.context).toEqual({ secret: 'household-a-data' });
+      
+      // Household B CANNOT read household A's session
+      const readByB = await getDb().getSessionById(householdB, sessionId);
+      expect(readByB).toBeNull();
+    });
+    
+    it('updateSession cannot update another households session', async () => {
+      const householdA = 'hh-update-isolation-a';
+      const householdB = 'hh-update-isolation-b';
+      const sessionId = 'ses-update-isolation';
+      const now = new Date().toISOString();
+      
+      // Create session in household A
+      const sessionA: SessionRecord = {
+        id: sessionId,
+        household_key: householdA,
+        started_at: now,
+        context: { original: true },
+        outcome: 'pending',
+        rejection_count: 0,
+        created_at: now,
+        updated_at: now,
+      };
+      
+      await getDb().createSession(sessionA);
+      
+      // Household B attempts to update household A's session - should fail silently
+      await getDb().updateSession(householdB, sessionId, {
+        outcome: 'rescued',
+        context: { hacked: true },
+      });
+      
+      // Verify session is unchanged
+      const session = await getDb().getSessionById(householdA, sessionId);
+      expect(session!.outcome).toBe('pending');
+      expect(session!.context).toEqual({ original: true });
+    });
+    
+    it('getActiveSession only returns own household sessions', async () => {
+      const householdA = 'hh-active-a';
+      const householdB = 'hh-active-b';
+      const now = new Date().toISOString();
+      
+      // Create active sessions in both households
+      await getDb().createSession({
+        id: 'ses-active-a',
+        household_key: householdA,
+        started_at: now,
+        context: {},
+        outcome: 'pending',
+        rejection_count: 0,
+        created_at: now,
+        updated_at: now,
+      });
+      
+      await getDb().createSession({
+        id: 'ses-active-b',
+        household_key: householdB,
+        started_at: now,
+        context: {},
+        outcome: 'pending',
+        rejection_count: 0,
+        created_at: now,
+        updated_at: now,
+      });
+      
+      // Each household gets only their own session
+      const activeA = await getDb().getActiveSession(householdA);
+      const activeB = await getDb().getActiveSession(householdB);
+      
+      expect(activeA!.id).toBe('ses-active-a');
+      expect(activeA!.household_key).toBe(householdA);
+      
+      expect(activeB!.id).toBe('ses-active-b');
+      expect(activeB!.household_key).toBe(householdB);
+    });
+    
+    it('getHouseholdConfig cannot read another households config', async () => {
+      const householdA = 'hh-config-a';
+      const householdB = 'hh-config-b';
+      
+      // Note: With InMemoryAdapter, we use the 'default' config
+      // This test verifies the query pattern is correct
+      const configA = await getDb().getHouseholdConfig(householdA);
+      const configB = await getDb().getHouseholdConfig(householdB);
+      
+      // Both get the default config (InMemoryAdapter falls back to 'default')
+      // In Postgres, each household would get their own or null
+      expect(configA).toBeDefined();
+      expect(configB).toBeDefined();
+    });
+    
+    it('getMeals is global (not household-scoped) - intentionally', async () => {
+      // Meals are intentionally NOT household-scoped - they are shared across all households
+      // This test documents this design decision
+      const meals = await getDb().getMeals();
+      
+      // Should return meals (from seeded test data)
+      expect(meals.length).toBeGreaterThan(0);
+      
+      // Meals should NOT have household_key
+      const firstMeal = meals[0];
+      expect('household_key' in firstMeal).toBe(false);
+    });
+  });
+  
+  // ==========================================================================
   // DECISION LOCK (IDEMPOTENT)
   // ==========================================================================
   

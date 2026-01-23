@@ -197,10 +197,13 @@ export async function POST(request: Request): Promise<Response> {
       // Record decision_accepted metric
       record('decision_accepted');
       
-      // Calculate time_to_decision_ms
-      const startTime = new Date(session.started_at).getTime();
-      const endTime = Date.now();
-      const timeToDecisionMs = endTime - startTime;
+      // Calculate time_to_decision_ms using SERVER timestamps only
+      // - session.started_at: Set by server when session was created (DB truth)
+      // - nowIso: Server current time (already computed above)
+      // - No client-provided timestamps used - server is source of truth
+      const sessionStartMs = new Date(session.started_at).getTime();
+      const serverNowMs = new Date(nowIso).getTime();
+      const timeToDecisionMs = serverNowMs - sessionStartMs;
       recordDuration('time_to_decision_ms', timeToDecisionMs);
       
       // Update session: outcome = 'accepted', ended_at = now
