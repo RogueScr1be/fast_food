@@ -327,6 +327,7 @@ Hard kill switches with fail-closed behavior. All default to `"false"` in produc
 | `DECISION_AUTOPILOT_ENABLED` | `false` | `true` | Autopilot feature - automatic meal approvals |
 | `DECISION_OCR_ENABLED` | `false` | `false` | OCR feature - receipt scanning (always defaults false) |
 | `DECISION_DRM_ENABLED` | `false` | `true` | DRM feature - Dinner Rescue Mode |
+| `FF_MVP_ENABLED` | `false` | `true` | MVP kill switch - if false, app shows "temporarily unavailable" |
 
 **Values**: Use string `"true"` or `"false"`. Case-insensitive.
 
@@ -338,6 +339,7 @@ Hard kill switches with fail-closed behavior. All default to `"false"` in produc
 | `DECISION_AUTOPILOT_ENABLED=false` | Autopilot evaluation skipped; no autopilot copies inserted |
 | `DECISION_OCR_ENABLED=false` | Receipt import returns `{ receiptImportId, status: 'failed' }` (200 OK) |
 | `DECISION_DRM_ENABLED=false` | DRM endpoint returns `{ drmActivated: false }` (200 OK) |
+| `FF_MVP_ENABLED=false` | App shows "Fast Food is temporarily unavailable" (client-side) |
 
 **Production recommendations**:
 
@@ -380,6 +382,7 @@ In addition to ENV flags, Decision OS supports DB-backed runtime flags that can 
 | `decision_ocr_enabled` | OCR/receipt scanning |
 | `decision_drm_enabled` | Dinner Rescue Mode |
 | `decision_os_readonly` | Emergency freeze (read-only mode) |
+| `ff_mvp_enabled` | MVP kill switch (client shows "unavailable" if false) |
 
 **Note**: ENV flags take precedence. If ENV says `false`, DB cannot override to `true`.
 
@@ -1111,3 +1114,28 @@ The gold standard is:
 - Plus app-layer contract + tests (what we have now)
 
 Treat this SQL contract as a **stopgap + developer discipline tool**, not the ultimate firewall.
+
+---
+
+## Related Documentation
+
+- [TESTFLIGHT.md](./TESTFLIGHT.md) — Quick reference for EAS builds and TestFlight submission
+- [DOGFOOD_FIRST_20_DINNERS.md](./DOGFOOD_FIRST_20_DINNERS.md) — Testing protocol for dogfood phase
+
+---
+
+## QA Panel (Device Testing)
+
+A hidden QA panel is available on device for debugging:
+
+1. On Tonight screen
+2. **Long-press "What sounds good tonight?" for 2 seconds**
+3. QA Panel opens
+
+Features:
+- Current environment (API URL, build profile, MVP enabled)
+- One-tap "Force DRM" (triggers DRM with explicit_done)
+- One-tap "Reset session" (clears local sessionId)
+- View last 10 API events (endpoint, status, timestamp)
+
+The QA panel is invisible during normal use and does not affect the MVP UX.

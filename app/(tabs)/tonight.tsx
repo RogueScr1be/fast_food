@@ -12,9 +12,15 @@
  * SESSION LIFECYCLE:
  * - Calls /api/decision-os/decision which creates the session
  * - Passes sessionId from response to decision screen
+ * 
+ * KILL SWITCH:
+ * - If EXPO_PUBLIC_FF_MVP_ENABLED !== 'true', shows disabled message
+ * 
+ * QA PANEL ACCESS:
+ * - Long-press app title for 2 seconds opens hidden QA panel
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,9 +29,17 @@ import {
   Platform,
   SafeAreaView,
   Alert,
+  Pressable,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, DollarSign, Battery, Clock } from 'lucide-react-native';
+
+/**
+ * Check if MVP is enabled (client-side kill switch)
+ */
+function isMvpEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_FF_MVP_ENABLED !== 'false';
+}
 
 /**
  * Intent options per contract
@@ -66,6 +80,30 @@ function IntentButton({ label, icon, selected, onPress }: IntentButtonProps) {
 export default function TonightScreen() {
   const [selectedIntents, setSelectedIntents] = useState<Set<IntentOption>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
+  
+  // QA Panel access: Long-press timer
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const LONG_PRESS_DURATION = 2000; // 2 seconds
+  
+  /**
+   * Handle title long press start
+   */
+  const handleTitlePressIn = () => {
+    longPressTimer.current = setTimeout(() => {
+      // Navigate to QA panel
+      router.push('/qa');
+    }, LONG_PRESS_DURATION);
+  };
+  
+  /**
+   * Handle title long press end (cancel if released early)
+   */
+  const handleTitlePressOut = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
 
   /**
    * Toggle intent selection
@@ -81,6 +119,23 @@ export default function TonightScreen() {
       return newSet;
     });
   };
+  
+  // Kill switch check
+  if (!isMvpEnabled()) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.disabledContainer}>
+          <Text style={styles.disabledTitle}>Fast Food</Text>
+          <Text style={styles.disabledText}>
+            Fast Food is temporarily unavailable
+          </Text>
+          <Text style={styles.disabledSubtext}>
+            Please try again later
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   /**
    * Handle "Decide for me" button press
@@ -164,9 +219,14 @@ export default function TonightScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
+      {/* Header — Long-press title for 2 seconds to access QA panel */}
       <View style={styles.header}>
-        <Text style={styles.greeting}>What sounds good tonight?</Text>
+        <Pressable
+          onPressIn={handleTitlePressIn}
+          onPressOut={handleTitlePressOut}
+        >
+          <Text style={styles.greeting}>What sounds good tonight?</Text>
+        </Pressable>
         <Text style={styles.subtitle}>Tap what matters most</Text>
       </View>
 
@@ -306,5 +366,30 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#FFF',
+  },
+  // Kill switch disabled state
+  disabledContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  disabledTitle: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#FF6B35',
+    marginBottom: 24,
+  },
+  disabledText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#1A1A1A',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  disabledSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
   },
 });

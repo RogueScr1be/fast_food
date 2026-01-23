@@ -31,6 +31,8 @@ export interface DecisionOsFlags {
   drmEnabled: boolean;
   /** Read-only mode - if true, no DB writes (emergency freeze) */
   readonlyMode: boolean;
+  /** MVP enabled - if false, app shows "temporarily unavailable" */
+  mvpEnabled: boolean;
 }
 
 /**
@@ -180,6 +182,7 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
           ocrEnabled: false,
           drmEnabled: false,
           readonlyMode: false,
+          mvpEnabled: false,
           source: 'env',
           dbLoaded: false,
         };
@@ -202,6 +205,8 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
     (dbFlags.get('decision_ocr_enabled') ?? false);
   result.drmEnabled = envFlags.drmEnabled && 
     (dbFlags.get('decision_drm_enabled') ?? false);
+  result.mvpEnabled = envFlags.mvpEnabled &&
+    (dbFlags.get('ff_mvp_enabled') ?? true); // Default true if DB flag not set
   
   // Readonly mode: only check DB flag (no env flag for this)
   // AND with master: readonly doesn't bypass auth
@@ -256,6 +261,7 @@ export function getFlags(): DecisionOsFlags {
   const defaultAutopilot = prod ? false : true;
   const defaultOcr = false; // Always default false (requires external API)
   const defaultDrm = prod ? false : true;
+  const defaultMvp = prod ? false : true;
   
   return {
     decisionOsEnabled: parseFlag(process.env.DECISION_OS_ENABLED, defaultMaster),
@@ -263,6 +269,7 @@ export function getFlags(): DecisionOsFlags {
     ocrEnabled: parseFlag(process.env.DECISION_OCR_ENABLED, defaultOcr),
     drmEnabled: parseFlag(process.env.DECISION_DRM_ENABLED, defaultDrm),
     readonlyMode: false, // Default false - only controlled by DB flag
+    mvpEnabled: parseFlag(process.env.FF_MVP_ENABLED, defaultMvp),
   };
 }
 
@@ -298,6 +305,15 @@ export function isOcrEnabled(): boolean {
 export function isDrmEnabled(): boolean {
   const flags = getFlags();
   return flags.decisionOsEnabled && flags.drmEnabled;
+}
+
+/**
+ * Check if MVP is enabled
+ * Returns false if MVP specifically disabled (app shows "temporarily unavailable")
+ */
+export function isMvpEnabled(): boolean {
+  const flags = getFlags();
+  return flags.mvpEnabled;
 }
 
 /**

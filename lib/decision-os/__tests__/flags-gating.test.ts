@@ -14,6 +14,7 @@ import {
   isAutopilotEnabled, 
   isOcrEnabled, 
   isDrmEnabled,
+  isMvpEnabled,
   type DecisionOsFlags,
 } from '../config/flags';
 
@@ -27,6 +28,7 @@ describe('Feature Flags', () => {
     delete process.env.DECISION_AUTOPILOT_ENABLED;
     delete process.env.DECISION_OCR_ENABLED;
     delete process.env.DECISION_DRM_ENABLED;
+    delete process.env.FF_MVP_ENABLED;
   });
   
   afterEach(() => {
@@ -50,6 +52,7 @@ describe('Feature Flags', () => {
       expect(flags.autopilotEnabled).toBe(false);
       expect(flags.ocrEnabled).toBe(false);
       expect(flags.drmEnabled).toBe(false);
+      expect(flags.mvpEnabled).toBe(false);
     });
     
     it('isDecisionOsEnabled returns false in production without env var', () => {
@@ -68,11 +71,16 @@ describe('Feature Flags', () => {
       expect(isOcrEnabled()).toBe(false);
     });
     
+    it('isMvpEnabled returns false in production without env var', () => {
+      expect(isMvpEnabled()).toBe(false);
+    });
+    
     it('explicitly setting flags to "true" enables them in production', () => {
       process.env.DECISION_OS_ENABLED = 'true';
       process.env.DECISION_AUTOPILOT_ENABLED = 'true';
       process.env.DECISION_OCR_ENABLED = 'true';
       process.env.DECISION_DRM_ENABLED = 'true';
+      process.env.FF_MVP_ENABLED = 'true';
       
       const flags = getFlags();
       
@@ -80,6 +88,7 @@ describe('Feature Flags', () => {
       expect(flags.autopilotEnabled).toBe(true);
       expect(flags.ocrEnabled).toBe(true);
       expect(flags.drmEnabled).toBe(true);
+      expect(flags.mvpEnabled).toBe(true);
     });
     
     it('"false" string explicitly disables flags in production', () => {
@@ -112,6 +121,7 @@ describe('Feature Flags', () => {
       expect(flags.decisionOsEnabled).toBe(true);
       expect(flags.autopilotEnabled).toBe(true);
       expect(flags.drmEnabled).toBe(true);
+      expect(flags.mvpEnabled).toBe(true);
       // OCR always defaults false (requires external API)
       expect(flags.ocrEnabled).toBe(false);
     });
