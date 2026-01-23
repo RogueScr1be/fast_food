@@ -430,7 +430,8 @@ describe('Allowed Fields Constants', () => {
   });
 
   it('FEEDBACK_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
-    expect(FEEDBACK_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['recorded']));
+    // Phase 3: Extended for DRM flow (drmRequired, sessionId)
+    expect(FEEDBACK_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['recorded', 'drmRequired', 'sessionId']));
     expect(FEEDBACK_RESPONSE_ALLOWED_FIELDS.has('eventId')).toBe(false);
   });
 

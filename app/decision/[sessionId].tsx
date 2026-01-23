@@ -7,9 +7,9 @@
  * - Small "Not tonight" reject button (secondary)
  * - No other options visible
  * 
- * FLOW:
- * Approve → Execute screen
- * Reject → Increment rejection count → Maybe DRM
+ * SESSION LIFECYCLE:
+ * Approve → Call feedback API (accepted) → Execute screen
+ * Reject → Call feedback API (rejected) → Maybe DRM → Fetch new decision or rescue
  */
 
 import React, { useState, useEffect } from 'react';
@@ -30,35 +30,52 @@ import type { ArbiterOutput, DrmOutput } from '../../types/decision-os';
  * Decision Screen — Main Component
  */
 export default function DecisionScreen() {
-  const { sessionId, intents } = useLocalSearchParams<{ sessionId: string; intents: string }>();
+  const { sessionId, intents, decisionData } = useLocalSearchParams<{ 
+    sessionId: string; 
+    intents: string;
+    decisionData?: string;
+  }>();
   
   const [decision, setDecision] = useState<ArbiterOutput | DrmOutput | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [rejectionCount, setRejectionCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Fetch decision from API
+   * Parse decision data from params or fetch from API
    */
   useEffect(() => {
+    if (decisionData) {
+      try {
+        const parsed = JSON.parse(decisionData);
+        setDecision(parsed);
+        setIsLoading(false);
+        return;
+      } catch {
+        // Fall through to fetch
+      }
+    }
     fetchDecision();
-  }, [sessionId, intents]);
+  }, [sessionId, intents, decisionData]);
 
+  /**
+   * Fetch decision from API
+   */
   const fetchDecision = async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      // Build context from intents
       const selectedIntents = intents?.split(',').filter(i => i !== 'none') || [];
       
       const response = await fetch('/api/decision-os/decision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          context: {
-            intents: selectedIntents,
-            rejectionCount,
+          sessionId,
+          intent: {
+            selected: selectedIntents,
           },
         }),
       });
@@ -66,22 +83,7 @@ export default function DecisionScreen() {
       const data = await response.json();
       
       if (data.decision) {
-        // Map old response to ArbiterOutput shape
-        const arbiterOutput: ArbiterOutput = {
-          decision_id: `dec-${sessionId}-${Date.now()}`,
-          mode: 'cook',
-          meal: data.decision.meal || 'Suggested Meal',
-          meal_id: data.decision.mealId || 1,
-          confidence: 0.85,
-          estimated_time: `${data.decision.prepTime || 25} min`,
-          estimated_cost: `$${((data.decision.cost || 12) / 100).toFixed(0)}`,
-          execution_payload: {
-            steps: data.decision.steps || ['Prepare ingredients', 'Cook meal', 'Serve and enjoy'],
-            ingredients_needed: [],
-            substitutions: [],
-          },
-        };
-        setDecision(arbiterOutput);
+        setDecision(data.decision);
       } else if (data.drmRecommended) {
         // DRM should trigger - redirect to rescue
         router.replace({
@@ -121,43 +123,113 @@ export default function DecisionScreen() {
 
   /**
    * Handle approve action
-   * Navigate to execute screen
+   * Call feedback API, then navigate to execute screen
    */
   const handleApprove = async () => {
-    if (!decision) return;
+    if (!decision || isProcessing) return;
     
-    // Navigate to execution screen
-    router.push({
-      pathname: '/execute/[decisionId]',
-      params: {
-        decisionId: decision.decision_id,
-        meal: decision.meal,
-        steps: JSON.stringify(decision.execution_payload.steps),
-        time: decision.estimated_time,
-      },
-    });
+    setIsProcessing(true);
+    
+    try {
+      // Call feedback API to mark as accepted
+      await fetch('/api/decision-os/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          action: 'accepted',
+        }),
+      });
+      
+      // Navigate to execution screen
+      router.push({
+        pathname: '/execute/[decisionId]',
+        params: {
+          decisionId: decision.decision_id,
+          meal: decision.meal,
+          steps: JSON.stringify(decision.execution_payload.steps),
+          time: decision.estimated_time,
+        },
+      });
+    } catch (error) {
+      console.error('Feedback API error:', error);
+      // Still navigate even if API call fails
+      router.push({
+        pathname: '/execute/[decisionId]',
+        params: {
+          decisionId: decision.decision_id,
+          meal: decision.meal,
+          steps: JSON.stringify(decision.execution_payload.steps),
+          time: decision.estimated_time,
+        },
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   /**
    * Handle reject action
-   * Increment rejection count, maybe trigger DRM
+   * Call feedback API, check for DRM, maybe fetch new decision
    */
   const handleReject = async () => {
-    const newRejectionCount = rejectionCount + 1;
-    setRejectionCount(newRejectionCount);
+    if (isProcessing) return;
     
-    // Per contract: 2 rejections triggers DRM
-    if (newRejectionCount >= 2) {
-      router.replace({
-        pathname: '/rescue',
-        params: { sessionId, reason: 'rejection_threshold' },
+    setIsProcessing(true);
+    
+    try {
+      // Call feedback API to mark as rejected
+      const response = await fetch('/api/decision-os/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          action: 'rejected',
+        }),
       });
-      return;
+      
+      const data = await response.json();
+      
+      // Increment local rejection count
+      const newRejectionCount = rejectionCount + 1;
+      setRejectionCount(newRejectionCount);
+      
+      // Check if DRM is required (2+ rejections)
+      if (data.drmRequired) {
+        router.replace({
+          pathname: '/rescue',
+          params: { 
+            sessionId: data.sessionId || sessionId, 
+            reason: 'rejection_threshold',
+          },
+        });
+        return;
+      }
+      
+      // Fetch new decision
+      await fetchDecision();
+      
+    } catch (error) {
+      console.error('Feedback API error:', error);
+      
+      // Fallback: track rejection locally
+      const newRejectionCount = rejectionCount + 1;
+      setRejectionCount(newRejectionCount);
+      
+      // Per contract: 2 rejections triggers DRM
+      if (newRejectionCount >= 2) {
+        router.replace({
+          pathname: '/rescue',
+          params: { sessionId, reason: 'rejection_threshold' },
+        });
+        return;
+      }
+      
+      // Fetch new decision
+      await fetchDecision();
+    } finally {
+      setIsProcessing(false);
     }
-    
-    // Fetch new decision
-    setIsLoading(true);
-    await fetchDecision();
   };
 
   // Loading state
@@ -234,18 +306,22 @@ export default function DecisionScreen() {
       <View style={styles.actionsContainer}>
         {/* Primary CTA: Approve (green, large, full-width) */}
         <TouchableOpacity
-          style={styles.approveButton}
+          style={[styles.approveButton, isProcessing && styles.buttonDisabled]}
           onPress={handleApprove}
+          disabled={isProcessing}
           activeOpacity={0.8}
         >
-          <Text style={styles.approveButtonText}>Let's do it</Text>
+          <Text style={styles.approveButtonText}>
+            {isProcessing ? 'Processing...' : "Let's do it"}
+          </Text>
         </TouchableOpacity>
 
         {/* Secondary: Reject (small, dismissive) */}
         {!isRescue && (
           <TouchableOpacity
-            style={styles.rejectButton}
+            style={[styles.rejectButton, isProcessing && styles.buttonDisabled]}
             onPress={handleReject}
+            disabled={isProcessing}
             activeOpacity={0.6}
           >
             <Text style={styles.rejectButtonText}>Not tonight</Text>
@@ -390,5 +466,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     fontWeight: '500',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });

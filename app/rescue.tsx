@@ -8,6 +8,11 @@
  * - Auto-proceeds after display
  * 
  * DRM has ABSOLUTE AUTHORITY per contract
+ * 
+ * SESSION LIFECYCLE:
+ * - Calls /api/decision-os/drm with the trigger reason
+ * - DRM endpoint returns fallback decision and marks session as rescued
+ * - User acknowledges and proceeds to execute screen
  */
 
 import React, { useState, useEffect } from 'react';
@@ -18,11 +23,19 @@ import {
   TouchableOpacity,
   Platform,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Utensils, AlertTriangle } from 'lucide-react-native';
-import { executeDrmOverride, getFallbackConfig, DEFAULT_FALLBACK_CONFIG } from '../lib/decision-os/drm/fallback';
-import type { DrmOutput, DrmTriggerReason } from '../lib/decision-os/drm/fallback';
+import type { DrmOutput } from '../types/decision-os';
+
+type DrmTriggerReason = 
+  | 'rejection_threshold' 
+  | 'time_threshold' 
+  | 'explicit_done' 
+  | 'no_valid_meal'
+  | 'not_time_yet'
+  | 'none';
 
 /**
  * Rescue Screen — Main Component
@@ -34,19 +47,59 @@ export default function RescueScreen() {
   }>();
   
   const [rescue, setRescue] = useState<DrmOutput | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   /**
-   * Execute DRM override on mount
+   * Call DRM API on mount
    */
   useEffect(() => {
-    const fallbackConfig = getFallbackConfig(DEFAULT_FALLBACK_CONFIG);
-    const drmResult = executeDrmOverride(
-      sessionId || 'rescue-session',
-      fallbackConfig,
-      reason || 'explicit_done'
-    );
-    setRescue(drmResult);
+    callDrmApi();
   }, [sessionId, reason]);
+
+  /**
+   * Call DRM endpoint to get fallback decision
+   */
+  const callDrmApi = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Map reason to trigger
+      let trigger: string = reason || 'explicit_done';
+      if (trigger === 'rejection_threshold') {
+        trigger = 'explicit_done'; // API uses explicit_done for 2-rejection trigger from client
+      }
+      if (trigger === 'no_valid_meal') {
+        trigger = 'explicit_done'; // Let server figure out the actual reason
+      }
+      
+      const response = await fetch('/api/decision-os/drm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          trigger,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.drmActivated && data.decision) {
+        setRescue(data.decision);
+      } else if (!data.drmActivated) {
+        // DRM not activated (e.g., time_threshold before threshold time)
+        setError('Rescue not needed right now');
+      } else {
+        setError('No rescue available');
+      }
+    } catch (err) {
+      console.error('DRM API error:', err);
+      setError('Unable to get rescue option');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   /**
    * Get reason display text
@@ -72,7 +125,7 @@ export default function RescueScreen() {
    */
   const handleOkay = () => {
     if (!rescue) {
-      router.replace('/(tabs)/tonight');
+      router.replace('/(tabs)');
       return;
     }
     
@@ -87,15 +140,68 @@ export default function RescueScreen() {
     });
   };
 
-  // Loading/no rescue state
-  if (!rescue) {
+  /**
+   * Handle "This isn't working" button press
+   * Explicit DRM trigger from user
+   */
+  const handleExplicitDone = async () => {
+    setIsLoading(true);
+    
+    try {
+      const response = await fetch('/api/decision-os/drm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          trigger: 'explicit_done',
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.drmActivated && data.decision) {
+        setRescue(data.decision);
+      }
+    } catch (err) {
+      console.error('Explicit DRM API error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#FF6B35" />
+          <Text style={styles.loadingText}>Finding a rescue...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Error/no rescue state
+  if (error || !rescue) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.content}>
           <AlertTriangle size={48} color="#FF6B35" />
-          <Text style={styles.title}>Rescue unavailable</Text>
+          <Text style={styles.title}>{error || 'Rescue unavailable'}</Text>
           <Text style={styles.subtitle}>Let's start fresh</Text>
-          <TouchableOpacity style={styles.okayButton} onPress={() => router.replace('/(tabs)/tonight')}>
+          
+          {/* Option to trigger explicit DRM */}
+          <TouchableOpacity 
+            style={styles.explicitDoneButton} 
+            onPress={handleExplicitDone}
+          >
+            <Text style={styles.explicitDoneText}>This isn't working</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.okayButton} 
+            onPress={() => router.replace('/(tabs)')}
+          >
             <Text style={styles.okayButtonText}>Start Over</Text>
           </TouchableOpacity>
         </View>
@@ -153,6 +259,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFF3E0', // Warm rescue color
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+  },
   iconContainer: {
     alignItems: 'center',
     paddingTop: Platform.OS === 'ios' ? 60 : 80,
@@ -183,6 +299,13 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
     textAlign: 'center',
     marginBottom: 32,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 24,
   },
   rescueCard: {
     backgroundColor: '#FFF',
@@ -220,6 +343,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: Platform.OS === 'ios' ? 24 : 32,
     paddingTop: 16,
+  },
+  explicitDoneButton: {
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#FF6B35',
+    borderRadius: 12,
+  },
+  explicitDoneText: {
+    color: '#FF6B35',
+    fontSize: 16,
+    fontWeight: '500',
   },
   okayButton: {
     backgroundColor: '#FF6B35',

@@ -130,6 +130,7 @@ export type DrmTriggerReason =
   | 'time_threshold' 
   | 'explicit_done' 
   | 'no_valid_meal'
+  | 'not_time_yet'
   | 'none';
 
 // =============================================================================

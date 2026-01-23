@@ -1,55 +1,71 @@
 /**
  * Decision OS Feedback API Endpoint
  * 
+ * POST /api/decision-os/feedback
+ * 
+ * Handles user feedback on decisions (accept/reject) and updates session state.
+ * 
  * AUTHENTICATION:
  * - Production: Requires valid Supabase JWT in Authorization header
  * - Dev/Test: Falls back to default household if no auth
  * 
- * Handles user feedback on decisions including:
- * - approved: User approves the decision
- * - rejected: User rejects the decision
- * - drm_triggered: User explicitly triggers DRM (e.g., "Dinner changed")
- * - undo: User undoes an autopilot-approved decision (within 10-minute window)
- * 
- * BANNED: 'modified' action is not allowed.
+ * Request body:
+ * {
+ *   sessionId: string,           // Required: session to update
+ *   action: 'accepted' | 'rejected'
+ * }
  * 
  * Response (CANONICAL CONTRACT):
- * { recorded: true }
+ * { 
+ *   recorded: true,
+ *   drmRequired?: boolean,       // True if 2nd rejection triggered DRM
+ *   sessionId?: string           // Session ID for DRM call
+ * }
  * 
- * Error Response (401):
- * { error: 'unauthorized' }
+ * SESSION TRANSITIONS:
+ * - accepted → session.outcome='accepted', ended_at=now(), record time_to_decision
+ * - rejected → increment rejection_count
+ *   - 1st rejection: return { recorded: true }
+ *   - 2nd rejection: return { recorded: true, drmRequired: true, sessionId }
  * 
- * This is intentional for simplicity and to avoid array responses.
+ * METRICS EMITTED:
+ * - decision_accepted (on accept)
+ * - decision_rejected (on reject)
+ * - time_to_decision_ms (on accept, measured from session.started_at)
  */
 
-import type { FeedbackRequest, FeedbackResponse, DecisionEvent } from '../../../types/decision-os';
-import { 
-  processFeedback, 
-  processUndo,
-  isAutopilotEvent,
-  isWithinUndoWindow,
-  shouldRunConsumption,
-  shouldUpdateTasteGraph,
-  shouldReverseConsumption,
-} from '../../../lib/decision-os/feedback/handler';
-import { computeTasteWeight } from '../../../lib/decision-os/taste/weights';
+import { getDb, isReadonlyModeError, type SessionRecord } from '../../../lib/decision-os/db/client';
 import { validateFeedbackResponse, validateErrorResponse } from '../../../lib/decision-os/invariants';
 import { authenticateRequest } from '../../../lib/decision-os/auth/helper';
 import { resolveFlags, getFlags } from '../../../lib/decision-os/config/flags';
-import { record } from '../../../lib/decision-os/monitoring/metrics';
-import { getDb, isReadonlyModeError } from '../../../lib/decision-os/db/client';
+import { record, recordDuration } from '../../../lib/decision-os/monitoring/metrics';
+import type { DecisionEventInsert } from '../../../types/decision-os';
 
-/**
- * Valid client-submitted actions.
- * NOTE: 'modified' is BANNED - not in this list.
- * NOTE: 'expired' and 'pending' are internal-only, not client actions.
- */
-const VALID_CLIENT_ACTIONS = ['approved', 'rejected', 'drm_triggered', 'undo'] as const;
+// =============================================================================
+// REQUEST TYPES
+// =============================================================================
 
-/**
- * Validates the feedback request body.
- * Returns null for invalid requests (including banned 'modified' action).
- */
+type FeedbackAction = 'accepted' | 'rejected';
+
+interface FeedbackRequest {
+  sessionId: string;
+  action: FeedbackAction;
+}
+
+// =============================================================================
+// RESPONSE TYPES (extended for DRM flow)
+// =============================================================================
+
+interface FeedbackResponseShape {
+  recorded: true;
+  drmRequired?: boolean;
+  sessionId?: string;
+}
+
+// =============================================================================
+// VALIDATION
+// =============================================================================
+
 function validateRequest(body: unknown): FeedbackRequest | null {
   if (!body || typeof body !== 'object') {
     return null;
@@ -57,53 +73,27 @@ function validateRequest(body: unknown): FeedbackRequest | null {
   
   const req = body as Record<string, unknown>;
   
-  if (typeof req.eventId !== 'string' || !req.eventId) {
+  // sessionId is required
+  if (typeof req.sessionId !== 'string' || !req.sessionId) {
     return null;
   }
   
-  // Validate userAction against allowed client actions
-  // 'modified' is BANNED and will fail this check
-  if (typeof req.userAction !== 'string' || 
-      !VALID_CLIENT_ACTIONS.includes(req.userAction as typeof VALID_CLIENT_ACTIONS[number])) {
+  // action must be 'accepted' or 'rejected'
+  const validActions: FeedbackAction[] = ['accepted', 'rejected'];
+  if (typeof req.action !== 'string' || !validActions.includes(req.action as FeedbackAction)) {
     return null;
   }
   
   return {
-    eventId: req.eventId,
-    userAction: req.userAction as FeedbackRequest['userAction'],
+    sessionId: req.sessionId,
+    action: req.action as FeedbackAction,
   };
 }
 
-/**
- * Mock database functions - these would be replaced with actual DB calls
- */
-async function getEventById(eventId: string): Promise<DecisionEvent | null> {
-  // In a real implementation, this would query the database
-  // For now, we return a mock that allows testing
-  void eventId;
-  return null;
-}
+// =============================================================================
+// RESPONSE BUILDERS
+// =============================================================================
 
-async function getExistingCopies(originalEventId: string): Promise<DecisionEvent[]> {
-  // In a real implementation, this would query for all feedback copies
-  void originalEventId;
-  return [];
-}
-
-async function insertDecisionEvent(event: DecisionEvent): Promise<void> {
-  // In a real implementation, this would insert into the database
-  void event;
-}
-
-async function insertTasteSignal(eventId: string, weight: number): Promise<void> {
-  // In a real implementation, this would insert a taste signal
-  void eventId;
-  void weight;
-}
-
-/**
- * Build error response (401 Unauthorized)
- */
 function buildErrorResponse(error: string): Response {
   const response = { error };
   const validation = validateErrorResponse(response);
@@ -113,42 +103,35 @@ function buildErrorResponse(error: string): Response {
   return Response.json(response, { status: 401 });
 }
 
-/**
- * Build success response
- */
-function buildSuccessResponse(): Response {
-  const response: FeedbackResponse = { recorded: true };
-  const validation = validateFeedbackResponse(response);
-  if (!validation.valid) {
-    console.error('Feedback response validation failed:', validation.errors);
+function buildSuccessResponse(drmRequired?: boolean, sessionId?: string): Response {
+  const response: FeedbackResponseShape = { recorded: true };
+  
+  if (drmRequired !== undefined) {
+    response.drmRequired = drmRequired;
   }
+  if (sessionId !== undefined) {
+    response.sessionId = sessionId;
+  }
+  
+  // Note: We extend the feedback response contract slightly for DRM flow
+  // The base contract { recorded: true } is still valid
   return Response.json(response, { status: 200 });
 }
 
-/**
- * POST /api/decision-os/feedback
- * 
- * Processes user feedback on a decision.
- * 
- * Request body:
- * {
- *   eventId: string,
- *   userAction: 'approved' | 'rejected' | 'drm_triggered' | 'undo'
- * }
- * 
- * BANNED: 'modified' action is rejected.
- * 
- * Response:
- * { recorded: true }
- * 
- * Undo behavior:
- * - Only allowed for autopilot-approved events
- * - Only allowed within 10-minute window
- * - Creates a new decision_event row with user_action='rejected' and notes='undo_autopilot'
- * - Inserts taste signal with -0.5 weight (autonomy penalty, not taste rejection)
- * - Does NOT reverse consumption (v1 limitation)
- * - Idempotent: multiple undos create only one undo copy
- */
+// =============================================================================
+// EVENT ID GENERATOR
+// =============================================================================
+
+function generateEventId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `fb-${timestamp}-${random}`;
+}
+
+// =============================================================================
+// POST HANDLER
+// =============================================================================
+
 export async function POST(request: Request): Promise<Response> {
   record('feedback_called');
   
@@ -164,7 +147,6 @@ export async function POST(request: Request): Promise<Response> {
     
     // KILL SWITCH: Check if Decision OS is enabled
     if (!flags.decisionOsEnabled) {
-      // Return 401 unauthorized when Decision OS is disabled
       return buildErrorResponse('unauthorized');
     }
     
@@ -176,72 +158,159 @@ export async function POST(request: Request): Promise<Response> {
       return buildErrorResponse('unauthorized');
     }
     
-    const body = await request.json();
+    const authContext = authResult.context;
+    const householdKey = authContext.householdKey;
+    const userProfileId = authContext.userProfileId;
+    
+    // Parse request body
+    const body = await request.json().catch(() => ({}));
     const validatedRequest = validateRequest(body);
     
     if (!validatedRequest) {
-      // Still return { recorded: true } to maintain response shape
-      // Invalid requests (including banned 'modified') are no-ops
+      // Invalid request - still return success for response shape consistency
       return buildSuccessResponse();
     }
     
-    // Track undo requests
-    if (validatedRequest.userAction === 'undo') {
-      record('undo_received');
-    }
+    const { sessionId, action } = validatedRequest;
+    const nowIso = new Date().toISOString();
     
-    // READONLY MODE: Skip all DB writes but return valid response
+    // READONLY MODE: Return success without DB writes
     if (flags.readonlyMode) {
       record('readonly_hit');
       return buildSuccessResponse();
     }
     
-    // Get the original event
-    const originalEvent = await getEventById(validatedRequest.eventId);
-    if (!originalEvent) {
-      // Event not found - no-op, return success
+    // Get session
+    const session = await db.getSessionById(householdKey, sessionId);
+    if (!session) {
+      // Session not found - no-op, return success
       return buildSuccessResponse();
     }
     
-    // Get existing feedback copies
-    const existingCopies = await getExistingCopies(originalEvent.id);
-    
-    // Process the feedback
-    const result = processFeedback(originalEvent, existingCopies, validatedRequest);
-    
-    // If a new feedback copy was created, persist it
-    if (result.feedbackCopy && !result.isDuplicate) {
-      await insertDecisionEvent(result.feedbackCopy);
-      
-      // Update taste graph if applicable
-      if (shouldUpdateTasteGraph(result.feedbackCopy)) {
-        const weight = computeTasteWeight(result.feedbackCopy);
-        await insertTasteSignal(result.feedbackCopy.id, weight);
-      }
-      
-      // Run consumption if applicable (not for rejected/undo)
-      if (shouldRunConsumption(result.feedbackCopy)) {
-        // Trigger consumption logic here
-      }
-      
-      // Check if we should reverse consumption (v1: always false)
-      if (shouldReverseConsumption(result.feedbackCopy)) {
-        // Would reverse consumption here in future versions
-      }
+    // Session already ended - return success (idempotent)
+    if (session.outcome !== 'pending') {
+      return buildSuccessResponse();
     }
     
-    // Always return { recorded: true } - maintains simple response shape
+    // Process based on action
+    if (action === 'accepted') {
+      // Record decision_accepted metric
+      record('decision_accepted');
+      
+      // Calculate time_to_decision_ms
+      const startTime = new Date(session.started_at).getTime();
+      const endTime = Date.now();
+      const timeToDecisionMs = endTime - startTime;
+      recordDuration('time_to_decision_ms', timeToDecisionMs);
+      
+      // Update session: outcome = 'accepted', ended_at = now
+      await db.updateSession(householdKey, sessionId, {
+        outcome: 'accepted',
+        ended_at: nowIso,
+      });
+      
+      // Create decision event for audit trail
+      const eventId = generateEventId();
+      const event: DecisionEventInsert = {
+        id: eventId,
+        user_profile_id: userProfileId,
+        household_key: householdKey,
+        decided_at: session.started_at,
+        actioned_at: nowIso,
+        user_action: 'approved',
+        notes: 'session_accepted',
+        decision_payload: session.decision_payload ?? {},
+        decision_type: 'meal_decision',
+        meal_id: (session.decision_payload as any)?.meal_id,
+      };
+      
+      await db.insertDecisionEvent(event);
+      
+      // Insert positive taste signal
+      if ((session.decision_payload as any)?.meal_id) {
+        await db.insertTasteSignal({
+          id: `ts-${eventId}`,
+          user_profile_id: userProfileId,
+          household_key: householdKey,
+          meal_id: (session.decision_payload as any).meal_id,
+          weight: 1.0, // Positive weight for acceptance
+          event_id: eventId,
+          created_at: nowIso,
+        });
+      }
+      
+      return buildSuccessResponse();
+      
+    } else if (action === 'rejected') {
+      // Record decision_rejected metric
+      record('decision_rejected');
+      
+      // Increment rejection count
+      const newRejectionCount = (session.rejection_count ?? 0) + 1;
+      
+      // Update session with new rejection count
+      await db.updateSession(householdKey, sessionId, {
+        rejection_count: newRejectionCount,
+        // Store rejection in context for audit
+        context: {
+          ...session.context,
+          rejections: [
+            ...((session.context as any)?.rejections ?? []),
+            { at: nowIso, meal: (session.decision_payload as any)?.meal },
+          ],
+        },
+      });
+      
+      // Create decision event for audit trail
+      const eventId = generateEventId();
+      const event: DecisionEventInsert = {
+        id: eventId,
+        user_profile_id: userProfileId,
+        household_key: householdKey,
+        decided_at: session.started_at,
+        actioned_at: nowIso,
+        user_action: 'rejected',
+        notes: `rejection_${newRejectionCount}`,
+        decision_payload: session.decision_payload ?? {},
+        decision_type: 'meal_decision',
+        meal_id: (session.decision_payload as any)?.meal_id,
+      };
+      
+      await db.insertDecisionEvent(event);
+      
+      // Insert negative taste signal
+      if ((session.decision_payload as any)?.meal_id) {
+        await db.insertTasteSignal({
+          id: `ts-${eventId}`,
+          user_profile_id: userProfileId,
+          household_key: householdKey,
+          meal_id: (session.decision_payload as any).meal_id,
+          weight: -1.0, // Negative weight for rejection
+          event_id: eventId,
+          created_at: nowIso,
+        });
+      }
+      
+      // Check if DRM should be triggered (2+ rejections)
+      if (newRejectionCount >= 2) {
+        // Return drmRequired flag - client should call DRM endpoint
+        return buildSuccessResponse(true, sessionId);
+      }
+      
+      // First rejection - no DRM yet
+      return buildSuccessResponse(false);
+    }
+    
+    // Should never reach here
     return buildSuccessResponse();
+    
   } catch (error) {
     // Handle readonly_mode error from DB layer (hard backstop)
     if (isReadonlyModeError(error)) {
       record('readonly_hit');
-      // Return success - readonly is transparent to client
       return buildSuccessResponse();
     }
     
-    // Even on error, return { recorded: true } to maintain response shape
-    // Errors are logged but don't change the response
     console.error('Feedback processing error:', error);
     return buildSuccessResponse();
   }

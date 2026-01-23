@@ -288,12 +288,15 @@ export async function POST(request: Request): Promise<Response> {
     const serverTime = getServerTimeHHMM();
     const isTimeTriggered = shouldTriggerOnTime(serverTime, fallbackConfig.drm_time_threshold);
     
-    // Determine actual trigger reason
-    let actualReason: DrmTriggerReason = trigger;
+    // FIX: If trigger='time_threshold' and server time < threshold, return false
+    // Do NOT silently fall back to explicit_done - be truthful
     if (trigger === 'time_threshold' && !isTimeTriggered) {
-      // Client claimed time threshold but server disagrees - use explicit_done
-      actualReason = 'explicit_done';
+      const response = buildResponse(false, 'not_time_yet' as DrmTriggerReason, null);
+      return Response.json(response, { status: 200 });
     }
+    
+    // Determine actual trigger reason (for non-time triggers, use as-is)
+    const actualReason: DrmTriggerReason = trigger;
     
     // READONLY MODE: Return DRM response without DB writes
     if (flags.readonlyMode) {
@@ -336,6 +339,9 @@ export async function POST(request: Request): Promise<Response> {
       decision_id: drmDecision.decision_id,
       decision_payload: drmDecision as unknown as Record<string, unknown>,
     });
+    
+    // Record session_rescued metric
+    record('session_rescued');
     
     // Create DRM event (append-only audit trail)
     const eventId = generateDrmEventId();

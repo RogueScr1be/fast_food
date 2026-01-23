@@ -162,12 +162,12 @@ async function getOrCreateSession(
   householdKey: string,
   context: ArbiterContextInput,
   requestedSessionId?: string
-): Promise<SessionRecord> {
+): Promise<{ session: SessionRecord; isNew: boolean }> {
   // If sessionId provided, try to find and reuse
   if (requestedSessionId) {
     const existing = await db.getSessionById(householdKey, requestedSessionId);
     if (existing && existing.outcome === 'pending') {
-      return existing;
+      return { session: existing, isNew: false };
     }
     // Session not found or closed - fall through to create new
   }
@@ -177,10 +177,10 @@ async function getOrCreateSession(
   if (activeSession) {
     // DECISION LOCK: If session already has a decision, reuse it
     if (activeSession.decision_id) {
-      return activeSession;
+      return { session: activeSession, isNew: false };
     }
     // Update context if needed and return
-    return activeSession;
+    return { session: activeSession, isNew: false };
   }
   
   // Create new session
@@ -197,7 +197,7 @@ async function getOrCreateSession(
   };
   
   await db.createSession(newSession);
-  return newSession;
+  return { session: newSession, isNew: true };
 }
 
 // =============================================================================
@@ -288,7 +288,12 @@ export async function POST(request: Request): Promise<Response> {
     }
     
     // Get or create session (handles Decision Lock)
-    const session = await getOrCreateSession(db, householdKey, context, requestedSessionId);
+    const { session, isNew } = await getOrCreateSession(db, householdKey, context, requestedSessionId);
+    
+    // Record session_started metric for new sessions
+    if (isNew) {
+      record('session_started');
+    }
     
     // DECISION LOCK: If session already has a decision, return it (idempotent)
     if (session.decision_id && session.decision_payload) {
@@ -408,6 +413,9 @@ export async function POST(request: Request): Promise<Response> {
       decision_id: decision.decision_id,
       decision_payload: decision as unknown as Record<string, unknown>,
     });
+    
+    // Record decision_returned metric
+    record('decision_returned');
     
     // Return decision
     const response = buildResponse(decision, false);

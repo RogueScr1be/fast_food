@@ -22,6 +22,13 @@
 
 /**
  * Valid metric names (privacy-safe counters only)
+ * 
+ * MVP SESSION METRICS (Phase 3):
+ * - session_started: New session created
+ * - decision_returned: Arbiter returned a decision
+ * - decision_accepted: User approved decision
+ * - decision_rejected: User rejected decision
+ * - session_rescued: Session ended via DRM rescue
  */
 export type MetricName =
   | 'healthz_hit'
@@ -38,13 +45,31 @@ export type MetricName =
   | 'db_flags_cache_hit'
   | 'db_flags_error'
   | 'metrics_db_failed'
-  | 'readonly_hit';
+  | 'readonly_hit'
+  // MVP Session Metrics (Phase 3)
+  | 'session_started'
+  | 'decision_returned'
+  | 'decision_accepted'
+  | 'decision_rejected'
+  | 'session_rescued';
 
 /**
  * Metrics snapshot type
  */
 export type MetricsSnapshot = {
   [K in MetricName]?: number;
+};
+
+/**
+ * Duration metric names (for timing measurements)
+ */
+export type DurationMetricName = 'time_to_decision_ms';
+
+/**
+ * Duration metrics snapshot (stores latest value, not sum)
+ */
+export type DurationSnapshot = {
+  [K in DurationMetricName]?: { latest: number; count: number; sum: number };
 };
 
 /**
@@ -56,6 +81,9 @@ export interface MetricsDbClient {
 
 // In-memory counters
 const counters: Map<MetricName, number> = new Map();
+
+// In-memory duration metrics (latest, count, sum for averaging)
+const durations: Map<DurationMetricName, { latest: number; count: number; sum: number }> = new Map();
 
 // Optional DB client for persistent metrics
 let dbClient: MetricsDbClient | null = null;
@@ -153,6 +181,32 @@ export function record(name: MetricName): void {
 }
 
 /**
+ * Record a duration metric (e.g., time_to_decision_ms)
+ * 
+ * @param name - The duration metric name
+ * @param durationMs - Duration in milliseconds
+ */
+export function recordDuration(name: DurationMetricName, durationMs: number): void {
+  const current = durations.get(name);
+  if (current) {
+    durations.set(name, {
+      latest: durationMs,
+      count: current.count + 1,
+      sum: current.sum + durationMs,
+    });
+  } else {
+    durations.set(name, {
+      latest: durationMs,
+      count: 1,
+      sum: durationMs,
+    });
+  }
+  
+  // Note: Duration metrics are not flushed to DB in MVP
+  // (would require a different table schema for histograms/aggregates)
+}
+
+/**
  * Get current snapshot of all metrics
  * 
  * @returns Object with metric names as keys and counts as values
@@ -166,10 +220,24 @@ export function getSnapshot(): MetricsSnapshot {
 }
 
 /**
+ * Get current snapshot of duration metrics
+ * 
+ * @returns Object with duration metric names and their stats
+ */
+export function getDurationSnapshot(): DurationSnapshot {
+  const snapshot: DurationSnapshot = {};
+  for (const [name, stats] of durations) {
+    snapshot[name] = { ...stats };
+  }
+  return snapshot;
+}
+
+/**
  * Reset all counters and flush tracking (for testing only)
  */
 export function reset(): void {
   counters.clear();
+  durations.clear();
   lastFlushAt = null;
   lastFlushOk = null;
 }

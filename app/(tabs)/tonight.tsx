@@ -7,7 +7,11 @@
  * - Primary CTA at bottom, ≥48px height, full-width
  * 
  * FLOW:
- * User taps intent buttons → "Decide for me" → Decision screen
+ * User taps intent buttons → "Decide for me" → Call Decision API → Navigate to Decision screen
+ * 
+ * SESSION LIFECYCLE:
+ * - Calls /api/decision-os/decision which creates the session
+ * - Passes sessionId from response to decision screen
  */
 
 import React, { useState } from 'react';
@@ -18,6 +22,7 @@ import {
   TouchableOpacity,
   Platform,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, DollarSign, Battery, Clock } from 'lucide-react-native';
@@ -79,23 +84,82 @@ export default function TonightScreen() {
 
   /**
    * Handle "Decide for me" button press
-   * Navigates to decision screen with selected intents
+   * Calls Decision API to start session and get decision
    */
   const handleDecide = async () => {
     setIsLoading(true);
     
-    // Navigate to decision screen with intent params
-    const intentParams = Array.from(selectedIntents).join(',');
-    router.push({
-      pathname: '/decision/[sessionId]',
-      params: { 
-        sessionId: `session-${Date.now()}`,
-        intents: intentParams || 'none',
-      },
-    });
-    
-    // Reset loading after navigation
-    setTimeout(() => setIsLoading(false), 500);
+    try {
+      // Map UI intent options to API intent format
+      const intentArray = Array.from(selectedIntents);
+      
+      // Call Decision API (creates session server-side)
+      const response = await fetch('/api/decision-os/decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intent: {
+            selected: intentArray,
+          },
+        }),
+      });
+      
+      const data = await response.json();
+      
+      // Handle unauthorized
+      if (response.status === 401) {
+        Alert.alert('Error', 'Please sign in to continue');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Get sessionId from decision response
+      // The sessionId is embedded in the decision_id or we derive it
+      let sessionId = 'session-' + Date.now();
+      if (data.decision?.decision_id) {
+        // Extract sessionId prefix from decision_id (format: ses-xxx-xxx-dec-xxx)
+        const parts = data.decision.decision_id.split('-');
+        if (parts[0] === 'ses') {
+          sessionId = parts.slice(0, 3).join('-');
+        }
+      }
+      
+      // Check if DRM was recommended (no valid decision)
+      if (data.drmRecommended && !data.decision) {
+        router.push({
+          pathname: '/rescue',
+          params: { 
+            sessionId, 
+            reason: 'no_valid_meal',
+          },
+        });
+        return;
+      }
+      
+      // Navigate to decision screen with decision data
+      router.push({
+        pathname: '/decision/[sessionId]',
+        params: { 
+          sessionId,
+          intents: intentArray.join(',') || 'none',
+          decisionData: data.decision ? JSON.stringify(data.decision) : undefined,
+        },
+      });
+      
+    } catch (error) {
+      console.error('Decision request failed:', error);
+      // Fallback: navigate anyway with client-generated sessionId
+      const sessionId = `session-${Date.now()}`;
+      router.push({
+        pathname: '/decision/[sessionId]',
+        params: { 
+          sessionId,
+          intents: Array.from(selectedIntents).join(',') || 'none',
+        },
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

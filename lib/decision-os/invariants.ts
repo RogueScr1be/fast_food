@@ -19,7 +19,7 @@ export interface ValidationResult {
  */
 export const DECISION_RESPONSE_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
 export const DRM_RESPONSE_ALLOWED_FIELDS = new Set(['drmActivated', 'reason', 'decision']);
-export const FEEDBACK_RESPONSE_ALLOWED_FIELDS = new Set(['recorded']);
+export const FEEDBACK_RESPONSE_ALLOWED_FIELDS = new Set(['recorded', 'drmRequired', 'sessionId']);
 export const RECEIPT_RESPONSE_ALLOWED_FIELDS = new Set(['receiptImportId', 'status']);
 
 /**
