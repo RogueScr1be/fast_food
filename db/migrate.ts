@@ -36,6 +36,7 @@ export const REQUIRED_TABLES = [
   'runtime_flags',
   'runtime_metrics_daily',
   'runtime_deployments_log',
+  'sessions',
 ] as const;
 
 /**
@@ -45,8 +46,10 @@ export const REQUIRED_TABLES = [
  */
 export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['user_profiles', ['id', 'auth_user_id', 'created_at']],
-  ['households', ['id', 'household_key', 'created_at']],
+  ['households', ['id', 'household_key', 'created_at', 'budget_ceiling_cents', 'fallback_config']],
   ['household_members', ['household_id', 'user_profile_id', 'created_at']],
+  ['meals', ['id', 'name', 'category', 'prep_time_minutes', 'tags', 'estimated_cost_cents', 'difficulty', 'cook_steps', 'mode']],
+  ['sessions', ['id', 'household_key', 'started_at', 'context', 'outcome', 'rejection_count']],
   ['decision_events', [
     'id',
     'user_profile_id',

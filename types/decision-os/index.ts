@@ -228,3 +228,201 @@ export interface InventoryItem {
   created_at?: string;
   updated_at?: string; // Deprecated: use last_seen_at
 }
+
+// =============================================================================
+// MVP DECISION ARBITER TYPES (per contract)
+// =============================================================================
+
+/**
+ * Execution mode for a decision
+ */
+export type ExecutionMode = 'cook' | 'pickup' | 'delivery' | 'no_cook';
+
+/**
+ * Meal difficulty level
+ */
+export type DifficultyLevel = 'easy' | 'medium' | 'hard';
+
+/**
+ * Session outcome
+ */
+export type SessionOutcome = 'pending' | 'accepted' | 'rescued' | 'abandoned';
+
+/**
+ * Cook step in execution payload
+ */
+export interface CookStep {
+  step: number;
+  instruction: string;
+  duration_minutes: number;
+}
+
+/**
+ * Meal record from database (MVP extended)
+ */
+export interface Meal {
+  id: number;
+  name: string;
+  category: string;
+  prep_time_minutes: number;
+  tags: string[];
+  estimated_cost_cents: number;
+  difficulty: DifficultyLevel;
+  mode: ExecutionMode;
+  cook_steps: CookStep[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Context Agent Input
+ * Only these inputs are allowed per contract
+ */
+export interface ArbiterContextInput {
+  timeCategory: 'dinner' | 'late';
+  wantsCheap: boolean;
+  wantsQuick: boolean;
+  wantsNoCook: boolean;
+  energyLevel: 'low' | 'medium' | 'high';
+  budgetCeilingCents: number;
+}
+
+/**
+ * Taste signals for Arbiter
+ */
+export interface ArbiterTasteSignals {
+  acceptedMeals: string[];
+  rejectedMeals: string[];
+}
+
+/**
+ * Inventory estimate item
+ */
+export interface InventoryEstimateItem {
+  item: string;
+  confidence: number;
+}
+
+/**
+ * Fallback option in DRM hierarchy
+ */
+export interface FallbackOption {
+  type: 'pickup' | 'delivery' | 'no_cook';
+  meal_id?: number;
+  meal_name: string;
+  instructions: string;
+  vendor_id?: string;
+  order_id?: string;
+}
+
+/**
+ * Household fallback configuration for DRM
+ */
+export interface FallbackConfig {
+  hierarchy: FallbackOption[];
+  drm_time_threshold: string; // HH:MM format, e.g., "18:15"
+  rejection_threshold: number; // Default 2
+}
+
+/**
+ * Full Arbiter input per contract
+ * 
+ * FORBIDDEN INPUTS:
+ * - Nutrition data
+ * - Macro scores
+ * - Historical explanations
+ * - Multiple intent vectors
+ * - "Confidence in user mood"
+ */
+export interface ArbiterInput {
+  context: ArbiterContextInput;
+  tasteSignals: ArbiterTasteSignals;
+  inventoryEstimate: InventoryEstimateItem[];
+  householdFallbacks: FallbackConfig;
+}
+
+/**
+ * Execution payload (MANDATORY in output)
+ */
+export interface ExecutionPayload {
+  steps: string[];
+  ingredients_needed: string[];
+  substitutions: string[];
+}
+
+/**
+ * Decision Arbiter Output (MANDATORY SHAPE per contract)
+ * 
+ * Confidence is informational only - must NEVER affect branching.
+ */
+export interface ArbiterOutput {
+  decision_id: string;
+  mode: ExecutionMode;
+  meal: string;
+  meal_id: number;
+  confidence: number; // 0.00 - 1.00, informational only
+  estimated_time: string; // e.g., "25 min"
+  estimated_cost: string; // e.g., "$18"
+  execution_payload: ExecutionPayload;
+}
+
+/**
+ * DRM Override Output
+ * Same shape as ArbiterOutput but from DRM fallback
+ */
+export interface DrmOutput extends ArbiterOutput {
+  is_rescue: true;
+  fallback_type: 'pickup' | 'delivery' | 'no_cook';
+}
+
+/**
+ * Session record (DB row)
+ */
+export interface Session {
+  id: string;
+  household_key: string;
+  started_at: string;
+  ended_at?: string;
+  context: ArbiterContextInput;
+  decision_id?: string;
+  decision_payload?: ArbiterOutput;
+  outcome?: SessionOutcome;
+  rejection_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Household record (MVP extended)
+ */
+export interface Household {
+  id: string;
+  household_key: string;
+  name?: string;
+  budget_ceiling_cents: number;
+  fallback_config: FallbackConfig;
+  members: HouseholdMember[];
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Household member
+ */
+export interface HouseholdMember {
+  name: string;
+  role: 'adult' | 'child';
+}
+
+/**
+ * Intent button options for UI
+ */
+export type IntentOption = 'easy' | 'cheap' | 'no_energy' | 'quick';
+
+/**
+ * User intent from UI (maps to ArbiterContextInput)
+ */
+export interface UserIntent {
+  selected: IntentOption[];
+  energyLevel?: 'low' | 'medium' | 'high';
+}
