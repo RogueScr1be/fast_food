@@ -17,7 +17,8 @@
  * - If EXPO_PUBLIC_FF_MVP_ENABLED !== 'true', shows disabled message
  * 
  * QA PANEL ACCESS:
- * - Long-press app title for 2 seconds opens hidden QA panel
+ * - Requires BOTH: long-press app title for 2 seconds AND ff_qa_enabled=true
+ * - When ff_qa_enabled=false, long-press does nothing
  */
 
 import React, { useState, useRef } from 'react';
@@ -39,6 +40,14 @@ import { Zap, DollarSign, Battery, Clock } from 'lucide-react-native';
  */
 function isMvpEnabled(): boolean {
   return process.env.EXPO_PUBLIC_FF_MVP_ENABLED !== 'false';
+}
+
+/**
+ * Check if QA panel is enabled (client-side gate)
+ * QA panel requires BOTH long-press AND ff_qa_enabled=true
+ */
+function isQaEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_FF_QA_ENABLED === 'true';
 }
 
 /**
@@ -87,8 +96,14 @@ export default function TonightScreen() {
   
   /**
    * Handle title long press start
+   * QA panel requires ff_qa_enabled=true; otherwise long-press does nothing
    */
   const handleTitlePressIn = () => {
+    // Gate: QA panel must be explicitly enabled
+    if (!isQaEnabled()) {
+      return;
+    }
+    
     longPressTimer.current = setTimeout(() => {
       // Navigate to QA panel
       router.push('/qa');

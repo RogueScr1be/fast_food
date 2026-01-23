@@ -13,7 +13,8 @@
       "env": {
         "EXPO_PUBLIC_DECISION_OS_BASE_URL": "http://localhost:3000",
         "EXPO_PUBLIC_APP_VARIANT": "development",
-        "EXPO_PUBLIC_FF_MVP_ENABLED": "true"
+        "EXPO_PUBLIC_FF_MVP_ENABLED": "true",
+        "EXPO_PUBLIC_FF_QA_ENABLED": "true"
       }
     },
     "preview": {
@@ -23,7 +24,8 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_VARIANT": "preview",
-        "EXPO_PUBLIC_FF_MVP_ENABLED": "true"
+        "EXPO_PUBLIC_FF_MVP_ENABLED": "true",
+        "EXPO_PUBLIC_FF_QA_ENABLED": "true"
       },
       "channel": "preview"
     },
@@ -34,7 +36,8 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_VARIANT": "production",
-        "EXPO_PUBLIC_FF_MVP_ENABLED": "true"
+        "EXPO_PUBLIC_FF_MVP_ENABLED": "true",
+        "EXPO_PUBLIC_FF_QA_ENABLED": "false"
       },
       "channel": "production",
       "autoIncrement": true

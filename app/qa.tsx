@@ -1,7 +1,9 @@
 /**
  * QA Panel — Hidden Device Testing Screen
  * 
- * Access via long-press on app title in Tonight screen (2 seconds)
+ * Access requires BOTH:
+ * - Long-press on app title in Tonight screen (2 seconds)
+ * - ff_qa_enabled=true (runtime flag)
  * 
  * Features:
  * - Show current environment (API URL, build profile, household_key)
@@ -17,6 +19,9 @@
  * UX:
  * - Full modal screen (not overlay)
  * - Does not violate MVP UI laws for normal users
+ * 
+ * GATE:
+ * - If ff_qa_enabled=false, immediately redirects back
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -41,7 +46,20 @@ import {
   type QaEnvironment,
 } from '../lib/qa/QaService';
 
+/**
+ * Check if QA panel is enabled
+ */
+function isQaEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_FF_QA_ENABLED === 'true';
+}
+
 export default function QaPanel() {
+  // Gate check: if QA is disabled, redirect back immediately
+  useEffect(() => {
+    if (!isQaEnabled()) {
+      router.back();
+    }
+  }, []);
   const [env, setEnv] = useState<QaEnvironment | null>(null);
   const [events, setEvents] = useState<QaEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);

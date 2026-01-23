@@ -15,6 +15,7 @@ import {
   isOcrEnabled, 
   isDrmEnabled,
   isMvpEnabled,
+  isQaEnabled,
   type DecisionOsFlags,
 } from '../config/flags';
 
@@ -29,6 +30,7 @@ describe('Feature Flags', () => {
     delete process.env.DECISION_OCR_ENABLED;
     delete process.env.DECISION_DRM_ENABLED;
     delete process.env.FF_MVP_ENABLED;
+    delete process.env.FF_QA_ENABLED;
   });
   
   afterEach(() => {
@@ -53,6 +55,7 @@ describe('Feature Flags', () => {
       expect(flags.ocrEnabled).toBe(false);
       expect(flags.drmEnabled).toBe(false);
       expect(flags.mvpEnabled).toBe(false);
+      expect(flags.qaEnabled).toBe(false);
     });
     
     it('isDecisionOsEnabled returns false in production without env var', () => {
@@ -75,12 +78,17 @@ describe('Feature Flags', () => {
       expect(isMvpEnabled()).toBe(false);
     });
     
+    it('isQaEnabled returns false in production without env var', () => {
+      expect(isQaEnabled()).toBe(false);
+    });
+    
     it('explicitly setting flags to "true" enables them in production', () => {
       process.env.DECISION_OS_ENABLED = 'true';
       process.env.DECISION_AUTOPILOT_ENABLED = 'true';
       process.env.DECISION_OCR_ENABLED = 'true';
       process.env.DECISION_DRM_ENABLED = 'true';
       process.env.FF_MVP_ENABLED = 'true';
+      process.env.FF_QA_ENABLED = 'true';
       
       const flags = getFlags();
       
@@ -89,6 +97,7 @@ describe('Feature Flags', () => {
       expect(flags.ocrEnabled).toBe(true);
       expect(flags.drmEnabled).toBe(true);
       expect(flags.mvpEnabled).toBe(true);
+      expect(flags.qaEnabled).toBe(true);
     });
     
     it('"false" string explicitly disables flags in production', () => {
@@ -122,6 +131,7 @@ describe('Feature Flags', () => {
       expect(flags.autopilotEnabled).toBe(true);
       expect(flags.drmEnabled).toBe(true);
       expect(flags.mvpEnabled).toBe(true);
+      expect(flags.qaEnabled).toBe(true);
       // OCR always defaults false (requires external API)
       expect(flags.ocrEnabled).toBe(false);
     });
@@ -333,6 +343,8 @@ describe('All Flags Disabled (complete shutdown)', () => {
     expect(isAutopilotEnabled()).toBe(false);
     expect(isOcrEnabled()).toBe(false);
     expect(isDrmEnabled()).toBe(false);
+    expect(isMvpEnabled()).toBe(false);
+    expect(isQaEnabled()).toBe(false);
   });
   
   it('getFlags returns all false', () => {
@@ -342,5 +354,66 @@ describe('All Flags Disabled (complete shutdown)', () => {
     expect(flags.autopilotEnabled).toBe(false);
     expect(flags.ocrEnabled).toBe(false);
     expect(flags.drmEnabled).toBe(false);
+    expect(flags.mvpEnabled).toBe(false);
+    expect(flags.qaEnabled).toBe(false);
+  });
+});
+
+/**
+ * QA Panel Gating Tests
+ */
+describe('QA Panel Gating', () => {
+  const originalEnv = { ...process.env };
+  
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.FF_QA_ENABLED;
+  });
+  
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+  
+  describe('Production behavior', () => {
+    beforeEach(() => {
+      process.env.NODE_ENV = 'production';
+    });
+    
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv.NODE_ENV;
+    });
+    
+    it('QA panel disabled by default in production', () => {
+      expect(isQaEnabled()).toBe(false);
+    });
+    
+    it('QA panel can be explicitly enabled in production', () => {
+      process.env.FF_QA_ENABLED = 'true';
+      expect(isQaEnabled()).toBe(true);
+    });
+    
+    it('QA panel remains disabled when set to false', () => {
+      process.env.FF_QA_ENABLED = 'false';
+      expect(isQaEnabled()).toBe(false);
+    });
+  });
+  
+  describe('Development behavior', () => {
+    beforeEach(() => {
+      process.env.NODE_ENV = 'development';
+    });
+    
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv.NODE_ENV;
+    });
+    
+    it('QA panel enabled by default in development', () => {
+      expect(isQaEnabled()).toBe(true);
+    });
+    
+    it('QA panel can be explicitly disabled in development', () => {
+      process.env.FF_QA_ENABLED = 'false';
+      expect(isQaEnabled()).toBe(false);
+    });
   });
 });

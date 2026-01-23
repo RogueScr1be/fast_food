@@ -90,6 +90,18 @@ function checkProfile(config: EasConfig, profileName: string): void {
     log('EXPO_PUBLIC_FF_MVP_ENABLED set', false, 'Missing - app will be disabled', true);
   }
   
+  // Check EXPO_PUBLIC_FF_QA_ENABLED (QA panel gate)
+  const ffQaEnabled = env.EXPO_PUBLIC_FF_QA_ENABLED;
+  if (ffQaEnabled) {
+    log('EXPO_PUBLIC_FF_QA_ENABLED set', true, ffQaEnabled);
+    // Warn if QA enabled in production
+    if (profileName === 'production' && ffQaEnabled === 'true') {
+      log('QA disabled in production', false, 'Should be false for production');
+    }
+  } else {
+    log('EXPO_PUBLIC_FF_QA_ENABLED set', true, 'Not inline - defaults apply', true);
+  }
+  
   // For preview/production, check API URL
   if (profileName === 'preview' || profileName === 'production') {
     const baseUrl = env.EXPO_PUBLIC_DECISION_OS_BASE_URL;

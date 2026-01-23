@@ -33,6 +33,8 @@ export interface DecisionOsFlags {
   readonlyMode: boolean;
   /** MVP enabled - if false, app shows "temporarily unavailable" */
   mvpEnabled: boolean;
+  /** QA panel enabled - if false, QA panel is not accessible */
+  qaEnabled: boolean;
 }
 
 /**
@@ -183,6 +185,7 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
           drmEnabled: false,
           readonlyMode: false,
           mvpEnabled: false,
+          qaEnabled: false,
           source: 'env',
           dbLoaded: false,
         };
@@ -207,6 +210,8 @@ export async function resolveFlags(input: ResolveFlagsInput = {}): Promise<Resol
     (dbFlags.get('decision_drm_enabled') ?? false);
   result.mvpEnabled = envFlags.mvpEnabled &&
     (dbFlags.get('ff_mvp_enabled') ?? true); // Default true if DB flag not set
+  result.qaEnabled = envFlags.qaEnabled &&
+    (dbFlags.get('ff_qa_enabled') ?? false); // Default false if DB flag not set (QA must be explicitly enabled)
   
   // Readonly mode: only check DB flag (no env flag for this)
   // AND with master: readonly doesn't bypass auth
@@ -262,6 +267,7 @@ export function getFlags(): DecisionOsFlags {
   const defaultOcr = false; // Always default false (requires external API)
   const defaultDrm = prod ? false : true;
   const defaultMvp = prod ? false : true;
+  const defaultQa = prod ? false : true; // QA panel disabled in production by default
   
   return {
     decisionOsEnabled: parseFlag(process.env.DECISION_OS_ENABLED, defaultMaster),
@@ -270,6 +276,7 @@ export function getFlags(): DecisionOsFlags {
     drmEnabled: parseFlag(process.env.DECISION_DRM_ENABLED, defaultDrm),
     readonlyMode: false, // Default false - only controlled by DB flag
     mvpEnabled: parseFlag(process.env.FF_MVP_ENABLED, defaultMvp),
+    qaEnabled: parseFlag(process.env.FF_QA_ENABLED, defaultQa),
   };
 }
 
@@ -314,6 +321,15 @@ export function isDrmEnabled(): boolean {
 export function isMvpEnabled(): boolean {
   const flags = getFlags();
   return flags.mvpEnabled;
+}
+
+/**
+ * Check if QA panel is enabled
+ * Returns false if QA panel specifically disabled (QA panel not accessible)
+ */
+export function isQaEnabled(): boolean {
+  const flags = getFlags();
+  return flags.qaEnabled;
 }
 
 /**

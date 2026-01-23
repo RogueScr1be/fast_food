@@ -33,6 +33,7 @@
     "deploy:provenance:proof": "npx ts-node scripts/provenance-proof.ts",
     "sql:contract:gate": "npx ts-node scripts/sql-contract-gate.ts",
     "build:sanity": "npx ts-node scripts/build-sanity.ts",
+    "dogfood:report": "npx ts-node scripts/dogfood-report.ts",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "type-check": "tsc --noEmit",
     "eas:build:dev": "eas build --profile development --platform ios",

@@ -328,6 +328,8 @@ Hard kill switches with fail-closed behavior. All default to `"false"` in produc
 | `DECISION_OCR_ENABLED` | `false` | `false` | OCR feature - receipt scanning (always defaults false) |
 | `DECISION_DRM_ENABLED` | `false` | `true` | DRM feature - Dinner Rescue Mode |
 | `FF_MVP_ENABLED` | `false` | `true` | MVP kill switch - if false, app shows "temporarily unavailable" |
+| `FF_QA_ENABLED` | `false` | `true` | QA panel - if false, QA panel is not accessible |
+| `INTERNAL_METRICS_ENABLED` | `false` | `false` | Internal metrics summary endpoint in production |
 
 **Values**: Use string `"true"` or `"false"`. Case-insensitive.
 
@@ -340,6 +342,7 @@ Hard kill switches with fail-closed behavior. All default to `"false"` in produc
 | `DECISION_OCR_ENABLED=false` | Receipt import returns `{ receiptImportId, status: 'failed' }` (200 OK) |
 | `DECISION_DRM_ENABLED=false` | DRM endpoint returns `{ drmActivated: false }` (200 OK) |
 | `FF_MVP_ENABLED=false` | App shows "Fast Food is temporarily unavailable" (client-side) |
+| `FF_QA_ENABLED=false` | QA panel long-press gesture does nothing; /qa route redirects back |
 
 **Production recommendations**:
 
@@ -460,6 +463,53 @@ GET /api/decision-os/_internal/metrics
 | `ocr_provider_failed` | OCR failures |
 
 **Privacy**: Metrics are counters only - no user IDs, tokens, meal names, or sensitive data.
+
+### Internal Metrics Summary Endpoint (Staging/Preview Only)
+
+Aggregated session metrics for internal review:
+```
+GET /api/decision-os/_internal/metrics-summary?days=14
+```
+
+**Security**:
+- Production: Returns 401 unless `INTERNAL_METRICS_ENABLED=true`
+- Dev/Staging: Requires auth if `SUPABASE_JWT_SECRET` is set
+
+**Response**:
+```json
+{
+  "ok": true,
+  "days_queried": 14,
+  "summary": {
+    "total_sessions": 42,
+    "accepted_sessions": 25,
+    "rescued_sessions": 10,
+    "abandoned_sessions": 7,
+    "acceptance_rate": 0.60,
+    "rescue_rate": 0.24,
+    "median_time_to_decision_ms": 45000,
+    "p90_time_to_decision_ms": 120000,
+    "intents": {
+      "easy": 20,
+      "cheap": 15,
+      "quick": 8,
+      "no_energy": 12
+    }
+  },
+  "computed_at": "2025-01-20T17:30:00.000Z"
+}
+```
+
+**Dogfood Report**:
+```bash
+STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=... npm run dogfood:report
+```
+
+Prints a concise summary with red flag warnings for:
+- Median time-to-decision > 180s
+- Rescue rate > 40%
+- Acceptance rate < 40%
+- Zero sessions recorded
 
 ### Durable Metrics (DB-backed)
 
@@ -898,6 +948,83 @@ WHERE env = 'staging'
 ORDER BY recorded_at DESC
 LIMIT 5;
 ```
+
+### Emergency: MVP Kill Switch (ff_mvp_enabled)
+
+**When to use:** The MVP has critical issues that make it unusable or harmful. Examples:
+- Multiple options shown to users (violates single-decision contract)
+- DRM fails to produce a decision (rescue broken)
+- Session gets stuck with no navigation
+- Repeated crashes on Tonight/Decision/Execute screens
+- Unacceptable acceptance rate (<20%) after multiple users try
+
+**Step 1: Flip the flag in runtime_flags table**
+
+```sql
+-- Supabase → SQL Editor → Run this:
+UPDATE runtime_flags 
+SET enabled = false, updated_at = NOW() 
+WHERE key = 'ff_mvp_enabled';
+
+-- Verify:
+SELECT key, enabled, updated_at FROM runtime_flags WHERE key = 'ff_mvp_enabled';
+```
+
+**Step 2: Verify it's working (within 30 seconds)**
+
+1. **Client-side**: Open app → Tonight screen should show:
+   - "Fast Food is temporarily unavailable"
+   - "Please try again later"
+
+2. **API-side** (optional): Decision OS endpoints should still return 200 but app won't call them due to client-side gate.
+
+**Step 3: Communicate to testers**
+
+Notify all dogfood testers that MVP is disabled for investigation.
+
+**Step 4: Investigate root cause**
+
+Use the dogfood report and internal metrics:
+
+```bash
+# Get metrics summary
+STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=... npm run dogfood:report
+
+# Check session data directly
+# Supabase → SQL Editor:
+SELECT outcome, COUNT(*) 
+FROM sessions 
+WHERE started_at >= NOW() - INTERVAL '1 day'
+GROUP BY outcome;
+```
+
+**Step 5: Re-enable when fixed**
+
+```sql
+UPDATE runtime_flags 
+SET enabled = true, updated_at = NOW() 
+WHERE key = 'ff_mvp_enabled';
+```
+
+---
+
+### Emergency: QA Panel Kill Switch (ff_qa_enabled)
+
+**When to use:** QA panel accidentally accessible to non-testers or causing issues.
+
+```sql
+-- Disable QA panel:
+UPDATE runtime_flags 
+SET enabled = false, updated_at = NOW() 
+WHERE key = 'ff_qa_enabled';
+
+-- Re-enable:
+UPDATE runtime_flags 
+SET enabled = true, updated_at = NOW() 
+WHERE key = 'ff_qa_enabled';
+```
+
+---
 
 ### Deployment Provenance
 
