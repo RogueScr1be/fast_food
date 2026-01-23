@@ -59,6 +59,21 @@ export interface DbAdapter {
   getTasteMealScore(householdKey: string, mealId: number): Promise<TasteMealScore | null>;
   upsertTasteMealScore(score: TasteMealScore): Promise<void>;
   
+  // Sessions (MVP - Decision Lock)
+  // householdKey is ALWAYS the primary partition key
+  createSession(session: SessionRecord): Promise<void>;
+  getActiveSession(householdKey: string): Promise<SessionRecord | null>;
+  getSessionById(householdKey: string, id: string): Promise<SessionRecord | null>;
+  updateSession(householdKey: string, id: string, update: Partial<SessionRecord>): Promise<void>;
+  
+  // Meals (for Arbiter)
+  // Not tenant-scoped - meals are global
+  getMeals(): Promise<MealRecord[]>;
+  getMealById(id: number): Promise<MealRecord | null>;
+  
+  // Household config (for budget ceiling and fallback config)
+  getHouseholdConfig(householdKey: string): Promise<HouseholdConfig | null>;
+  
   // Health check
   ping(): Promise<boolean>;
   
@@ -89,6 +104,79 @@ export interface TasteMealScore {
 }
 
 // =============================================================================
+// SESSION TYPES (MVP Decision Lock)
+// =============================================================================
+
+export type SessionOutcome = 'pending' | 'accepted' | 'rescued' | 'abandoned';
+
+export interface SessionRecord {
+  id: string;
+  household_key: string;
+  started_at: string;
+  ended_at?: string;
+  context: Record<string, unknown>;
+  decision_id?: string;
+  decision_payload?: Record<string, unknown>;
+  outcome?: SessionOutcome;
+  rejection_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// =============================================================================
+// MEAL TYPES (for Arbiter)
+// =============================================================================
+
+export type ExecutionMode = 'cook' | 'pickup' | 'delivery' | 'no_cook';
+export type DifficultyLevel = 'easy' | 'medium' | 'hard';
+
+export interface CookStep {
+  step: number;
+  instruction: string;
+  duration_minutes: number;
+}
+
+export interface MealRecord {
+  id: number;
+  name: string;
+  category: string;
+  prep_time_minutes: number;
+  tags: string[];
+  estimated_cost_cents: number;
+  difficulty: DifficultyLevel;
+  mode: ExecutionMode;
+  cook_steps: CookStep[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+// =============================================================================
+// HOUSEHOLD CONFIG (for budget and DRM fallback)
+// =============================================================================
+
+export interface FallbackOption {
+  type: 'pickup' | 'delivery' | 'no_cook';
+  meal_id?: number;
+  meal_name: string;
+  instructions: string;
+  vendor_id?: string;
+  order_id?: string;
+}
+
+export interface FallbackConfig {
+  hierarchy: FallbackOption[];
+  drm_time_threshold: string;
+  rejection_threshold: number;
+}
+
+export interface HouseholdConfig {
+  id: string;
+  household_key: string;
+  budget_ceiling_cents: number;
+  fallback_config: FallbackConfig;
+}
+
+// =============================================================================
 // IN-MEMORY ADAPTER (for tests)
 // =============================================================================
 
@@ -100,6 +188,7 @@ class InMemoryAdapter implements DbAdapter {
   private inventoryItems: Map<string, InventoryItem> = new Map();
   private tasteSignals: Map<string, TasteSignal> = new Map();
   private tasteMealScores: Map<string, TasteMealScore> = new Map();
+  private sessions: Map<string, SessionRecord> = new Map();
   
   // In-memory stores for auth (households, members, user profiles with auth)
   private households: Map<string, { id: string; household_key: string }> = new Map([
@@ -112,6 +201,35 @@ class InMemoryAdapter implements DbAdapter {
     [1, { id: 1 }],
   ]);
   private nextUserProfileId = 2;
+  
+  // In-memory stores for household config (with MVP defaults)
+  private householdConfigs: Map<string, HouseholdConfig> = new Map([
+    ['default', {
+      id: '00000000-0000-0000-0000-000000000000',
+      household_key: 'default',
+      budget_ceiling_cents: 2000,
+      fallback_config: {
+        hierarchy: [
+          { type: 'no_cook' as const, meal_id: 11, meal_name: 'Cereal with Milk', instructions: 'Pour cereal into bowl, add milk' },
+          { type: 'no_cook' as const, meal_id: 12, meal_name: 'PB&J Sandwich', instructions: 'Make a peanut butter and jelly sandwich' },
+          { type: 'no_cook' as const, meal_id: 13, meal_name: 'Cheese and Crackers', instructions: 'Slice cheese, arrange with crackers' },
+        ],
+        drm_time_threshold: '18:15',
+        rejection_threshold: 2,
+      },
+    }],
+  ]);
+  
+  // In-memory meals store (seeded with MVP test data)
+  private meals: Map<number, MealRecord> = new Map([
+    [1, { id: 1, name: 'Chicken Pasta', category: 'dinner', prep_time_minutes: 30, tags: ['pasta', 'italian', 'comfort'], estimated_cost_cents: 1200, difficulty: 'medium', mode: 'cook', cook_steps: [{ step: 1, instruction: 'Boil water and cook pasta', duration_minutes: 10 }, { step: 2, instruction: 'Season and cook chicken', duration_minutes: 8 }, { step: 3, instruction: 'Add sauce and simmer', duration_minutes: 5 }, { step: 4, instruction: 'Combine and serve', duration_minutes: 2 }] }],
+    [2, { id: 2, name: 'Quick Salad', category: 'dinner', prep_time_minutes: 15, tags: ['salad', 'quick', 'healthy'], estimated_cost_cents: 600, difficulty: 'easy', mode: 'cook', cook_steps: [{ step: 1, instruction: 'Chop vegetables', duration_minutes: 5 }, { step: 2, instruction: 'Add dressing', duration_minutes: 2 }, { step: 3, instruction: 'Toss and serve', duration_minutes: 1 }] }],
+    [3, { id: 3, name: 'Vegetable Stir Fry', category: 'dinner', prep_time_minutes: 20, tags: ['vegetarian', 'quick', 'healthy'], estimated_cost_cents: 800, difficulty: 'easy', mode: 'cook', cook_steps: [{ step: 1, instruction: 'Chop vegetables', duration_minutes: 5 }, { step: 2, instruction: 'Heat oil in wok', duration_minutes: 2 }, { step: 3, instruction: 'Stir fry vegetables', duration_minutes: 8 }, { step: 4, instruction: 'Add sauce and serve', duration_minutes: 5 }] }],
+    [4, { id: 4, name: 'Beef Tacos', category: 'dinner', prep_time_minutes: 25, tags: ['mexican', 'quick', 'family'], estimated_cost_cents: 1000, difficulty: 'easy', mode: 'cook', cook_steps: [{ step: 1, instruction: 'Season and brown beef', duration_minutes: 8 }, { step: 2, instruction: 'Warm taco shells', duration_minutes: 3 }, { step: 3, instruction: 'Prep toppings', duration_minutes: 5 }, { step: 4, instruction: 'Assemble and serve', duration_minutes: 5 }] }],
+    [11, { id: 11, name: 'Cereal with Milk', category: 'dinner', prep_time_minutes: 2, tags: ['no_cook', 'fallback', 'quick'], estimated_cost_cents: 200, difficulty: 'easy', mode: 'no_cook', cook_steps: [{ step: 1, instruction: 'Pour cereal into bowl', duration_minutes: 1 }, { step: 2, instruction: 'Add milk', duration_minutes: 1 }] }],
+    [12, { id: 12, name: 'PB&J Sandwich', category: 'dinner', prep_time_minutes: 5, tags: ['no_cook', 'fallback', 'quick'], estimated_cost_cents: 150, difficulty: 'easy', mode: 'no_cook', cook_steps: [{ step: 1, instruction: 'Spread peanut butter', duration_minutes: 1 }, { step: 2, instruction: 'Spread jelly', duration_minutes: 1 }, { step: 3, instruction: 'Combine and cut', duration_minutes: 1 }] }],
+    [13, { id: 13, name: 'Cheese and Crackers', category: 'dinner', prep_time_minutes: 3, tags: ['no_cook', 'fallback', 'quick'], estimated_cost_cents: 300, difficulty: 'easy', mode: 'no_cook', cook_steps: [{ step: 1, instruction: 'Slice cheese', duration_minutes: 2 }, { step: 2, instruction: 'Arrange with crackers', duration_minutes: 1 }] }],
+  ]);
   
   // Readonly mode support
   private _readonlyMode: boolean = false;
@@ -331,6 +449,60 @@ class InMemoryAdapter implements DbAdapter {
     this.tasteMealScores.set(key, score);
   }
   
+  // ==========================================================================
+  // SESSION METHODS (MVP Decision Lock)
+  // ==========================================================================
+  
+  async createSession(session: SessionRecord): Promise<void> {
+    this.checkReadonly();
+    this.sessions.set(session.id, session);
+  }
+  
+  async getActiveSession(householdKey: string): Promise<SessionRecord | null> {
+    // Find most recent session without an ended_at timestamp
+    const activeSessions = Array.from(this.sessions.values())
+      .filter(s => s.household_key === householdKey && !s.ended_at && s.outcome === 'pending')
+      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+    
+    return activeSessions[0] || null;
+  }
+  
+  async getSessionById(householdKey: string, id: string): Promise<SessionRecord | null> {
+    const session = this.sessions.get(id);
+    if (session && session.household_key === householdKey) {
+      return session;
+    }
+    return null;
+  }
+  
+  async updateSession(householdKey: string, id: string, update: Partial<SessionRecord>): Promise<void> {
+    this.checkReadonly();
+    const existing = this.sessions.get(id);
+    if (existing && existing.household_key === householdKey) {
+      this.sessions.set(id, { ...existing, ...update, updated_at: new Date().toISOString() });
+    }
+  }
+  
+  // ==========================================================================
+  // MEAL METHODS (for Arbiter)
+  // ==========================================================================
+  
+  async getMeals(): Promise<MealRecord[]> {
+    return Array.from(this.meals.values());
+  }
+  
+  async getMealById(id: number): Promise<MealRecord | null> {
+    return this.meals.get(id) || null;
+  }
+  
+  // ==========================================================================
+  // HOUSEHOLD CONFIG METHODS
+  // ==========================================================================
+  
+  async getHouseholdConfig(householdKey: string): Promise<HouseholdConfig | null> {
+    return this.householdConfigs.get(householdKey) || this.householdConfigs.get('default') || null;
+  }
+  
   async ping(): Promise<boolean> {
     return true;
   }
@@ -341,6 +513,7 @@ class InMemoryAdapter implements DbAdapter {
     this.inventoryItems.clear();
     this.tasteSignals.clear();
     this.tasteMealScores.clear();
+    this.sessions.clear();
     
     // Reset auth-related stores to defaults
     this.households.clear();
@@ -350,6 +523,8 @@ class InMemoryAdapter implements DbAdapter {
     this.userProfiles.clear();
     this.userProfiles.set(1, { id: 1 });
     this.nextUserProfileId = 2;
+    
+    // Note: meals and householdConfigs are not cleared as they are seed data
   }
 }
 
@@ -1352,6 +1527,108 @@ class PostgresAdapter implements DbAdapter {
         score.rejections,
       ]
     );
+  }
+  
+  // ==========================================================================
+  // SESSION METHODS (MVP Decision Lock)
+  // ==========================================================================
+  
+  async createSession(session: SessionRecord): Promise<void> {
+    await this.query(
+      `INSERT INTO sessions 
+       (id, household_key, started_at, context, decision_id, decision_payload, outcome, rejection_count, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        session.id,
+        session.household_key,
+        session.started_at,
+        JSON.stringify(session.context),
+        session.decision_id || null,
+        session.decision_payload ? JSON.stringify(session.decision_payload) : null,
+        session.outcome || 'pending',
+        session.rejection_count,
+        session.created_at,
+        session.updated_at,
+      ]
+    );
+  }
+  
+  async getActiveSession(householdKey: string): Promise<SessionRecord | null> {
+    const rows = await this.query<SessionRecord>(
+      `SELECT * FROM sessions WHERE household_key = $1 AND ended_at IS NULL AND outcome = 'pending' ORDER BY started_at DESC LIMIT 1`,
+      [householdKey]
+    );
+    return rows[0] || null;
+  }
+  
+  async getSessionById(householdKey: string, id: string): Promise<SessionRecord | null> {
+    const rows = await this.query<SessionRecord>(
+      `SELECT * FROM sessions WHERE household_key = $1 AND id = $2 LIMIT 1`,
+      [householdKey, id]
+    );
+    return rows[0] || null;
+  }
+  
+  async updateSession(householdKey: string, id: string, update: Partial<SessionRecord>): Promise<void> {
+    // Build dynamic update query for allowed fields
+    const allowedFields = ['ended_at', 'decision_id', 'decision_payload', 'outcome', 'rejection_count', 'context'];
+    const setClauses: string[] = ['updated_at = NOW()'];
+    const params: unknown[] = [householdKey, id];
+    let paramIndex = 3;
+    
+    for (const field of allowedFields) {
+      if (field in update) {
+        const value = (update as Record<string, unknown>)[field];
+        if (field === 'context' || field === 'decision_payload') {
+          setClauses.push(`${field} = $${paramIndex}`);
+          params.push(value ? JSON.stringify(value) : null);
+        } else {
+          setClauses.push(`${field} = $${paramIndex}`);
+          params.push(value);
+        }
+        paramIndex++;
+      }
+    }
+    
+    await this.query(
+      `UPDATE sessions SET ${setClauses.join(', ')} WHERE household_key = $1 AND id = $2`,
+      params
+    );
+  }
+  
+  // ==========================================================================
+  // MEAL METHODS (for Arbiter)
+  // ==========================================================================
+  
+  async getMeals(): Promise<MealRecord[]> {
+    // Meals are global (not tenant-scoped)
+    const rows = await this.query<MealRecord>(`SELECT * FROM meals ORDER BY id`);
+    return rows;
+  }
+  
+  async getMealById(id: number): Promise<MealRecord | null> {
+    const rows = await this.query<MealRecord>(`SELECT * FROM meals WHERE id = $1 LIMIT 1`, [id]);
+    return rows[0] || null;
+  }
+  
+  // ==========================================================================
+  // HOUSEHOLD CONFIG METHODS
+  // ==========================================================================
+  
+  async getHouseholdConfig(householdKey: string): Promise<HouseholdConfig | null> {
+    const rows = await this.query<HouseholdConfig>(
+      `SELECT id, household_key, budget_ceiling_cents, fallback_config FROM households WHERE household_key = $1 LIMIT 1`,
+      [householdKey]
+    );
+    if (rows.length === 0) {
+      // Return default config if household not found
+      const defaultRows = await this.query<HouseholdConfig>(
+        `SELECT id, household_key, budget_ceiling_cents, fallback_config FROM households WHERE household_key = $1 LIMIT 1`,
+        ['default']
+      );
+      return defaultRows[0] || null;
+    }
+    return rows[0];
   }
   
   async ping(): Promise<boolean> {
