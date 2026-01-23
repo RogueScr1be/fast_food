@@ -27,6 +27,37 @@ import type {
 } from '../../../types/decision-os';
 
 // =============================================================================
+// CENTRALIZED CONSTANTS (single source of truth)
+// =============================================================================
+
+/**
+ * Default time threshold for DRM activation (24h format HH:MM)
+ * After this time, DRM triggers automatically.
+ */
+export const DEFAULT_DRM_TIME_THRESHOLD = '18:15';
+
+/**
+ * Default rejection count threshold for DRM activation
+ * After this many rejections, DRM triggers automatically.
+ */
+export const DEFAULT_DRM_REJECTION_THRESHOLD = 2;
+
+// =============================================================================
+// TIME UTILITIES
+// =============================================================================
+
+/**
+ * Get current server time in HH:MM format.
+ * Server-side evaluation only - never trust client time.
+ */
+export function getServerTimeHHMM(): string {
+  const now = new Date();
+  const hours = now.getHours().toString().padStart(2, '0');
+  const minutes = now.getMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+// =============================================================================
 // DRM TRIGGER CHECKS
 // =============================================================================
 
@@ -215,8 +246,8 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
       instructions: 'Slice cheese, arrange with crackers',
     },
   ],
-  drm_time_threshold: '18:15',
-  rejection_threshold: 2,
+  drm_time_threshold: DEFAULT_DRM_TIME_THRESHOLD,
+  rejection_threshold: DEFAULT_DRM_REJECTION_THRESHOLD,
 };
 
 /**
@@ -231,7 +262,7 @@ export function getFallbackConfig(
   
   return {
     hierarchy: householdConfig.hierarchy,
-    drm_time_threshold: householdConfig.drm_time_threshold ?? '18:15',
-    rejection_threshold: householdConfig.rejection_threshold ?? 2,
+    drm_time_threshold: householdConfig.drm_time_threshold ?? DEFAULT_DRM_TIME_THRESHOLD,
+    rejection_threshold: householdConfig.rejection_threshold ?? DEFAULT_DRM_REJECTION_THRESHOLD,
   };
 }

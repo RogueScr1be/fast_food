@@ -18,7 +18,7 @@ export interface ValidationResult {
  * Allowed fields for each response type (single source of truth)
  */
 export const DECISION_RESPONSE_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
-export const DRM_RESPONSE_ALLOWED_FIELDS = new Set(['drmActivated']);
+export const DRM_RESPONSE_ALLOWED_FIELDS = new Set(['drmActivated', 'reason', 'decision']);
 export const FEEDBACK_RESPONSE_ALLOWED_FIELDS = new Set(['recorded']);
 export const RECEIPT_RESPONSE_ALLOWED_FIELDS = new Set(['receiptImportId', 'status']);
 
@@ -140,8 +140,10 @@ export function validateDecisionResponse(response: unknown): ValidationResult {
 /**
  * Validates a DRM endpoint response.
  * 
- * CANONICAL CONTRACT:
+ * CANONICAL CONTRACT (Phase 2 - MVP):
  * - drmActivated: boolean (required)
+ * - reason?: string (optional - 'explicit_done' | 'time_threshold' | 'rejection_threshold' | 'no_valid_meal')
+ * - decision?: object (optional - full fallback decision with execution_payload)
  * 
  * REJECTS:
  * - rescueActivated (banned)
@@ -149,7 +151,7 @@ export function validateDecisionResponse(response: unknown): ValidationResult {
  * - recorded (banned)
  * - message (banned)
  * - any unknown fields
- * - any arrays
+ * - decision as array (must be object or null)
  */
 export function validateDrmResponse(response: unknown): ValidationResult {
   const errors: Array<{ field: string; message: string; value?: unknown }> = [];
@@ -171,8 +173,24 @@ export function validateDrmResponse(response: unknown): ValidationResult {
     errors.push({ field: 'drmActivated', message: 'drmActivated must be a boolean', value: resp.drmActivated });
   }
 
-  // Apply assertNoArraysDeep
-  errors.push(...assertNoArraysDeep(resp, 'response'));
+  // reason: optional string
+  if ('reason' in resp && resp.reason !== undefined) {
+    if (typeof resp.reason !== 'string') {
+      errors.push({ field: 'reason', message: 'reason must be a string if provided', value: resp.reason });
+    }
+  }
+
+  // decision: optional, must be object or null (NOT array)
+  if ('decision' in resp && resp.decision !== undefined) {
+    if (Array.isArray(resp.decision)) {
+      errors.push({ field: 'decision', message: 'decision must be an object or null, not an array', value: resp.decision });
+    } else if (resp.decision !== null && typeof resp.decision !== 'object') {
+      errors.push({ field: 'decision', message: 'decision must be an object or null', value: resp.decision });
+    }
+  }
+
+  // Note: We do NOT apply assertNoArraysDeep to the decision object
+  // because execution_payload.steps is an array per Arbiter Contract
 
   return { valid: errors.length === 0, errors };
 }

@@ -182,6 +182,44 @@ describe('validateDrmResponse', () => {
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
+
+    it('passes with full Phase 2 response (drmActivated + reason + decision)', () => {
+      const response = {
+        drmActivated: true,
+        reason: 'explicit_done',
+        decision: {
+          decision_id: 'drm-123',
+          mode: 'no_cook',
+          meal: 'Cereal with Milk',
+          meal_id: 11,
+          confidence: 1.0,
+          estimated_time: '5 min',
+          estimated_cost: '$0',
+          execution_payload: {
+            steps: ['Pour cereal into bowl, add milk'],
+            ingredients_needed: [],
+            substitutions: [],
+          },
+          is_rescue: true,
+          fallback_type: 'no_cook',
+        },
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('passes with reason but no decision', () => {
+      const response = { drmActivated: true, reason: 'time_threshold' };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(true);
+    });
+
+    it('passes with decision as null', () => {
+      const response = { drmActivated: true, reason: 'explicit_done', decision: null };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(true);
+    });
   });
 
   describe('type validation', () => {
@@ -197,6 +235,24 @@ describe('validateDrmResponse', () => {
       const result = validateDrmResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'drmActivated')).toBe(true);
+    });
+
+    it('fails when reason is not a string', () => {
+      const response = { drmActivated: true, reason: 123 };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'reason')).toBe(true);
+    });
+
+    it('fails when decision is an array (INVARIANT: one decision only)', () => {
+      const response = {
+        drmActivated: true,
+        reason: 'explicit_done',
+        decision: [{ meal: 'Option 1' }, { meal: 'Option 2' }], // BANNED
+      };
+      const result = validateDrmResponse(response);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.field === 'decision')).toBe(true);
     });
   });
 
@@ -364,7 +420,8 @@ describe('Allowed Fields Constants', () => {
   });
 
   it('DRM_RESPONSE_ALLOWED_FIELDS has exact expected values', () => {
-    expect(DRM_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['drmActivated']));
+    // Phase 2 MVP: DRM now returns full fallback decision
+    expect(DRM_RESPONSE_ALLOWED_FIELDS).toEqual(new Set(['drmActivated', 'reason', 'decision']));
     // Verify banned fields are NOT in allowed set
     expect(DRM_RESPONSE_ALLOWED_FIELDS.has('rescueActivated')).toBe(false);
     expect(DRM_RESPONSE_ALLOWED_FIELDS.has('rescueType')).toBe(false);
