@@ -66,7 +66,8 @@ jobs:
 
       - name: Verify staging DB schema
         env:
-          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          # EDIT: db:verify expects DATABASE_URL (not DATABASE_URL_STAGING)
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
         run: |
           echo "=== Verifying Staging Schema ==="
           npm run db:verify:staging
@@ -118,14 +119,15 @@ jobs:
 
       - name: Record deployment (last green)
         env:
-          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          # EDIT: deploy:record:lastgreen expects DATABASE_URL (not DATABASE_URL_STAGING)
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
           DEPLOYMENT_URL: ${{ needs.deploy.outputs.deployment_url }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           ENV_NAME: staging
         run: |
           echo "=== Recording Last Green Deployment ==="
-          npm run deploy:record:lastgreen || echo "WARN record_last_green skipped (may need DATABASE_URL)"
+          npm run deploy:record:lastgreen
 
   summary:
     name: Staging Summary
