@@ -117,7 +117,7 @@ const NOT_NULL_COLUMNS: string[] = [
   // MVP Phase 3: Sessions household isolation
   'sessions.household_key',
   'sessions.started_at',
-  'sessions.outcome',
+  // Note: sessions.outcome is intentionally nullable (NULL until session ends)
 ];
 
 async function verifyRequiredTables(client: DbClient): Promise<{ valid: boolean; missing: string[] }> {
