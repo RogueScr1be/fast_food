@@ -8,6 +8,7 @@ The product is multi-agent internally, but outputs are always structured and use
 
 ## High-Level Components
 - **Web App (UI)**: profile, pantry, plan, grocery, edit/regen flows
+  - Design must comply with [docs/design/constitution.md](design/constitution.md)
 - **API Layer**: validates inputs, orchestrates agents, persists outputs
 - **Agents (logical modules)**: ProfileAgent, PlannerAgent, PantryAgent, GroceryAgent, SafetyAgent
 - **Database (Supabase Postgres)**: users, households, constraints, pantry, plans, groceries, events
