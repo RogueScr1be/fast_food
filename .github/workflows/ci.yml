@@ -19,6 +19,7 @@ env:
 
 jobs:
   test:
+    name: CI / test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,6 +45,7 @@ jobs:
 
   # Ephemeral Postgres test - proves migrations work from scratch
   db_migration_test:
+    name: CI / db_migration_test
     runs-on: ubuntu-latest
     needs: test
     services:
