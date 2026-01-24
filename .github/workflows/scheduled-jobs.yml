@@ -5,6 +5,7 @@
 # - Weekly: Prune old metrics
 #
 # Uses GitHub Environment: staging (for database access)
+# These are operational writes to staging DB - treated as staging infrastructure.
 
 name: Scheduled Jobs
 
@@ -25,6 +26,15 @@ on:
           - sessions_prune
           - metrics_prune
           - both
+
+# Minimal permissions - only needs to read code
+permissions:
+  contents: read
+
+# Prevent overlapping runs
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
 
 env:
   NODE_VERSION: '20'
@@ -87,7 +97,7 @@ jobs:
 
       - name: Prune old metrics
         env:
-          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
           METRICS_RETENTION_DAYS: '90'
         run: |
           echo "=== Pruning Old Metrics ==="

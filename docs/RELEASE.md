@@ -2,6 +2,12 @@
 
 This document describes how to build and release the Fast Food Zero-UI app using EAS (Expo Application Services).
 
+## Source of Truth
+
+- **Release authority:** Git tag `vX.Y.Z`
+- **Release button:** Only accepts tags (semver format required)
+- **Staging gate:** Must be green on the same SHA before release proceeds
+
 ## CI/CD Architecture (3 Workflows, 2 Protected Environments)
 
 The project uses a clean separation of concerns with three GitHub Actions workflows and two protected environments.
@@ -37,21 +43,33 @@ ci.yml runs again
     ↓
 staging-deploy.yml: migrate → deploy → healthcheck
     ↓
-[Manual] Run "Release to TestFlight" workflow
+Create release tag: git tag v1.2.3 && git push origin v1.2.3
+    ↓
+[Manual] Run "Release to TestFlight" workflow with tag
+    ↓
+GATE 1: Tag must be vX.Y.Z (semver)
+    ↓
+GATE 2: CI must be green for tag SHA (GitHub API check)
+    ↓
+GATE 3: Staging Deploy must be green for tag SHA within 6 hours (GitHub API check)
+    ↓
+GATE 4: No existing GitHub Release for this tag (release-lock)
     ↓
 GitHub prompts for production environment approval
     ↓
-release-testflight.yml: preflight → EAS build → submit
+release-testflight.yml: preflight → EAS build → submit → GitHub Release created
 ```
 
-### Hard Rules (Encoded in Workflows)
+### Hard Rules (Machine-Enforced in Workflows)
 
-1. **Production env approval required** — GitHub environment setting
-2. **Only main allowed for production** — GitHub environment setting
-3. **Release concurrency: only one at a time** — Workflow concurrency setting
-4. **No production secrets in repo** — All in GitHub environment secrets
-5. **Staging migrations only from staging workflow** — Never mixed into CI or release
-6. **Release assumes staging is green** — Run staging workflow first
+1. **Tag-only releases** — Release workflow requires `vX.Y.Z` semver tag (hard fail otherwise)
+2. **CI must be green** — GitHub API check verifies CI passed for tag SHA
+3. **Staging must be green** — GitHub API check verifies Staging Deploy passed for tag SHA (within 6 hours)
+4. **Release-lock via GitHub Release** — Prevents double-submits; release artifact created on success
+5. **Production env approval required** — GitHub environment setting
+6. **Only tags/main allowed for production** — GitHub environment setting
+7. **Release concurrency: only one at a time** — Workflow concurrency setting
+8. **No production secrets in repo** — All in GitHub environment secrets
 
 ---
 
