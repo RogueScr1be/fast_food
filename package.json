@@ -42,7 +42,8 @@
     "eas:build:preview": "eas build --profile preview --platform ios",
     "eas:build:prod": "eas build --profile production --platform ios",
     "eas:submit:prod": "eas submit --platform ios --latest",
-    "release:testflight": "eas build --profile production --platform ios --auto-submit"
+    "release:testflight": "eas build --profile production --platform ios --auto-submit",
+    "release:preflight": "npx ts-node scripts/release-preflight.ts"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.2.3",

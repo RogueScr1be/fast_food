@@ -844,6 +844,9 @@ npm run eas:submit:prod
 # Build AND submit to TestFlight
 npm run release:testflight
 
+# Run ALL preflight checks before release
+npm run release:preflight
+
 # Check build status
 eas build:list
 
@@ -853,6 +856,104 @@ eas secret:list
 # Add a secret
 eas secret:create --scope project --name VAR_NAME --value "value"
 ```
+
+---
+
+## TestFlight Ship Plan (No Guessing, No Heroics)
+
+This is the exact sequence for cutting a TestFlight build. **Do not skip steps.**
+
+### Gate 0 — Secrets + Credentials (Must Exist First)
+
+Before touching anything else, verify these exist in your environment:
+
+**Staging:**
+| Secret | Purpose |
+|--------|---------|
+| `DATABASE_URL_STAGING` | Postgres connection for migrations |
+| `STAGING_URL` | Deployed staging URL |
+| `STAGING_AUTH_TOKEN` | JWT for authenticated tests |
+| `VERCEL_TOKEN` | (If deploy is scripted) |
+
+**EAS/TestFlight:**
+| Secret | Purpose |
+|--------|---------|
+| `EXPO_TOKEN` | (Or interactive `eas login`) |
+| `APPLE_ID` | Apple Developer account email |
+| `ASC_APP_ID` | App Store Connect App ID |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+
+**Rule:** If any one is missing, don't start the cut. You'll thrash.
+
+### Phase 10C — Staging "Truth Run"
+
+Run these in order:
+
+```bash
+# 1. Migrate staging
+export DATABASE_URL="$DATABASE_URL_STAGING"
+npm run db:migrate:staging
+npm run db:verify:staging
+
+# 2. Deploy staging (Vercel)
+# Use your normal Vercel flow (manual or scripted)
+# Confirm deployed commit includes latest changes
+
+# 3. Run staging healthcheck
+export STAGING_URL=...
+export STAGING_AUTH_TOKEN=...
+npm run staging:healthcheck
+```
+
+**Pass criteria:** Healthcheck green. No partial passes.
+
+### Phase 10D — Release Cut (TestFlight)
+
+```bash
+# 1. Run ALL preflight checks (test + build:sanity + staging:healthcheck)
+npm run release:preflight
+
+# 2. Verify EAS auth
+eas whoami
+# If not logged in:
+eas login
+
+# 3. Build + submit
+npm run release:testflight
+```
+
+**Pass criteria:** Build uploaded + visible in App Store Connect TestFlight.
+
+### Phase 10E — Post-cut Verification (Fast and Brutal)
+
+On the TestFlight build, verify:
+
+**Production gates:**
+- [ ] QA panel inaccessible (gesture does nothing)
+- [ ] Internal metrics endpoint blocked (401 / disabled)
+- [ ] No staging token embedded
+
+**Kill switch behavior:**
+- [ ] Client `EXPO_PUBLIC_FF_MVP_ENABLED=false` shows unavailable screen
+- [ ] Server `ff_mvp_enabled=false` blocks even if client is true
+
+**Core loop:**
+- [ ] Decide → accept closes session
+- [ ] Reject twice → DRM rescue
+- [ ] Receipt scan → "Receipt added" and subsequent decisions prefer matching inventory
+
+### Single Command: Release Preflight
+
+```bash
+npm run release:preflight
+```
+
+Executes in order:
+1. `npm test` — All tests must pass
+2. `npm run build:sanity` — EAS config must be valid
+3. `npm run staging:healthcheck` — Staging must be healthy
+
+**Fails fast on any error.** No "I'll just try anyway."
 
 ---
 
