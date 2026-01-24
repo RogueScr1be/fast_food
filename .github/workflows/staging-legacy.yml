@@ -1,15 +1,31 @@
-name: Staging Pipeline
+# =============================================================================
+# DEPRECATED: This workflow has been replaced by the new CI/CD architecture
+#
+# New workflows:
+# - ci.yml — Tests on PR and main (no secrets)
+# - staging-deploy.yml — Manual staging deploy + verify
+# - release-testflight.yml — Manual release button (production env)
+# - scheduled-jobs.yml — Cron jobs (prune sessions, prune metrics)
+#
+# This file is kept for reference only. It will not run.
+# =============================================================================
+
+name: "[DEPRECATED] Staging Pipeline"
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Daily sessions prune: Every day at 02:00 UTC
-    - cron: '0 2 * * *'
-    # Weekly metrics prune: Sunday at 03:00 UTC
-    - cron: '0 3 * * 0'
+  # DISABLED - replaced by new workflows
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  # schedule:
+  #   - cron: '0 2 * * *'
+  #   - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "This workflow is deprecated. Use ci.yml, staging-deploy.yml, or release-testflight.yml"
+        required: false
 
 env:
   NODE_VERSION: '20'

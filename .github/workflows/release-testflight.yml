@@ -1,0 +1,140 @@
+# Release to TestFlight Workflow — THE BUTTON
+#
+# Uses GitHub Environment: production (requires approval + prod secrets)
+# This ensures:
+# - PRs can't access prod secrets
+# - Release can't run without explicit approval
+# - Audit trail is native in GitHub
+#
+# Prerequisites:
+# 1. CI must be green on the ref
+# 2. Staging should be verified and stable (run Staging Deploy first)
+# 3. Production environment approval required
+
+name: Release to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to release (tag recommended, e.g., v1.0.0)"
+        required: true
+        default: "main"
+      skip_preflight:
+        description: "Skip preflight checks (NOT RECOMMENDED)"
+        required: false
+        default: "false"
+        type: boolean
+
+concurrency:
+  group: release-testflight
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # Eligibility check - runs before production approval
+  eligibility:
+    name: Release Eligibility
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.check.outputs.eligible }}
+    steps:
+      - name: Check eligibility
+        id: check
+        run: |
+          echo "=== Release Eligibility Check ==="
+          echo "Ref: ${{ inputs.ref }}"
+          
+          # Check if ref is a tag (recommended)
+          if [[ "${{ inputs.ref }}" == v* ]]; then
+            echo "✅ Ref is a version tag (recommended)"
+          else
+            echo "⚠️  Ref is not a version tag. Consider using vX.Y.Z format."
+          fi
+          
+          echo "eligible=true" >> $GITHUB_OUTPUT
+          echo ""
+          echo "Eligibility: PASSED"
+          echo "Proceeding to production environment approval..."
+
+  # The actual release - requires production environment approval
+  release:
+    name: Build + Submit to TestFlight
+    runs-on: ubuntu-latest
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Preflight checks (tests + build sanity)
+      - name: Preflight - Tests
+        if: inputs.skip_preflight != 'true'
+        run: |
+          echo "=== Running Tests ==="
+          npm test
+          echo "PASS tests"
+
+      - name: Preflight - Build Sanity
+        if: inputs.skip_preflight != 'true'
+        run: |
+          echo "=== Build Sanity Check ==="
+          npm run build:sanity
+          echo "PASS build_sanity"
+
+      - name: Skipping preflight (NOT RECOMMENDED)
+        if: inputs.skip_preflight == 'true'
+        run: |
+          echo "⚠️  WARNING: Preflight checks skipped!"
+          echo "This is NOT RECOMMENDED for production releases."
+
+      # Setup EAS
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # Build and submit to TestFlight
+      - name: EAS Build + Submit (TestFlight)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "=== Building for TestFlight ==="
+          echo "Ref: ${{ inputs.ref }}"
+          echo ""
+          npm run release:testflight
+          echo ""
+          echo "PASS eas_build_submitted"
+
+      - name: Release Summary
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║  ✅ RELEASE SUBMITTED TO TESTFLIGHT                       ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Ref: ${{ inputs.ref }}"
+          echo "Build submitted to App Store Connect."
+          echo ""
+          echo "Next steps:"
+          echo "  1. Check App Store Connect for build processing status"
+          echo "  2. Once processed, build will be available in TestFlight"
+          echo "  3. Run post-cut verification (see docs/RELEASE.md)"

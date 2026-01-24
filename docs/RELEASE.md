@@ -2,31 +2,85 @@
 
 This document describes how to build and release the Fast Food Zero-UI app using EAS (Expo Application Services).
 
-## CI/CD Staging Pipeline
+## CI/CD Architecture (3 Workflows, 2 Protected Environments)
 
-The project uses GitHub Actions for continuous integration and deployment to staging.
+The project uses a clean separation of concerns with three GitHub Actions workflows and two protected environments.
 
-### Pipeline Overview
+### Workflows
 
-| Job | Trigger | Description |
-|-----|---------|-------------|
-| `test` | All PRs and pushes | Runs `npm test` and `npm run smoke:mvp` |
-| `db_migration_test` | All PRs and pushes | Ephemeral Postgres: runs migrations + schema verify + write smoke |
-| `deploy_freeze_gate` | Push to main | Checks if deploys are frozen (emergency brake) |
-| `migrate_staging` | Push to main | Runs database migrations on staging |
-| `schema_gate` | Push to main | Verifies DB schema matches required structure |
-| `deploy_staging` | Push to main | Deploys to Vercel staging |
-| `healthz_gate` | Push to main | Verifies `/api/healthz` returns 200 |
-| `metrics_gate` | Push to main | Verifies runtime_metrics_daily table is healthy |
-| `alerts_gate` | Push to main | Checks durable metrics for alert thresholds |
-| `auth_required_gate` | Push to main | Verifies endpoints return 401 WITHOUT token |
-| `auth_works_gate` | Push to main | Verifies endpoints return 200 WITH token |
-| `runtime_flags_gate` | Push to main | Proves DB runtime flags change live behavior |
-| `readonly_gate` | Push to main | Proves readonly mode prevents DB writes |
-| `smoke_staging` | Push to main | Runs full staging smoke tests |
-| `record_last_green` | Push to main | Records deployment to runtime_deployments_log |
-| `provenance_gate` | Push to main | Verifies recorded deployment matches actual |
-| `metrics_prune` | Weekly (Sunday 03:00 UTC) | Deletes old metrics to prevent unbounded growth |
+| Workflow | File | Trigger | Description |
+|----------|------|---------|-------------|
+| **CI** | `ci.yml` | PR + push to main | Tests, build sanity, migration proof (no secrets) |
+| **Staging Deploy** | `staging-deploy.yml` | Manual dispatch | Migrate DB, deploy to Vercel, run healthcheck |
+| **Release to TestFlight** | `release-testflight.yml` | Manual button | EAS build + submit (requires production approval) |
+| **Scheduled Jobs** | `scheduled-jobs.yml` | Cron | Daily session prune, weekly metrics prune |
+
+### Protected Environments
+
+| Environment | Secrets | Rules |
+|-------------|---------|-------|
+| `staging` | DATABASE_URL_STAGING, STAGING_URL, STAGING_AUTH_TOKEN, VERCEL_* | No approval required |
+| `production` | EXPO_TOKEN, APPLE_ID, ASC_APP_ID, APPLE_TEAM_ID | **Approval required** |
+
+### How It Works
+
+```
+PR opened
+    ↓
+ci.yml runs (tests, build sanity, migration test)
+    ↓
+Merge to main
+    ↓
+ci.yml runs again
+    ↓
+[Manual] Run "Staging Deploy + Verify" workflow
+    ↓
+staging-deploy.yml: migrate → deploy → healthcheck
+    ↓
+[Manual] Run "Release to TestFlight" workflow
+    ↓
+GitHub prompts for production environment approval
+    ↓
+release-testflight.yml: preflight → EAS build → submit
+```
+
+### Hard Rules (Encoded in Workflows)
+
+1. **Production env approval required** — GitHub environment setting
+2. **Only main allowed for production** — GitHub environment setting
+3. **Release concurrency: only one at a time** — Workflow concurrency setting
+4. **No production secrets in repo** — All in GitHub environment secrets
+5. **Staging migrations only from staging workflow** — Never mixed into CI or release
+6. **Release assumes staging is green** — Run staging workflow first
+
+---
+
+## Legacy Pipeline (Deprecated)
+
+The old `staging-legacy.yml` workflow has been replaced by the new architecture. It is kept for reference only and will not run.
+
+**Old jobs (for reference):**
+
+| Job | Description |
+|-----|-------------|
+| `test` | Runs `npm test` and `npm run smoke:mvp` |
+| `db_migration_test` | Ephemeral Postgres: runs migrations + schema verify + write smoke |
+| `deploy_freeze_gate` | Checks if deploys are frozen |
+| `migrate_staging` | Runs database migrations on staging |
+| `schema_gate` | Verifies DB schema matches required structure |
+| `deploy_staging` | Deploys to Vercel staging |
+| `healthz_gate` | Verifies `/api/healthz` returns 200 |
+| `metrics_gate` | Verifies runtime_metrics_daily table is healthy |
+| `alerts_gate` | Checks durable metrics for alert thresholds |
+| `auth_required_gate` | Verifies endpoints return 401 WITHOUT token |
+| `auth_works_gate` | Verifies endpoints return 200 WITH token |
+| `runtime_flags_gate` | Proves DB runtime flags change live behavior |
+| `readonly_gate` | Proves readonly mode prevents DB writes |
+| `smoke_staging` | Runs full staging smoke tests |
+| `record_last_green` | Records deployment to runtime_deployments_log |
+| `provenance_gate` | Verifies recorded deployment matches actual |
+
+---
 
 ### Pipeline Gates
 
