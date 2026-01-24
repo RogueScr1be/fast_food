@@ -15,6 +15,8 @@
  */
 
 import { ocrExtractTextFromImageBase64 } from '../ocr/providers';
+import { record } from '../monitoring/metrics';
+import { normalizeInventoryItem } from '../inventory/normalize';
 import type {
   ReceiptImportStatus,
   ReceiptImportResponse,
@@ -214,7 +216,7 @@ export async function processReceiptImport(
   }
   
   // Create initial record with status='received'
-  const record: ReceiptImportRecord = {
+  const receiptRecord: ReceiptImportRecord = {
     id: receiptImportId,
     user_profile_id: userProfileId,
     household_key: householdKey, // Partition key for multi-tenant isolation
@@ -223,7 +225,7 @@ export async function processReceiptImport(
     image_hash: imageHash,
   };
   
-  receiptImportsStore.set(receiptImportId, record);
+  receiptImportsStore.set(receiptImportId, receiptRecord);
   imageHashIndex.set(imageHash, receiptImportId);
   
   // Extract text via OCR
@@ -231,9 +233,9 @@ export async function processReceiptImport(
   
   // Handle OCR error
   if (ocrResult.error) {
-    record.status = 'failed';
-    record.error_message = ocrResult.error;
-    receiptImportsStore.set(receiptImportId, record);
+    receiptRecord.status = 'failed';
+    receiptRecord.error_message = ocrResult.error;
+    receiptImportsStore.set(receiptImportId, receiptRecord);
     
     return {
       receiptImportId,
@@ -242,11 +244,11 @@ export async function processReceiptImport(
   }
   
   // Store raw OCR text
-  record.raw_ocr_text = ocrResult.rawText;
+  receiptRecord.raw_ocr_text = ocrResult.rawText;
   
   // Parse items from OCR text
   const parsedItems = parseReceiptItems(ocrResult.rawText);
-  record.parsed_items = parsedItems;
+  receiptRecord.parsed_items = parsedItems;
   
   // Upsert inventory items
   const inventoryUpdated = upsertInventoryFromReceipt(
@@ -259,25 +261,28 @@ export async function processReceiptImport(
   
   // Update status based on parsing success
   if (parsedItems.length === 0 && ocrResult.rawText.length === 0) {
-    record.status = 'failed';
-    record.error_message = 'No text extracted from image';
+    receiptRecord.status = 'failed';
+    receiptRecord.error_message = 'No text extracted from image';
   } else if (parsedItems.length === 0) {
-    record.status = 'failed';
-    record.error_message = 'Could not parse any items from receipt';
+    receiptRecord.status = 'failed';
+    receiptRecord.error_message = 'Could not parse any items from receipt';
   } else {
-    record.status = 'parsed';
+    receiptRecord.status = 'parsed';
+    // Record successful receipt import (privacy-safe)
+    record('receipt_imported');
   }
   
-  receiptImportsStore.set(receiptImportId, record);
+  receiptImportsStore.set(receiptImportId, receiptRecord);
   
   return {
     receiptImportId,
-    status: record.status,
+    status: receiptRecord.status,
   };
 }
 
 /**
  * Upsert inventory items from parsed receipt items.
+ * Uses deterministic category normalization.
  * 
  * @returns Number of items upserted
  */
@@ -294,6 +299,9 @@ function upsertInventoryFromReceipt(
     // Only process items with sufficient confidence
     if (item.confidence < 0.50) continue;
     
+    // Normalize item for category detection
+    const normalized = normalizeInventoryItem(item.name, item.confidence);
+    
     const existingItem = getInventoryItemByName(userProfileId, item.name);
     
     if (existingItem) {
@@ -303,8 +311,12 @@ function upsertInventoryFromReceipt(
       existingItem.last_seen_at = nowIso;
       existingItem.updated_at = nowIso; // Legacy column
       // Keep higher confidence
-      if (item.confidence > existingItem.confidence) {
-        existingItem.confidence = item.confidence;
+      if (normalized.confidence > existingItem.confidence) {
+        existingItem.confidence = normalized.confidence;
+      }
+      // Update category if we have a better match
+      if (normalized.category !== 'unknown') {
+        existingItem.category = normalized.category;
       }
       inventoryItemsStore.set(existingItem.id, existingItem);
     } else {
@@ -314,10 +326,11 @@ function upsertInventoryFromReceipt(
         user_profile_id: userProfileId,
         household_key: householdKey, // Partition key
         // Canonical columns
-        item_name: item.name,
+        item_name: normalized.normalizedName,
         remaining_qty: item.quantity || 1,
-        confidence: item.confidence,
+        confidence: normalized.confidence,
         last_seen_at: nowIso,
+        category: normalized.category, // New: category from normalizer
         // Legacy columns (for backward compatibility)
         name: item.name,
         quantity: item.quantity || 1,
@@ -330,6 +343,8 @@ function upsertInventoryFromReceipt(
     }
     
     count++;
+    // Record metric for each item added (privacy-safe: no item names)
+    record('inventory_items_added');
   }
   
   return count;

@@ -33,7 +33,8 @@ import {
   Pressable,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Zap, DollarSign, Battery, Clock } from 'lucide-react-native';
+import { Zap, DollarSign, Battery, Clock, Camera } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 /**
  * Check if MVP is enabled (client-side kill switch)
@@ -232,6 +233,63 @@ export default function TonightScreen() {
     }
   };
 
+  /**
+   * Handle receipt scan — Secondary action
+   * 
+   * Per constitution (Article V, VI):
+   * - No new choices added to the flow
+   * - Silent operation with minimal acknowledgment
+   * - Does NOT change the primary decision flow
+   */
+  const handleScanReceipt = async () => {
+    try {
+      // Request camera permissions
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (!permissionResult.granted) {
+        // Silent fail - no blocking modal
+        return;
+      }
+      
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.7, // Lower quality for faster upload
+        base64: true,
+      });
+      
+      if (result.canceled || !result.assets?.[0]?.base64) {
+        // User cancelled - silent, no acknowledgment needed
+        return;
+      }
+      
+      // Upload receipt silently
+      const imageBase64 = result.assets[0].base64;
+      
+      const response = await fetch('/api/decision-os/receipt/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64 }),
+      });
+      
+      const data = await response.json();
+      
+      // Minimal acknowledgment per constitution (Article III - Closure of Emotional Loops)
+      // "Recognition (I was heard)" - brief feedback, no explanation of how
+      if (data.status === 'parsed') {
+        Alert.alert('Receipt added');
+      } else {
+        // Failed or received - brief acknowledgment
+        Alert.alert('Receipt not added');
+      }
+      
+    } catch {
+      // Silent fail - don't disrupt primary flow
+      Alert.alert('Receipt not added');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header — Long-press title for 2 seconds to access QA panel */}
@@ -288,6 +346,16 @@ export default function TonightScreen() {
           <Text style={styles.primaryButtonText}>
             {isLoading ? 'Deciding...' : 'Decide for me'}
           </Text>
+        </TouchableOpacity>
+        
+        {/* Secondary action — Scan receipt (optional, non-branching) */}
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={handleScanReceipt}
+          activeOpacity={0.6}
+        >
+          <Camera size={16} color="#888" style={styles.secondaryIcon} />
+          <Text style={styles.secondaryButtonText}>Scan receipt</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -406,5 +474,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  // Secondary action — smaller, lower contrast, not dominant
+  secondaryButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  secondaryIcon: {
+    marginRight: 6,
+  },
+  secondaryButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#888',
   },
 });

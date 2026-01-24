@@ -358,6 +358,12 @@ export async function POST(request: Request): Promise<Response> {
       confidence: i.confidence,
     }));
     
+    // Track if inventory signal is being used (privacy-safe)
+    const hasInventorySignal = inventoryEstimate.length > 0;
+    if (hasInventorySignal) {
+      record('inventory_signal_used');
+    }
+    
     // Build Arbiter input
     const arbiterInput: ArbiterInput = {
       context,

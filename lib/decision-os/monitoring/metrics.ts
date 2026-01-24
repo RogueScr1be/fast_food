@@ -29,6 +29,11 @@
  * - decision_accepted: User approved decision
  * - decision_rejected: User rejected decision
  * - session_rescued: Session ended via DRM rescue
+ * 
+ * INVENTORY METRICS (Phase 9):
+ * - receipt_imported: Receipt successfully imported (status=parsed)
+ * - inventory_items_added: Items added to inventory from receipt
+ * - inventory_signal_used: Decision used inventory availability signal
  */
 export type MetricName =
   | 'healthz_hit'
@@ -51,7 +56,11 @@ export type MetricName =
   | 'decision_returned'
   | 'decision_accepted'
   | 'decision_rejected'
-  | 'session_rescued';
+  | 'session_rescued'
+  // Inventory Metrics (Phase 9)
+  | 'receipt_imported'
+  | 'inventory_items_added'
+  | 'inventory_signal_used';
 
 /**
  * Metrics snapshot type

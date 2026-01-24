@@ -28,6 +28,13 @@ import type {
   CookStep,
 } from '../../../types/decision-os';
 
+import {
+  normalizeInventoryItems,
+  buildInventoryAvailability,
+  type NormalizedInventoryItem,
+  type InventoryCategory,
+} from '../inventory/normalize';
+
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
@@ -66,6 +73,12 @@ const HIGH_PRESSURE_MAX_PREP_MINUTES = 25;
  * Server hour (24h format) when time pressure becomes high
  */
 const TIME_PRESSURE_THRESHOLD_HOUR = 18; // 6:00 PM
+
+/**
+ * Inventory matching: bonus for meals that match available inventory.
+ * This is used in sorting preference, NOT for blocking.
+ */
+const INVENTORY_MATCH_BONUS = 0.5;
 
 // =============================================================================
 // RULE 1: EXECUTABILITY GATE
@@ -148,6 +161,128 @@ export function passesTimePressureGate(
  */
 export function calculateTimePressure(serverHour: number): 'normal' | 'high' {
   return serverHour >= TIME_PRESSURE_THRESHOLD_HOUR ? 'high' : 'normal';
+}
+
+// =============================================================================
+// RULE 1C: INVENTORY ADVISORY (silent preference boost)
+// =============================================================================
+
+/**
+ * Meal category requirements for inventory matching.
+ * Maps meal tags to required inventory categories.
+ */
+const MEAL_CATEGORY_REQUIREMENTS: Record<string, InventoryCategory[]> = {
+  // Protein-based tags
+  'chicken': ['protein'],
+  'beef': ['protein'],
+  'pork': ['protein'],
+  'fish': ['protein'],
+  'seafood': ['protein'],
+  'meat': ['protein'],
+  'vegetarian': ['vegetable', 'dairy'],
+  'vegan': ['vegetable'],
+  
+  // Carb-based tags
+  'pasta': ['carb'],
+  'rice': ['carb'],
+  'bread': ['carb'],
+  'noodles': ['carb'],
+  
+  // Other
+  'salad': ['vegetable'],
+  'soup': ['vegetable', 'protein'],
+  'sandwich': ['carb', 'protein'],
+  'breakfast': ['protein', 'dairy'],
+};
+
+/**
+ * Calculate inventory match score for a meal.
+ * 
+ * This is ADVISORY only (per spec: "Inventory is advisory, never blocking").
+ * Returns a score 0-1 indicating how well the meal matches available inventory.
+ * 
+ * BOOLEAN LOGIC (not weighted scoring):
+ * - If no inventory data: return 0.5 (neutral)
+ * - If meal matches available categories: return 1.0
+ * - If meal requires unavailable categories: return 0.0
+ * 
+ * @param meal - Meal to check
+ * @param inventoryAvailability - Category availability map
+ * @returns Score 0-1 (higher = better match)
+ */
+export function getInventoryMatchScore(
+  meal: Meal,
+  inventoryAvailability: Record<InventoryCategory, boolean>
+): number {
+  // If no inventory signal, return neutral score
+  const hasAnyInventory = Object.values(inventoryAvailability).some(v => v);
+  if (!hasAnyInventory) {
+    return 0.5; // Neutral - no inventory data
+  }
+  
+  // Check meal tags against required categories
+  const requiredCategories: Set<InventoryCategory> = new Set();
+  
+  for (const tag of meal.tags) {
+    const tagLower = tag.toLowerCase();
+    const categories = MEAL_CATEGORY_REQUIREMENTS[tagLower];
+    if (categories) {
+      categories.forEach(c => requiredCategories.add(c));
+    }
+  }
+  
+  // If meal has no recognized tags, use mode-based heuristic
+  if (requiredCategories.size === 0) {
+    if (meal.mode === 'cook') {
+      // Cook mode typically needs protein + carb
+      requiredCategories.add('protein');
+      requiredCategories.add('carb');
+    } else {
+      // Pickup/delivery doesn't need inventory
+      return 0.5; // Neutral
+    }
+  }
+  
+  // Check if required categories are available
+  let matchCount = 0;
+  for (const category of requiredCategories) {
+    if (inventoryAvailability[category]) {
+      matchCount++;
+    }
+  }
+  
+  // Boolean result: all required categories available = 1.0, else 0.0
+  // This is not weighted scoring per spec
+  return matchCount === requiredCategories.size ? 1.0 : 0.0;
+}
+
+/**
+ * Build inventory availability from raw inventory estimate.
+ * Normalizes items and builds category availability map.
+ */
+export function buildInventoryAvailabilityFromEstimate(
+  inventoryEstimate: Array<{ item: string; confidence: number }>
+): Record<InventoryCategory, boolean> {
+  if (!inventoryEstimate || inventoryEstimate.length === 0) {
+    // Return all false - no inventory signal
+    return {
+      protein: false,
+      carb: false,
+      vegetable: false,
+      dairy: false,
+      pantry: false,
+      fruit: false,
+      unknown: false,
+    };
+  }
+  
+  // Normalize items
+  const normalizedItems = normalizeInventoryItems(
+    inventoryEstimate.map(e => ({ name: e.item, confidence: e.confidence }))
+  );
+  
+  // Build availability map
+  return buildInventoryAvailability(normalizedItems, MIN_INVENTORY_CONFIDENCE);
 }
 
 // =============================================================================
@@ -267,14 +402,27 @@ export function satisfiesConstraints(
 
 /**
  * Sort candidates deterministically for selection.
- * Order: known-safe → simple → fast
+ * Order: inventory-match → known-safe → simple → fast
  * 
  * NO randomness. NO tie-breaking by chance.
+ * 
+ * Inventory match is a boolean preference (not weighted scoring):
+ * - Meals matching available inventory come before those that don't
+ * - Within each group, standard sorting applies
  */
 export function sortCandidates(
-  candidates: Array<{ meal: Meal; tasteSafety: number }>
-): Array<{ meal: Meal; tasteSafety: number }> {
+  candidates: Array<{ meal: Meal; tasteSafety: number; inventoryMatch?: number }>
+): Array<{ meal: Meal; tasteSafety: number; inventoryMatch?: number }> {
   return candidates.sort((a, b) => {
+    // 0. Inventory match first (advisory preference)
+    // Meals that match inventory (1.0) come before those that don't (0.0)
+    // Neutral (0.5) is in the middle
+    const aInv = a.inventoryMatch ?? 0.5;
+    const bInv = b.inventoryMatch ?? 0.5;
+    if (aInv !== bInv) {
+      return bInv - aInv; // Higher match first
+    }
+    
     // 1. Known-safe first (higher taste safety)
     if (a.tasteSafety !== b.tasteSafety) {
       return b.tasteSafety - a.tasteSafety;
@@ -372,11 +520,14 @@ export function decide(
 ): ArbiterOutput | null {
   const { context, tasteSignals, inventoryEstimate } = input;
   
-  // Build inventory confidence map
+  // Build inventory confidence map (legacy)
   const inventoryConfidenceMap = new Map<string, number>();
   for (const item of inventoryEstimate) {
     inventoryConfidenceMap.set(item.item.toLowerCase(), item.confidence);
   }
+  
+  // Build inventory availability map (new - category-based)
+  const inventoryAvailability = buildInventoryAvailabilityFromEstimate(inventoryEstimate);
   
   // Build accepted meal tags set for taste safety
   const acceptedMealTags = new Set<string>();
@@ -384,7 +535,7 @@ export function decide(
   // For MVP, we use a heuristic based on meal names
   
   // RULE 1-4: Filter meals through rules
-  const candidates: Array<{ meal: Meal; tasteSafety: number }> = [];
+  const candidates: Array<{ meal: Meal; tasteSafety: number; inventoryMatch: number }> = [];
   
   for (const meal of meals) {
     // RULE 1: Executability gate
@@ -415,7 +566,11 @@ export function decide(
       acceptedMealTags
     );
     
-    candidates.push({ meal, tasteSafety });
+    // RULE 1C: Inventory match score (advisory, for sorting)
+    // This is a silent preference boost, NOT a filter
+    const inventoryMatch = getInventoryMatchScore(meal, inventoryAvailability);
+    
+    candidates.push({ meal, tasteSafety, inventoryMatch });
   }
   
   // If no candidates pass → DRM is triggered immediately
