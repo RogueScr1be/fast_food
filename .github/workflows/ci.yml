@@ -113,7 +113,7 @@ jobs:
             
             await client.query(\`
               INSERT INTO households (id, household_key, created_at)
-              VALUES ('ci-test-hh', 'ci-household', NOW())
+              VALUES (gen_random_uuid(), 'ci-household', NOW())
               ON CONFLICT (household_key) DO NOTHING
             \`);
             console.log('PASS insert_household');
