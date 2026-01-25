@@ -1,169 +1,168 @@
 /**
- * FAST FOOD: Taste Graph - Signal Weighting
+ * Taste Graph Weight Computation
  * 
- * Computes weight for taste signals based on user action.
+ * Weight semantics:
+ * - approved:      +1.0  (positive taste signal)
+ * - rejected:      -1.0  (negative taste signal)
+ * - drm_triggered: -0.5  (mild negative, user changed plans)
+ * - expired:       -0.2  (very mild negative, user didn't engage)
+ * - undo:          -0.5  (AUTONOMY PENALTY, not a taste rejection)
  * 
- * WEIGHT VALUES:
- * - approved:       +1.0
- * - rejected:       -1.0
- * - drm_triggered:  -0.5
- * - expired:        -0.2
+ * Stress multiplier:
+ * - After 8pm local time, magnitude is multiplied by 1.10
+ * - This reflects that decisions made under dinner-time stress carry more weight
  * 
- * OPTIONAL FACTORS:
- * - Late hour (>= 8 PM): multiply magnitude by 1.10 (stress factor)
+ * Clamping:
+ * - Final weight is clamped to [-2, 2] to prevent outliers
  * 
- * INVARIANTS:
- * - Deterministic
- * - Weight clamped to [-2.0, +2.0] per DB CHECK constraint
+ * IMPORTANT: Undo is an autonomy penalty signal (-0.5), NOT a taste rejection.
+ * The user may actually like the food; they just didn't want it auto-applied.
  */
 
-// =============================================================================
-// WEIGHT CONSTANTS
-// =============================================================================
+import type { DecisionEvent, DecisionEventInsert } from '../../../types/decision-os';
+import { NOTES } from '../feedback/handler';
 
 /**
- * Base weight for approved decision
- * Positive signal - user liked the meal
+ * Base weights for each action/status.
  */
-export const WEIGHT_APPROVED = 1.0;
+export const BASE_WEIGHTS = {
+  approved: 1.0,
+  rejected: -1.0,
+  drm_triggered: -0.5,
+  expired: -0.2,
+  undo: -0.5, // Autonomy penalty, NOT taste rejection
+} as const;
 
 /**
- * Base weight for rejected decision
- * Negative signal - user explicitly rejected
- */
-export const WEIGHT_REJECTED = -1.0;
-
-/**
- * Base weight for DRM triggered
- * Soft negative - meal was shown but user triggered DRM
- * Less negative than explicit rejection
- */
-export const WEIGHT_DRM_TRIGGERED = -0.5;
-
-/**
- * Base weight for expired decision
- * Weak negative - user didn't act (timeout)
- * Least negative - could be external factors
- */
-export const WEIGHT_EXPIRED = -0.2;
-
-/**
- * Stress hour threshold (8 PM / 20:00)
- * Actions at or after this hour get stress multiplier
- */
-export const STRESS_HOUR_THRESHOLD = 20;
-
-/**
- * Stress multiplier for late-hour decisions
- * Applied to weight magnitude when hour >= STRESS_HOUR_THRESHOLD
+ * Stress multiplier applied after 8pm (20:00) local time.
+ * Magnitude is multiplied by this factor.
  */
 export const STRESS_MULTIPLIER = 1.10;
 
 /**
- * Minimum allowed weight (DB CHECK constraint)
+ * Hour threshold for stress multiplier (8pm = 20).
  */
-export const MIN_WEIGHT = -2.0;
+export const STRESS_HOUR_THRESHOLD = 20;
 
 /**
- * Maximum allowed weight (DB CHECK constraint)
+ * Weight clamp bounds.
  */
-export const MAX_WEIGHT = 2.0;
-
-// =============================================================================
-// TYPES
-// =============================================================================
-
-export type UserActionForWeight = 'approved' | 'rejected' | 'drm_triggered' | 'expired';
-
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
+export const WEIGHT_MIN = -2;
+export const WEIGHT_MAX = 2;
 
 /**
- * Clamp value to range
+ * Checks if the given timestamp is after 8pm local time.
+ * 
+ * @param isoTimestamp - ISO timestamp string
+ * @returns True if after 8pm
  */
-function clamp(value: number, min: number, max: number): number {
+export function isAfter8pm(isoTimestamp: string): boolean {
+  const date = new Date(isoTimestamp);
+  return date.getHours() >= STRESS_HOUR_THRESHOLD;
+}
+
+/**
+ * Gets the base weight for an event based on its user_action and notes.
+ * 
+ * Uses schema-true fields (user_action, notes) not phantom fields (status).
+ * 
+ * @param event - The decision event (or insert)
+ * @returns Base weight before stress multiplier
+ */
+export function getBaseWeight(event: DecisionEvent | DecisionEventInsert): number {
+  // Check for undo first (notes='undo_autopilot')
+  if (event.notes === NOTES.UNDO_AUTOPILOT) {
+    return BASE_WEIGHTS.undo;
+  }
+  
+  // Use user_action (schema-true)
+  const action = event.user_action;
+  
+  switch (action) {
+    case 'approved':
+      return BASE_WEIGHTS.approved;
+    case 'rejected':
+      return BASE_WEIGHTS.rejected;
+    case 'drm_triggered':
+      return BASE_WEIGHTS.drm_triggered;
+    default:
+      break;
+  }
+  
+  // Check runtime status for expired (non-persisted events)
+  const runtimeStatus = (event as DecisionEvent)._runtime_status;
+  if (runtimeStatus === 'expired') {
+    return BASE_WEIGHTS.expired;
+  }
+  
+  // pending or unknown
+  return 0;
+}
+
+/**
+ * Clamps a value to the specified range.
+ * 
+ * @param value - Value to clamp
+ * @param min - Minimum value
+ * @param max - Maximum value
+ * @returns Clamped value
+ */
+export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
 /**
- * Parse hour from ISO string (respects timezone in string)
- * For "2026-01-19T20:30:00-06:00", returns 20
+ * Computes the taste graph weight for a decision event.
+ * 
+ * Weight semantics:
+ * - approved:      +1.0  (positive taste signal)
+ * - rejected:      -1.0  (negative taste signal)
+ * - drm_triggered: -0.5  (mild negative, user changed plans)
+ * - expired:       -0.2  (very mild negative, user didn't engage)
+ * - undo:          -0.5  (AUTONOMY PENALTY, not taste rejection)
+ * 
+ * After 8pm, magnitude is multiplied by 1.10 (stress multiplier).
+ * Final weight is clamped to [-2, 2].
+ * 
+ * @param event - The decision event (or insert)
+ * @param nowIso - Optional current ISO timestamp for testing (defaults to event.actioned_at)
+ * @returns Computed weight, clamped to [-2, 2]
  */
-export function parseHourFromIso(isoString: string | null | undefined): number {
-  if (!isoString) {
+export function computeTasteWeight(
+  event: DecisionEvent | DecisionEventInsert,
+  nowIso?: string
+): number {
+  const baseWeight = getBaseWeight(event);
+  
+  if (baseWeight === 0) {
     return 0;
   }
   
-  // Extract the time portion (HH:MM:SS) before timezone
-  const match = isoString.match(/T(\d{2}):/);
-  if (match) {
-    return parseInt(match[1], 10);
+  // Determine if stress multiplier applies
+  const timestamp = nowIso ?? event.actioned_at ?? event.decided_at;
+  const shouldApplyStress = isAfter8pm(timestamp);
+  
+  // Apply stress multiplier to magnitude
+  let weight = baseWeight;
+  if (shouldApplyStress) {
+    // Multiply magnitude, preserving sign
+    weight = baseWeight * STRESS_MULTIPLIER;
   }
   
-  // Fallback to Date parsing if format is unexpected
-  return new Date(isoString).getHours();
-}
-
-// =============================================================================
-// MAIN WEIGHT COMPUTATION
-// =============================================================================
-
-/**
- * Get the base weight for a user action.
- * 
- * @param userAction - The user action
- * @returns Base weight value
- */
-export function getBaseWeight(userAction: UserActionForWeight): number {
-  switch (userAction) {
-    case 'approved':
-      return WEIGHT_APPROVED;
-    case 'rejected':
-      return WEIGHT_REJECTED;
-    case 'drm_triggered':
-      return WEIGHT_DRM_TRIGGERED;
-    case 'expired':
-      return WEIGHT_EXPIRED;
-    default:
-      // TypeScript exhaustiveness check
-      const _exhaustive: never = userAction;
-      throw new Error(`Unknown user action: ${_exhaustive}`);
-  }
+  // Clamp to bounds
+  return clamp(weight, WEIGHT_MIN, WEIGHT_MAX);
 }
 
 /**
- * Compute the final weight for a taste signal.
+ * Checks if undo should skip taste_meal_scores update.
  * 
- * Applies:
- * 1. Base weight from user action
- * 2. Optional stress multiplier if actioned_at hour >= 20 (8 PM)
- * 3. Clamps to [-2.0, +2.0] to satisfy DB constraint
+ * Undo events:
+ * - Insert taste_signal with -0.5 weight (autonomy penalty)
+ * - Do NOT update taste_meal_scores (don't affect score/approvals/rejections)
  * 
- * @param userAction - The user action (approved/rejected/drm_triggered/expired)
- * @param actionedAt - ISO timestamp when user acted (null for expired)
- * @returns Clamped weight value
+ * @param event - The decision event (or insert)
+ * @returns True if should skip taste_meal_scores
  */
-export function computeWeight(
-  userAction: UserActionForWeight,
-  actionedAt: string | null | undefined
-): number {
-  let weight = getBaseWeight(userAction);
-  
-  // Apply stress multiplier if late hour
-  const hour = parseHourFromIso(actionedAt);
-  if (hour >= STRESS_HOUR_THRESHOLD) {
-    // Multiply magnitude (preserve sign)
-    weight = weight * STRESS_MULTIPLIER;
-  }
-  
-  // Clamp to DB constraint range
-  return clamp(weight, MIN_WEIGHT, MAX_WEIGHT);
-}
-
-/**
- * Check if a given hour qualifies for stress multiplier
- */
-export function isStressHour(hour: number): boolean {
-  return hour >= STRESS_HOUR_THRESHOLD;
+export function shouldSkipTasteMealScores(event: DecisionEvent | DecisionEventInsert): boolean {
+  return event.notes === NOTES.UNDO_AUTOPILOT;
 }

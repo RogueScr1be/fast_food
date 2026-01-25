@@ -1,0 +1,163 @@
+# Staging Deploy + Verify Workflow
+#
+# Manual dispatch (safest default). Can also trigger on push to main.
+# Uses GitHub Environment: staging (for scoped secrets)
+#
+# Steps:
+# 1. Tests + build sanity (fail fast)
+# 2. Migrate staging DB
+# 3. Deploy to Vercel staging
+# 4. Run staging healthcheck
+
+name: Staging Deploy + Verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch, tag, sha)"
+        required: true
+        default: "main"
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+  # Force Node to prefer IPv4 over IPv6 to avoid Supabase pooler AAAA -> ENETUNREACH on GitHub runners
+  NODE_OPTIONS: --dns-result-order=ipv4first
+
+jobs:
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.deployment_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail fast if tests are broken
+      - name: Run tests
+        run: npm test
+
+      - name: Build sanity check
+        run: npm run build:sanity
+
+      # DB migrate + verify
+      - name: Migrate staging DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          NODE_OPTIONS: '--dns-result-order=ipv4first'
+          PGSSLMODE: require
+        run: |
+          echo "=== Migrating Staging DB ==="
+          npm run db:migrate:staging
+          echo "PASS migrations_applied"
+
+
+      - name: Verify staging DB schema
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          NODE_OPTIONS: '--dns-result-order=ipv4first'
+          PGSSLMODE: require
+        run: |
+          echo "=== Verifying Staging Schema ==="
+          npm run db:verify:staging
+          echo "PASS schema_verified"
+
+      - name: Migrate staging DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run db:migrate:staging
+
+      # Vercel deploy
+      - name: Deploy to Vercel (staging)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          echo "=== Deploying to Vercel ==="
+          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          npx vercel build --token="$VERCEL_TOKEN"
+          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "deployment_url=$url" >> $GITHUB_OUTPUT
+          echo "PASS deployed to $url"
+
+  healthcheck:
+    name: Staging Healthcheck
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run staging healthcheck
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: |
+          echo "=== Running Staging Healthcheck ==="
+          npm run staging:healthcheck
+          echo "PASS staging_healthcheck"
+
+      - name: Record deployment (last green)
+        env:
+          # EDIT: deploy:record:lastgreen expects DATABASE_URL (not DATABASE_URL_STAGING)
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          DEPLOYMENT_URL: ${{ needs.deploy.outputs.deployment_url }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          ENV_NAME: staging
+        run: |
+          echo "=== Recording Last Green Deployment ==="
+          npm run deploy:record:lastgreen
+
+  summary:
+    name: Staging Summary
+    runs-on: ubuntu-latest
+    needs: [deploy, healthcheck]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "=== Staging Deploy Summary ==="
+          echo "Ref: ${{ inputs.ref }}"
+          echo "Deploy status: ${{ needs.deploy.result }}"
+          echo "Healthcheck status: ${{ needs.healthcheck.result }}"
+          if [ "${{ needs.healthcheck.result }}" == "success" ]; then
+            echo ""
+            echo "✅ STAGING IS GREEN"
+            echo "You may proceed with: Release to TestFlight workflow"
+          else
+            echo ""
+            echo "❌ STAGING FAILED"
+            echo "Do NOT proceed with release until staging is green."
+          fi
