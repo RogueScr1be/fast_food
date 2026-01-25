@@ -25,6 +25,7 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
+  NODE_OPTIONS: --dns-result-order=ipv4first
 
 jobs:
   deploy:
@@ -72,6 +73,11 @@ jobs:
           echo "=== Verifying Staging Schema ==="
           npm run db:verify:staging
           echo "PASS schema_verified"
+
+      - name: Migrate staging DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run db:migrate:staging
 
       # Vercel deploy
       - name: Deploy to Vercel (staging)
