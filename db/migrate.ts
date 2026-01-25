@@ -635,22 +635,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   
- // --- Force IPv4 resolution (GitHub runners cannot reach Supabase IPv6) ---
-const parsed = parsePgConnection(databaseUrl);
-
-if (!parsed.host) {
-  throw new Error('Invalid DATABASE_URL: host missing');
-}
-
-// If host is not already an IPv4 address, resolve it explicitly
-if (!/^\d+\.\d+\.\d+\.\d+$/.test(parsed.host)) {
-  const lookup = await dns.lookup(parsed.host, { family: 4 });
-  parsed.host = lookup.address;
-}
+  const needsSSL =
+  databaseUrl.includes('supabase.com') ||
+  databaseUrl.includes('sslmode=require') ||
+  databaseUrl.includes('sslmode=verify-full');
 
 const pool = new pg.Pool({
-  ...parsed,
-  ssl: { rejectUnauthorized: false }, // required for Supabase
+  connectionString: databaseUrl,
+  ssl: needsSSL ? { rejectUnauthorized: false } : false,
   max: 1,
   connectionTimeoutMillis: 10000,
 });
