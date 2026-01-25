@@ -25,6 +25,8 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
+  # Force Node to prefer IPv4 over IPv6 to avoid Supabase pooler AAAA -> ENETUNREACH on GitHub runners
+  NODE_OPTIONS: --dns-result-order=ipv4first
 
 jobs:
   deploy:
