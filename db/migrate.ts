@@ -15,6 +15,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import dns from 'node:dns/promises';
+import { parse as parsePgConnection } from 'pg-connection-string';
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
@@ -633,11 +635,25 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   
-  const pool = new pg.Pool({
-    connectionString: databaseUrl,
-    max: 1,
-    connectionTimeoutMillis: 10000,
-  });
+ // --- Force IPv4 resolution (GitHub runners cannot reach Supabase IPv6) ---
+const parsed = parsePgConnection(databaseUrl);
+
+if (!parsed.host) {
+  throw new Error('Invalid DATABASE_URL: host missing');
+}
+
+// If host is not already an IPv4 address, resolve it explicitly
+if (!/^\d+\.\d+\.\d+\.\d+$/.test(parsed.host)) {
+  const lookup = await dns.lookup(parsed.host, { family: 4 });
+  parsed.host = lookup.address;
+}
+
+const pool = new pg.Pool({
+  ...parsed,
+  ssl: { rejectUnauthorized: false }, // required for Supabase
+  max: 1,
+  connectionTimeoutMillis: 10000,
+});
   
   try {
     // Test connection
