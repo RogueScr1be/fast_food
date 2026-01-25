@@ -1,0 +1,70 @@
+name: Rollback Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "rollback" to confirm'
+        required: true
+        default: ''
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # =============================================================================
+  # Rollback Staging to Previous Green
+  # =============================================================================
+  rollback:
+    name: Rollback to Previous Green
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'rollback'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Execute rollback
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          ENV_NAME: staging
+        run: npm run staging:rollback
+
+      - name: Verify rollback
+        run: |
+          echo "Waiting for alias propagation..."
+          sleep 10
+          echo "Checking healthz..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/api/healthz")
+          if [ "$RESPONSE" == "200" ]; then
+            echo "PASS healthz_check"
+          else
+            echo "WARN healthz_returned_$RESPONSE"
+          fi
+
+  # =============================================================================
+  # Guard: Requires explicit confirmation
+  # =============================================================================
+  no_confirm:
+    name: Rollback Not Confirmed
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm != 'rollback'
+    steps:
+      - name: Abort
+        run: |
+          echo "FAIL rollback_not_confirmed"
+          echo "You must type 'rollback' in the confirm field to proceed."
+          exit 1

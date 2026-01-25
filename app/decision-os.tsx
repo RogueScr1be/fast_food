@@ -1,882 +1,358 @@
 /**
- * Decision OS - Single Card Execution Interface
+ * Decision OS UI Component
  * 
- * INVARIANTS:
- * - Shows exactly ONE actionable card at a time
- * - Three actions only: Approve, Reject, Trigger DRM
- * - No lists, no browsing, no history
- * - No arrays of decisions in component state
+ * Displays decision cards with support for:
+ * - Normal decision flow (Approve/Reject buttons)
+ * - Autopilot "Handled." state (single card with optional Undo)
  * 
- * DEV-ONLY FEATURE:
- * - Hidden receipt upload trigger (long-press on header title)
- * - Gated by __DEV__ and process.env.NODE_ENV !== 'production'
- * - Shows single toast on success/failure
- * - No receipt browsing, no line item display
+ * Invariants:
+ * - Only ONE card is shown at a time
+ * - Autopilot state does NOT show Approve/Reject buttons
+ * - Undo is only available within the 10-minute window
  */
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
-  Linking,
-  ActivityIndicator,
-  Animated,
-  Pressable,
+  Dimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Check, X, Zap, Clock, ChefHat, ShoppingBag, ExternalLink, Camera } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
-import type {
-  SingleAction,
-  CookAction,
-  OrderAction,
-  ZeroCookAction,
-  DecisionResponse,
-} from '@/types/decision-os/decision';
+import type { DecisionResponse } from '../types/decision-os';
 
-// =============================================================================
-// DEV-ONLY GATE
-// =============================================================================
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const UNDO_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
- * DEV-ONLY GATE: Both conditions must be true for dev features to be enabled
- * - __DEV__: React Native runtime flag (false in production builds)
- * - process.env.NODE_ENV !== 'production': Build-time check
- * 
- * If EITHER indicates production, dev features are disabled
- */
-const IS_DEV_MODE = 
-  typeof __DEV__ !== 'undefined' && __DEV__ === true && 
-  process.env.NODE_ENV !== 'production';
-
-// Export for testing
-export { IS_DEV_MODE };
-
-// =============================================================================
-// INACTIVITY RE-CHECK CONSTANTS
-// =============================================================================
-
-/**
- * Inactivity timeout in milliseconds (90 seconds)
- * If user takes no action within this time, re-check decision endpoint once
- */
-export const INACTIVITY_RECHECK_MS = 90 * 1000;
-
-// Local types for DRM response (matches drm+api.ts)
-interface SingleRescue {
-  rescueType: 'order' | 'zero_cook';
-  decisionEventId: string;
-  title: string;
-  estMinutes: number;
-  stepsShort?: string;
-  vendorKey?: string;
-  deepLinkUrl?: string;
-}
-
-interface DrmApiResponse {
-  rescue: SingleRescue | null;
-  exhausted: boolean;
-}
-
-// UI-friendly decision type
-type DecisionType = 'cook' | 'order' | 'zero_cook';
-
-interface UiDecision {
-  decisionType: DecisionType;
-  decisionEventId: string;
-  title: string;
-  estMinutes: number;
-  stepsShort?: string;
-  vendorKey?: string;
-  deepLinkUrl?: string;
-}
-
-// API base URL
-const getApiBase = (): string => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    return window.location.origin;
-  }
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:8081';
-  }
-  return 'http://localhost:8081';
-};
-
-const API_BASE = getApiBase();
-
-/**
- * Convert SingleAction to UI-friendly format
- */
-function toUiDecision(action: SingleAction): UiDecision {
-  return {
-    decisionType: action.decisionType,
-    decisionEventId: action.decisionEventId,
-    title: action.title,
-    estMinutes: action.estMinutes,
-    stepsShort: (action as CookAction | ZeroCookAction).stepsShort,
-    vendorKey: (action as OrderAction).vendorKey,
-    deepLinkUrl: (action as OrderAction).deepLinkUrl,
-  };
-}
-
-/**
- * Convert DRM rescue to UI-friendly format
- */
-function rescueToUiDecision(rescue: SingleRescue): UiDecision {
-  return {
-    decisionType: rescue.rescueType,
-    decisionEventId: rescue.decisionEventId,
-    title: rescue.title,
-    estMinutes: rescue.estMinutes,
-    stepsShort: rescue.stepsShort,
-    vendorKey: rescue.vendorKey,
-    deepLinkUrl: rescue.deepLinkUrl,
-  };
-}
-
-/**
- * Decision Card Component
- * Renders a SINGLE decision - no arrays, no lists
+ * Props for the DecisionCard component
  */
 interface DecisionCardProps {
-  decision: UiDecision;
-  onApprove: () => void;
-  onReject: () => void;
-  onTriggerDrm: () => void;
-  isProcessing: boolean;
-}
-
-// =============================================================================
-// DEV-ONLY TOAST COMPONENT
-// =============================================================================
-
-interface ToastProps {
-  message: string;
-  type: 'success' | 'error';
-  visible: boolean;
-  onHide: () => void;
+  decision: DecisionResponse;
+  decisionTimestamp: number; // When the decision was received
+  onApprove?: () => void;
+  onReject?: () => void;
+  onUndo?: () => void;
+  onDinnerChanged?: () => void;
 }
 
 /**
- * Simple toast notification - shows a single message
- * NO LISTS, NO ARRAYS - just one message
+ * Props for the HandledCard component (autopilot state)
  */
-const Toast: React.FC<ToastProps> = ({ message, type, visible, onHide }) => {
-  const opacity = useRef(new Animated.Value(0)).current;
-  
-  useEffect(() => {
-    if (visible) {
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.delay(2000),
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start(() => onHide());
-    }
-  }, [visible, opacity, onHide]);
-  
-  if (!visible) return null;
-  
-  return (
-    <Animated.View
-      style={[
-        styles.toast,
-        type === 'success' ? styles.toastSuccess : styles.toastError,
-        { opacity },
-      ]}
-      testID="receipt-toast"
-    >
-      <Text style={styles.toastText}>{message}</Text>
-    </Animated.View>
+interface HandledCardProps {
+  decisionTimestamp: number;
+  onUndo?: () => void;
+  onDinnerChanged?: () => void;
+}
+
+/**
+ * Calculates remaining time in the undo window.
+ * 
+ * @param decisionTimestamp - When the decision was made
+ * @returns Remaining milliseconds, or 0 if outside window
+ */
+function getRemainingUndoTime(decisionTimestamp: number): number {
+  const elapsed = Date.now() - decisionTimestamp;
+  const remaining = UNDO_WINDOW_MS - elapsed;
+  return Math.max(0, remaining);
+}
+
+/**
+ * Formats remaining time as "X:XX" (minutes:seconds)
+ */
+function formatRemainingTime(ms: number): string {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/**
+ * HandledCard - Shown when autopilot:true
+ * 
+ * Displays:
+ * - "Handled." title
+ * - "Dinner is in motion." subtitle
+ * - Undo button (only if within undo window)
+ * - Optional "Dinner changed" secondary action
+ */
+export function HandledCard({ 
+  decisionTimestamp, 
+  onUndo, 
+  onDinnerChanged 
+}: HandledCardProps): React.ReactElement {
+  const [remainingTime, setRemainingTime] = useState(() => 
+    getRemainingUndoTime(decisionTimestamp)
   );
-};
-
-// =============================================================================
-// DEV-ONLY RECEIPT UPLOAD HOOK
-// =============================================================================
-
-/**
- * Hook for dev-only receipt upload functionality
- * Returns null operations when not in dev mode (safe for production)
- */
-function useDevReceiptUpload(apiBase: string) {
-  const [isUploading, setIsUploading] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   
-  const hideToast = useCallback(() => {
-    setToast(null);
-  }, []);
-  
-  const uploadReceipt = useCallback(async () => {
-    // GUARD: Do not execute in production
-    if (!IS_DEV_MODE) {
-      console.warn('Receipt upload attempted in production mode - blocked');
-      return;
-    }
+  // Update remaining time every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const remaining = getRemainingUndoTime(decisionTimestamp);
+      setRemainingTime(remaining);
+      
+      if (remaining <= 0) {
+        clearInterval(interval);
+      }
+    }, 1000);
     
-    if (isUploading) return;
-    
-    try {
-      setIsUploading(true);
-      
-      // Request permission and pick image
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (!permissionResult.granted) {
-        setToast({ message: 'Receipt failed.', type: 'error' });
-        return;
-      }
-      
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.8,
-        base64: true, // Request base64 directly
-      });
-      
-      if (result.canceled || !result.assets || result.assets.length === 0) {
-        // User cancelled - no toast needed
-        return;
-      }
-      
-      const asset = result.assets[0];
-      
-      // Get base64 - either from direct result or read from file
-      let base64Data: string;
-      if (asset.base64) {
-        base64Data = asset.base64;
-      } else if (asset.uri) {
-        // Fallback: read file and convert to base64
-        const fileContent = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        base64Data = fileContent;
-      } else {
-        setToast({ message: 'Receipt failed.', type: 'error' });
-        return;
-      }
-      
-      // Call receipt import endpoint ONCE
-      const response = await fetch(`${apiBase}/api/decision-os/receipt/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          householdKey: 'default',
-          source: 'image_upload',
-          // vendorName and purchasedAtIso are optional - let parser extract
-          receiptImageBase64: base64Data,
-        }),
-      });
-      
-      const data = await response.json();
-      
-      // Show single toast - NO receiptImportId, NO extracted items
-      if (response.ok && data.status === 'parsed') {
-        setToast({ message: 'Receipt captured.', type: 'success' });
-      } else {
-        setToast({ message: 'Receipt failed.', type: 'error' });
-      }
-    } catch (error) {
-      console.error('Receipt upload error:', error);
-      setToast({ message: 'Receipt failed.', type: 'error' });
-    } finally {
-      setIsUploading(false);
-    }
-  }, [apiBase, isUploading]);
+    return () => clearInterval(interval);
+  }, [decisionTimestamp]);
   
-  return {
-    uploadReceipt,
-    isUploading,
-    toast,
-    hideToast,
-  };
-}
-
-// =============================================================================
-// DECISION CARD COMPONENT
-// =============================================================================
-
-const DecisionCard: React.FC<DecisionCardProps> = ({
-  decision,
-  onApprove,
-  onReject,
-  onTriggerDrm,
-  isProcessing,
-}) => {
-  const getIcon = (type: DecisionType) => {
-    switch (type) {
-      case 'cook':
-        return <ChefHat size={28} color="#FFF" />;
-      case 'zero_cook':
-        return <Clock size={28} color="#FFF" />;
-      case 'order':
-        return <ShoppingBag size={28} color="#FFF" />;
-    }
-  };
-
-  const getGradient = (type: DecisionType): [string, string] => {
-    switch (type) {
-      case 'cook':
-        return ['#FF6B35', '#F7931E'];
-      case 'zero_cook':
-        return ['#11998e', '#38ef7d'];
-      case 'order':
-        return ['#4A00E0', '#8E2DE2'];
-    }
-  };
-
-  const isOrderType = decision.decisionType === 'order';
-
+  const canUndo = remainingTime > 0;
+  
   return (
-    <View style={styles.cardContainer}>
-      <LinearGradient
-        colors={getGradient(decision.decisionType)}
-        style={styles.cardHeader}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <View style={styles.cardHeaderContent}>
-          <View style={styles.iconContainer}>
-            {getIcon(decision.decisionType)}
-          </View>
-          <View style={styles.titleContainer}>
-            <Text style={styles.cardLabel}>Tonight:</Text>
-            <Text style={styles.cardTitle}>{decision.title}</Text>
-          </View>
-        </View>
-        <View style={styles.timeContainer}>
-          <Clock size={16} color="rgba(255,255,255,0.8)" />
-          <Text style={styles.timeText}>{decision.estMinutes} min</Text>
-        </View>
-      </LinearGradient>
-
-      <View style={styles.cardBody}>
-        {/* Cook/Zero Cook: Show steps */}
-        {!isOrderType && decision.stepsShort && (
-          <View style={styles.stepsContainer}>
-            <Text style={styles.stepsLabel}>Do this now:</Text>
-            <Text style={styles.stepsText}>{decision.stepsShort}</Text>
-          </View>
+    <View style={styles.card} testID="handled-card">
+      <View style={styles.cardContent}>
+        <Text style={styles.handledTitle} testID="handled-title">Handled.</Text>
+        <Text style={styles.handledSubtitle} testID="handled-subtitle">
+          Dinner is in motion.
+        </Text>
+        
+        {/* Primary action: Undo (only if within window) */}
+        {canUndo && (
+          <TouchableOpacity
+            style={styles.undoButton}
+            onPress={onUndo}
+            testID="undo-button"
+            accessibilityLabel="Undo autopilot decision"
+          >
+            <Text style={styles.undoButtonText}>
+              Undo ({formatRemainingTime(remainingTime)})
+            </Text>
+          </TouchableOpacity>
         )}
-
-        {/* Order: Show vendor CTA */}
-        {isOrderType && decision.vendorKey && (
-          <View style={styles.orderContainer}>
-            <Text style={styles.orderLabel}>Do this now:</Text>
-            <View style={styles.vendorCta}>
-              <ExternalLink size={20} color="#4A00E0" />
-              <Text style={styles.vendorText}>Open {decision.vendorKey}</Text>
-            </View>
-          </View>
+        
+        {/* Secondary action: Dinner changed */}
+        {onDinnerChanged && (
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={onDinnerChanged}
+            testID="dinner-changed-button"
+            accessibilityLabel="Dinner plans changed"
+          >
+            <Text style={styles.secondaryButtonText}>
+              Dinner changed
+            </Text>
+          </TouchableOpacity>
         )}
-      </View>
-
-      {/* Actions: Exactly three buttons */}
-      <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={[styles.actionButton, styles.rejectButton]}
-          onPress={onReject}
-          disabled={isProcessing}
-          testID="reject-button"
-        >
-          <X size={20} color="#DC3545" />
-          <Text style={[styles.actionText, styles.rejectText]}>Reject</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, styles.drmButton]}
-          onPress={onTriggerDrm}
-          disabled={isProcessing}
-          testID="drm-button"
-        >
-          <Zap size={20} color="#F7931E" />
-          <Text style={[styles.actionText, styles.drmText]}>Handle It</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionButton, styles.approveButton]}
-          onPress={onApprove}
-          disabled={isProcessing}
-          testID="approve-button"
-        >
-          <Check size={20} color="#FFF" />
-          <Text style={[styles.actionText, styles.approveText]}>Approve</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
-};
+}
 
 /**
- * Main Decision OS Screen
- * Enforces single-card invariant at state level
+ * NormalDecisionCard - Shown when autopilot:false or undefined
+ * 
+ * Displays:
+ * - Decision details
+ * - Approve button
+ * - Reject button
  */
-export default function DecisionOsScreen() {
-  // SINGLE card state - NOT an array
-  const [currentCard, setCurrentCard] = useState<UiDecision | null>(null);
-  const [currentEventId, setCurrentEventId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  
-  // Track rejection to enforce single re-decision
-  const hasRejectedOnceRef = useRef(false);
-  const reDecisionCalledRef = useRef(false);
-  
-  // INACTIVITY RE-CHECK: Guards to prevent loops
-  // inactivityRecheckCalledRef prevents re-check from running more than once
-  // inactivityTimeoutRef stores the timer ID for cleanup
-  const inactivityRecheckCalledRef = useRef(false);
-  const inactivityTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // DEV-ONLY: Receipt upload hook
-  const { uploadReceipt, isUploading, toast, hideToast } = useDevReceiptUpload(API_BASE);
+export function NormalDecisionCard({
+  decision,
+  onApprove,
+  onReject,
+}: {
+  decision: DecisionResponse;
+  onApprove?: () => void;
+  onReject?: () => void;
+}): React.ReactElement {
+  return (
+    <View style={styles.card} testID="normal-decision-card">
+      <View style={styles.cardContent}>
+        <Text style={styles.title}>Decision Ready</Text>
+        
+        {decision.message && (
+          <Text style={styles.message}>{decision.message}</Text>
+        )}
+        
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[styles.button, styles.rejectButton]}
+            onPress={onReject}
+            testID="reject-button"
+            accessibilityLabel="Reject decision"
+          >
+            <Text style={styles.rejectButtonText}>Reject</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.button, styles.approveButton]}
+            onPress={onApprove}
+            testID="approve-button"
+            accessibilityLabel="Approve decision"
+          >
+            <Text style={styles.approveButtonText}>Approve</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
 
-  const getNowIso = () => new Date().toISOString();
+/**
+ * DecisionCard - Main component that switches between states
+ * 
+ * Invariant: Only ONE card is shown at a time
+ * - If autopilot:true → HandledCard (no Approve/Reject)
+ * - Otherwise → NormalDecisionCard (with Approve/Reject)
+ */
+export function DecisionCard({
+  decision,
+  decisionTimestamp,
+  onApprove,
+  onReject,
+  onUndo,
+  onDinnerChanged,
+}: DecisionCardProps): React.ReactElement {
+  // Autopilot state: Show "Handled." card
+  if (decision.autopilot === true) {
+    return (
+      <HandledCard
+        decisionTimestamp={decisionTimestamp}
+        onUndo={onUndo}
+        onDinnerChanged={onDinnerChanged}
+      />
+    );
+  }
+  
+  // Normal state: Show decision with Approve/Reject
+  return (
+    <NormalDecisionCard
+      decision={decision}
+      onApprove={onApprove}
+      onReject={onReject}
+    />
+  );
+}
 
+/**
+ * Main Decision OS Screen Component
+ */
+export default function DecisionOSScreen(): React.ReactElement {
+  const [decision, setDecision] = useState<DecisionResponse | null>(null);
+  const [decisionTimestamp, setDecisionTimestamp] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(false);
+  
   /**
-   * Fetch initial decision on mount
+   * Fetches the current decision from the API
    */
   const fetchDecision = useCallback(async () => {
     setIsLoading(true);
-    setError(null);
-    
     try {
-      const response = await fetch(`${API_BASE}/api/decision-os/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          householdKey: 'default',
-          nowIso: getNowIso(),
-          signal: {
-            timeWindow: 'dinner',
-            energy: 'unknown',
-            calendarConflict: false
-          }
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      const data: DecisionResponse = await response.json();
-      
-      if (data.decision) {
-        // Set SINGLE card
-        const uiDecision = toUiDecision(data.decision);
-        setCurrentCard(uiDecision);
-        setCurrentEventId(data.decision.decisionEventId);
-      } else if (data.drmRecommended) {
-        // Auto-trigger DRM
-        await triggerDrm('auto_drm');
-      }
-    } catch (err) {
-      console.error('Failed to fetch decision:', err);
-      setError('Failed to load decision. Tap to retry.');
+      const response = await fetch('/api/decision-os/decision');
+      const data = await response.json() as DecisionResponse;
+      setDecision(data);
+      setDecisionTimestamp(Date.now());
+    } catch (error) {
+      console.error('Failed to fetch decision:', error);
     } finally {
       setIsLoading(false);
     }
   }, []);
-
+  
   /**
-   * Trigger DRM and show rescue
+   * Sends feedback to the API
    */
-  const triggerDrm = async (reason: 'handle_it' | 'auto_drm' | 'im_done' | 'two_rejections' | 'calendar_conflict' | 'low_energy' | 'late_no_action') => {
-    setIsProcessing(true);
+  const sendFeedback = useCallback(async (
+    userAction: 'approved' | 'rejected' | 'undo',
+    reason?: string
+  ) => {
+    if (!decision?.decisionEventId) return;
     
     try {
-      const response = await fetch(`${API_BASE}/api/decision-os/drm`, {
+      await fetch('/api/decision-os/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          householdKey: 'default',
-          nowIso: getNowIso(),
-          triggerType: 'explicit',
-          triggerReason: reason
-        })
+          eventId: decision.decisionEventId,
+          userAction,
+          ...(reason && { modifiedPayload: { reason } }),
+        }),
       });
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      const data: DrmApiResponse = await response.json();
-      
-      if (data.rescue) {
-        // Set SINGLE rescue card
-        const uiDecision = rescueToUiDecision(data.rescue);
-        setCurrentCard(uiDecision);
-        setCurrentEventId(data.rescue.decisionEventId);
-      } else if (data.exhausted) {
-        // DRM exhausted - show error
-        setError('No rescue options available right now.');
-      }
-    } catch (err) {
-      console.error('DRM failed:', err);
-      setError('Failed to get rescue option.');
-    } finally {
-      setIsProcessing(false);
+      // After feedback, refetch to get next decision
+      await fetchDecision();
+    } catch (error) {
+      console.error('Failed to send feedback:', error);
     }
-  };
-
+  }, [decision, fetchDecision]);
+  
   /**
-   * Send feedback to API
+   * Handles approve action
    */
-  const sendFeedback = async (action: 'approved' | 'rejected' | 'drm_triggered') => {
-    if (!currentEventId) return;
-    
+  const handleApprove = useCallback(() => {
+    sendFeedback('approved');
+  }, [sendFeedback]);
+  
+  /**
+   * Handles reject action
+   */
+  const handleReject = useCallback(() => {
+    sendFeedback('rejected');
+  }, [sendFeedback]);
+  
+  /**
+   * Handles undo action (only for autopilot)
+   */
+  const handleUndo = useCallback(() => {
+    sendFeedback('undo');
+  }, [sendFeedback]);
+  
+  /**
+   * Handles "Dinner changed" action
+   * Triggers DRM endpoint with reason "handle_it"
+   */
+  const handleDinnerChanged = useCallback(async () => {
     try {
-      await fetch(`${API_BASE}/api/decision-os/feedback`, {
+      await fetch('/api/decision-os/drm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          householdKey: 'default',
-          eventId: currentEventId,
-          userAction: action,
-          nowIso: getNowIso()
-        })
+        body: JSON.stringify({ reason: 'handle_it' }),
       });
-    } catch (err) {
-      // Best-effort, don't block UI
-      console.error('Feedback failed:', err);
-    }
-  };
-
-  /**
-   * Clear inactivity timeout on any user action
-   * Called at the start of each action handler
-   */
-  const clearInactivityTimeout = () => {
-    if (inactivityTimeoutRef.current) {
-      clearTimeout(inactivityTimeoutRef.current);
-      inactivityTimeoutRef.current = null;
-    }
-  };
-
-  /**
-   * Handle Approve action
-   */
-  const handleApprove = async () => {
-    if (!currentCard) return;
-    clearInactivityTimeout(); // User took action
-    setIsProcessing(true);
-    
-    // For order type, try deep link first
-    if (currentCard.decisionType === 'order' && currentCard.deepLinkUrl) {
-      try {
-        const canOpen = await Linking.canOpenURL(currentCard.deepLinkUrl);
-        if (canOpen) {
-          await Linking.openURL(currentCard.deepLinkUrl);
-        } else {
-          // Generic fallback - single URL, no list
-          await Linking.openURL('https://www.doordash.com');
-        }
-      } catch (err) {
-        // Deep link failed - generic fallback
-        console.error('Deep link failed:', err);
-        try {
-          await Linking.openURL('https://www.doordash.com');
-        } catch {
-          // Ignore fallback errors
-        }
-      }
-    }
-    
-    // Send feedback regardless
-    await sendFeedback('approved');
-    
-    // Show success state
-    setCurrentCard(null);
-    setIsProcessing(false);
-  };
-
-  /**
-   * Handle Reject action
-   * Re-calls decision ONCE only
-   */
-  const handleReject = async () => {
-    clearInactivityTimeout(); // User took action
-    setIsProcessing(true);
-    
-    // Send rejection feedback
-    await sendFeedback('rejected');
-    
-    // INVARIANT: Only re-call decision ONCE
-    if (!reDecisionCalledRef.current) {
-      reDecisionCalledRef.current = true;
-      hasRejectedOnceRef.current = true;
       
-      try {
-        const response = await fetch(`${API_BASE}/api/decision-os/decision`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            householdKey: 'default',
-            nowIso: getNowIso(),
-            signal: {
-              timeWindow: 'dinner',
-              energy: 'unknown',
-              calendarConflict: false
-            }
-          })
-        });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        
-        const data: DecisionResponse = await response.json();
-        
-        if (data.decision) {
-          const uiDecision = toUiDecision(data.decision);
-          setCurrentCard(uiDecision);
-          setCurrentEventId(data.decision.decisionEventId);
-        } else if (data.drmRecommended) {
-          // Auto-trigger DRM after rejection cascade
-          await triggerDrm('two_rejections');
-        }
-      } catch (err) {
-        console.error('Re-decision failed:', err);
-        // On failure, trigger DRM as fallback
-        await triggerDrm('two_rejections');
-      }
-    } else {
-      // Already rejected once, go straight to DRM
-      await triggerDrm('two_rejections');
+      // After DRM trigger, refetch decision
+      await fetchDecision();
+    } catch (error) {
+      console.error('Failed to trigger DRM:', error);
     }
-    
-    setIsProcessing(false);
-  };
-
-  /**
-   * Handle explicit DRM trigger
-   */
-  const handleTriggerDrm = async () => {
-    clearInactivityTimeout(); // User took action
-    await sendFeedback('drm_triggered');
-    await triggerDrm('handle_it');
-  };
-
+  }, [fetchDecision]);
+  
   // Fetch decision on mount
   useEffect(() => {
     fetchDecision();
   }, [fetchDecision]);
-
-  /**
-   * INACTIVITY RE-CHECK: 
-   * If user takes no action for 90 seconds, call decision endpoint exactly once.
-   * If drmRecommended true in response, auto-call DRM.
-   * 
-   * GUARDS:
-   * - inactivityRecheckCalledRef ensures this runs at most once per screen open
-   * - Timeout is cleared on any user action or unmount
-   */
-  useEffect(() => {
-    // Don't start timer if already loading or no card to act on
-    if (isLoading || !currentCard) {
-      return;
-    }
-    
-    // Guard: Only run once per component mount
-    if (inactivityRecheckCalledRef.current) {
-      return;
-    }
-    
-    // Clear any existing timeout
-    if (inactivityTimeoutRef.current) {
-      clearTimeout(inactivityTimeoutRef.current);
-    }
-    
-    // Set inactivity timer
-    inactivityTimeoutRef.current = setTimeout(async () => {
-      // Double-check guard before executing
-      if (inactivityRecheckCalledRef.current) {
-        return;
-      }
-      
-      // Mark as called - cannot be undone without component remount
-      inactivityRecheckCalledRef.current = true;
-      
-      try {
-        const response = await fetch(`${API_BASE}/api/decision-os/decision`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            householdKey: 'default',
-            nowIso: getNowIso(),
-            signal: {
-              timeWindow: 'dinner',
-              energy: 'unknown',
-              calendarConflict: false
-            }
-          })
-        });
-        
-        if (!response.ok) {
-          return; // Silent failure - don't disrupt current state
-        }
-        
-        const data: DecisionResponse = await response.json();
-        
-        // Only act if DRM is now recommended
-        if (data.drmRecommended) {
-          // Auto-trigger DRM with the reason from backend
-          await triggerDrm(data.reason || 'late_no_action');
-        }
-        // If decision returned, don't replace current card - user already has one
-      } catch {
-        // Silent failure - inactivity re-check is best-effort
-      }
-    }, INACTIVITY_RECHECK_MS);
-    
-    // Cleanup on unmount or when dependencies change
-    return () => {
-      if (inactivityTimeoutRef.current) {
-        clearTimeout(inactivityTimeoutRef.current);
-        inactivityTimeoutRef.current = null;
-      }
-    };
-  }, [isLoading, currentCard]);
-
+  
   // Loading state
-  if (isLoading) {
+  if (isLoading && !decision) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#1a1a2e', '#16213e']}
-          style={styles.background}
-        >
-          <ActivityIndicator size="large" color="#FFF" />
-          <Text style={styles.loadingText}>Loading decision...</Text>
-        </LinearGradient>
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
-
-  // Error state
-  if (error) {
+  
+  // No decision available
+  if (!decision || decision.decision === null) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#1a1a2e', '#16213e']}
-          style={styles.background}
-        >
-          <TouchableOpacity onPress={fetchDecision} style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Text style={styles.retryText}>Tap to retry</Text>
-          </TouchableOpacity>
-        </LinearGradient>
+        <Text style={styles.emptyText}>No decisions pending</Text>
       </View>
     );
   }
-
-  // Success state (after approval)
-  if (!currentCard) {
-    return (
-      <View style={styles.container}>
-        <LinearGradient
-          colors={['#1a1a2e', '#16213e']}
-          style={styles.background}
-        >
-          <View style={styles.successContainer}>
-            <View style={styles.successIcon}>
-              <Check size={48} color="#28A745" />
-            </View>
-            <Text style={styles.successTitle}>Done.</Text>
-            <Text style={styles.successSubtitle}>Decision executed.</Text>
-            <TouchableOpacity
-              style={styles.newDecisionButton}
-              onPress={() => {
-                // Reset state for new decision
-                hasRejectedOnceRef.current = false;
-                reDecisionCalledRef.current = false;
-                fetchDecision();
-              }}
-            >
-              <Text style={styles.newDecisionText}>Get next decision</Text>
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
-      </View>
-    );
-  }
-
-  // Main decision card view - SINGLE card only
+  
+  // Render single decision card (one card only invariant)
   return (
-    <View style={styles.container} testID="decision-os-screen">
-      <LinearGradient
-        colors={['#1a1a2e', '#16213e']}
-        style={styles.background}
-      >
-        <View style={styles.header}>
-          {/* DEV-ONLY: Long-press on title triggers receipt upload */}
-          {IS_DEV_MODE ? (
-            <Pressable
-              onLongPress={uploadReceipt}
-              delayLongPress={2000} // 2 second long-press
-              disabled={isUploading}
-              testID="dev-receipt-trigger"
-            >
-              <View style={styles.headerTitleContainer}>
-                <Text style={styles.headerTitle}>Decision OS</Text>
-                {/* Tiny dev indicator - only in dev mode */}
-                <View style={styles.devIndicator} testID="dev-indicator">
-                  <Camera size={12} color="rgba(255,255,255,0.4)" />
-                </View>
-              </View>
-            </Pressable>
-          ) : (
-            <Text style={styles.headerTitle}>Decision OS</Text>
-          )}
-        </View>
-        
-        {/* SINGLE card - enforced by state being a single object, not array */}
-        <View style={styles.cardWrapper} testID="single-card-container">
-          <DecisionCard
-            decision={currentCard}
-            onApprove={handleApprove}
-            onReject={handleReject}
-            onTriggerDrm={handleTriggerDrm}
-            isProcessing={isProcessing}
-          />
-        </View>
-        
-        {isProcessing && (
-          <View style={styles.processingOverlay}>
-            <ActivityIndicator size="small" color="#FFF" />
-          </View>
-        )}
-        
-        {/* DEV-ONLY: Upload indicator */}
-        {IS_DEV_MODE && isUploading && (
-          <View style={styles.uploadingOverlay} testID="uploading-indicator">
-            <ActivityIndicator size="small" color="#FFF" />
-            <Text style={styles.uploadingText}>Uploading receipt...</Text>
-          </View>
-        )}
-        
-        {/* DEV-ONLY: Toast notification - single message only */}
-        {IS_DEV_MODE && toast && (
-          <Toast
-            message={toast.message}
-            type={toast.type}
-            visible={true}
-            onHide={hideToast}
-          />
-        )}
-      </LinearGradient>
+    <View style={styles.container}>
+      <DecisionCard
+        decision={decision}
+        decisionTimestamp={decisionTimestamp}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onUndo={handleUndo}
+        onDinnerChanged={handleDinnerChanged}
+      />
     </View>
   );
 }
@@ -884,277 +360,107 @@ export default function DecisionOsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  background: {
-    flex: 1,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-  },
-  cardWrapper: {
-    flex: 1,
-    paddingHorizontal: 20,
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    padding: 20,
   },
-  cardContainer: {
-    backgroundColor: '#FFF',
-    borderRadius: 20,
-    overflow: 'hidden',
-    elevation: 8,
+  card: {
+    width: SCREEN_WIDTH - 40,
+    maxWidth: 400,
+    backgroundColor: '#fff',
+    borderRadius: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  cardHeader: {
-    padding: 20,
-  },
-  cardHeaderContent: {
-    flexDirection: 'row',
+  cardContent: {
+    padding: 24,
     alignItems: 'center',
   },
-  iconContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  titleContainer: {
-    flex: 1,
-  },
-  cardLabel: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255,255,255,0.8)',
-    marginBottom: 4,
-  },
-  cardTitle: {
-    fontSize: 22,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-  },
-  timeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 6,
-  },
-  timeText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: 'rgba(255,255,255,0.9)',
-  },
-  cardBody: {
-    padding: 20,
-  },
-  stepsContainer: {
-    gap: 12,
-  },
-  stepsLabel: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#666',
+  handledTitle: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#1a1a1a',
     marginBottom: 8,
   },
-  stepsText: {
-    fontSize: 15,
-    fontFamily: 'Inter-Regular',
-    color: '#333',
-    lineHeight: 24,
-  },
-  orderContainer: {
-    alignItems: 'center',
-    paddingVertical: 20,
-  },
-  orderLabel: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
+  handledSubtitle: {
+    fontSize: 18,
     color: '#666',
-    marginBottom: 16,
+    marginBottom: 24,
   },
-  vendorCta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F0FF',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    gap: 10,
-  },
-  vendorText: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#4A00E0',
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
-  },
-  rejectButton: {
-    backgroundColor: '#FFF5F5',
-    borderRightWidth: 1,
-    borderRightColor: '#F0F0F0',
-  },
-  drmButton: {
-    backgroundColor: '#FFF9F0',
-    borderRightWidth: 1,
-    borderRightColor: '#F0F0F0',
-  },
-  approveButton: {
-    backgroundColor: '#28A745',
-  },
-  actionText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-  },
-  rejectText: {
-    color: '#DC3545',
-  },
-  drmText: {
-    color: '#F7931E',
-  },
-  approveText: {
-    color: '#FFF',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: '#FFF',
-    textAlign: 'center',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  errorText: {
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: '#DC3545',
-    textAlign: 'center',
+  title: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#1a1a1a',
     marginBottom: 12,
   },
-  retryText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#FFF',
+  message: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
   },
-  successContainer: {
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 12,
+  },
+  button: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  successIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(40, 167, 69, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  successTitle: {
-    fontSize: 28,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 8,
-  },
-  successSubtitle: {
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255,255,255,0.7)',
-    marginBottom: 40,
-  },
-  newDecisionButton: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
     paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 25,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  approveButton: {
+    backgroundColor: '#22c55e',
+  },
+  approveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  rejectButton: {
+    backgroundColor: '#f5f5f5',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: '#ddd',
   },
-  newDecisionText: {
+  rejectButtonText: {
+    color: '#666',
     fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#FFF',
+    fontWeight: '600',
   },
-  processingOverlay: {
-    position: 'absolute',
-    bottom: 40,
-    alignSelf: 'center',
+  undoButton: {
+    backgroundColor: '#ef4444',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginBottom: 12,
   },
-  // DEV-ONLY STYLES
-  headerTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  undoButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  devIndicator: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  uploadingOverlay: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 100 : 80,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
+  secondaryButton: {
     paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    gap: 8,
+    paddingHorizontal: 20,
   },
-  uploadingText: {
+  secondaryButtonText: {
+    color: '#666',
     fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#FFF',
+    textDecorationLine: 'underline',
   },
-  toast: {
-    position: 'absolute',
-    bottom: 100,
-    alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 25,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  toastSuccess: {
-    backgroundColor: '#28A745',
-  },
-  toastError: {
-    backgroundColor: '#DC3545',
-  },
-  toastText: {
+  loadingText: {
     fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#FFF',
+    color: '#666',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
   },
 });

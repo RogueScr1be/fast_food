@@ -1,424 +1,421 @@
-# Fast Food: Decision OS Database
+# Database Setup Guide
 
-## Overview
+This document describes the database schema, migrations, and setup steps for the Decision OS system.
 
-This directory contains migrations and seeds for the `/decision-os` bounded context.
+## Staging Database: Supabase (Recommended)
 
-**Schema**: `decision_os`
+Decision OS uses **Supabase Postgres** for staging and production.
 
-**Tables**:
-- `meals` - Core meal definitions (read-only in v1)
-- `meal_ingredients` - Ingredients per meal
-- `inventory_items` - Probabilistic inventory with confidence scores
-- `decision_events` - Append-only decision log
-- `drm_events` - Append-only DRM event log
-- `household_constraints` - Safety-critical allergy constraints
-- `receipt_imports` - Receipt OCR ingestion events (Phase 2)
-- `receipt_line_items` - Parsed line items from receipts (Phase 2)
-- `taste_signals` - Append-only behavioral taste signals (Phase 4)
-- `taste_meal_scores` - Derived cache of meal scores per household (Phase 4)
+### Why Supabase?
 
-## Invariants Enforced
+- Free tier sufficient for staging
+- Managed Postgres with automatic backups
+- Built-in connection pooling
+- No infrastructure management required
 
-1. **Append-only events**: `decision_events`, `drm_events`, and `taste_signals` have triggers that prevent UPDATE and DELETE
-2. **Confidence range**: `inventory_items.confidence` must be between 0 and 1
-3. **No browsing data**: No category/tag tables exposed to UI; `tags_internal` is arbiter-only
-4. **Taste Graph is behavioral-only**: No user preference UI, no toggles, no questionnaires
-5. **Taste features are internal-only**: Never sent to client
+### How to Provision the Staging DB
 
-## Prerequisites
+1. **Create Supabase Account**: Go to [supabase.com](https://supabase.com) and sign up
+2. **Create New Project**: 
+   - Choose a project name (e.g., `decision-os-staging`)
+   - Set a strong database password (save it!)
+   - Select a region close to your deployment target
+3. **Get Connection String**:
+   - Go to Project Settings → Database
+   - Copy the "Connection string" (URI format)
+   - It looks like: `postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres`
 
-- PostgreSQL 14+ (for `gen_random_uuid()`)
-- psql or compatible client
-- Database created (e.g., `fastfood_dev`)
+### How to Set Environment Variables
 
-## Running Migrations
-
-### Development (Local)
+Create a `.env.staging` file (never commit to git):
 
 ```bash
-# Set database URL
-export DATABASE_URL="postgresql://user:password@localhost:5432/fastfood_dev"
-
-# Run ALL migrations (in order)
-psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
-psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.up.sql
-psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
-psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
-psql $DATABASE_URL -f db/migrations/005_create_taste_graph.up.sql
-psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.up.sql
-
-# Run SINGLE migration
-psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
-
-# Run DOWN migrations (rollback - reverse order)
-psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.down.sql
-psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
-psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
-psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
-psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
-psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+NODE_ENV=production
+OCR_PROVIDER=none
+STAGING_URL=https://your-app.vercel.app
+STAGING_AUTH_TOKEN=<optional-jwt-for-smoke-tests>
 ```
 
-### Using Docker Compose
+### How to Enable Supabase Auth
+
+1. **Enable Auth in Supabase Dashboard**:
+   - Go to Authentication → Providers
+   - Enable Email provider (for testing)
+   - Optionally enable social providers (Google, Apple, etc.)
+
+2. **Get Auth Config**:
+   - Copy your Supabase URL and anon key from Project Settings → API
+   
+3. **For Client Testing** (dev only):
+   - Set `EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN` in your `.env.local`
+   - This token will be attached to all Decision OS API requests
+
+### How to Run Migrations
 
 ```bash
-# Start Postgres
-docker compose up -d postgres
+# Set DATABASE_URL first
+export DATABASE_URL="postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres"
 
 # Run migrations
-docker compose exec postgres psql -U fastfood -d fastfood_dev \
-  -f /app/db/migrations/001_create_decision_os_schema.up.sql
+npm run db:migrate:staging
 ```
 
-### Using a Migration Tool (e.g., golang-migrate)
+### How to Verify Tables Exist
 
-```bash
-# Install migrate
-brew install golang-migrate
+After running migrations, verify in Supabase:
 
-# Create migrate-compatible files
-# Rename: 001_create_decision_os_schema.up.sql → 000001_create_decision_os_schema.up.sql
+1. Go to Database → Tables in Supabase dashboard
+2. You should see these tables:
+   - `user_profiles`
+   - `meals`
+   - `decision_events`
+   - `taste_signals`
+   - `taste_meal_scores`
+   - `receipt_imports`
+   - `inventory_items`
 
-# Run migrations
-migrate -database $DATABASE_URL -path db/migrations up
-```
-
-## Running Seeds
-
-Seeds should be run **after** migrations.
-
-```bash
-# Run seed file
-psql $DATABASE_URL -f db/seeds/001_meals.sql
-```
-
-**Note**: Seeds are idempotent - running them multiple times will TRUNCATE and re-insert.
-
-## Verification
-
-After running migrations and seeds:
-
-```bash
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM decision_os.meals;"
-# Expected: 50
-
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM decision_os.meal_ingredients;"
-# Expected: 250+
-
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = 'decision_os';"
-# Expected: 4 (2 for decision_events, 2 for drm_events)
-
-# Verify receipt ingestion tables (after migration 002)
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'decision_os' AND table_name LIKE 'receipt%';"
-# Expected: 2 (receipt_imports, receipt_line_items)
-```
-
-## Testing Append-Only Triggers
+Or run this SQL in Supabase SQL Editor:
 
 ```sql
--- This should fail with: "UPDATE not allowed on append-only table decision_events"
-INSERT INTO decision_os.decision_events 
-  (household_key, decided_at, decision_type, context_hash, decision_payload, user_action)
-VALUES ('default', NOW(), 'cook', 'test', '{}', 'approved');
-
-UPDATE decision_os.decision_events SET user_action = 'rejected' WHERE household_key = 'default';
--- ERROR:  UPDATE not allowed on append-only table decision_events
-
-DELETE FROM decision_os.decision_events WHERE household_key = 'default';
--- ERROR:  DELETE not allowed on append-only table decision_events
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+ORDER BY table_name;
 ```
 
-## Schema Diagram
+## Alternative: Neon Postgres
 
-```
-┌─────────────────────┐       ┌─────────────────────┐
-│       meals         │       │  meal_ingredients   │
-├─────────────────────┤       ├─────────────────────┤
-│ id (PK)             │◄──────│ meal_id (FK)        │
-│ name                │       │ id (PK)             │
-│ canonical_key (UK)  │       │ ingredient_name     │
-│ instructions_short  │       │ qty_text            │
-│ est_minutes         │       │ is_pantry_staple    │
-│ est_cost_band       │       │ created_at          │
-│ tags_internal       │       └─────────────────────┘
-│ is_active           │
-│ created_at          │
-└─────────────────────┘
+If you prefer Neon over Supabase:
 
-┌─────────────────────┐       ┌─────────────────────┐
-│  inventory_items    │       │ household_constraints│
-├─────────────────────┤       ├─────────────────────┤
-│ id (PK)             │       │ id (PK)             │
-│ household_key       │       │ household_key (UK)  │
-│ item_name           │       │ has_gluten_allergy  │
-│ qty_estimated       │       │ has_dairy_allergy   │
-│ unit                │       │ has_nut_allergy     │
-│ confidence (0..1)   │       │ has_shellfish_allergy│
-│ source              │       │ has_egg_allergy     │
-│ last_seen_at        │       │ is_vegetarian       │
-│ expires_at          │       │ is_vegan            │
-│ created_at          │       │ created_at          │
-└─────────────────────┘       │ updated_at          │
-                              └─────────────────────┘
+1. Create account at [neon.tech](https://neon.tech)
+2. Create a project
+3. Copy the connection string
+4. Use the same migration process
 
-┌─────────────────────────┐   ┌─────────────────────┐
-│    decision_events      │   │     drm_events      │
-│    (APPEND-ONLY)        │   │    (APPEND-ONLY)    │
-├─────────────────────────┤   ├─────────────────────┤
-│ id (PK)                 │   │ id (PK)             │
-│ household_key           │   │ household_key       │
-│ decided_at              │   │ triggered_at        │
-│ decision_type           │   │ trigger_type        │
-│ meal_id (FK, nullable)  │   │ trigger_reason      │
-│ external_vendor_key     │   │ rescue_type         │
-│ context_hash            │   │ rescue_payload      │
-│ decision_payload        │   │ exhausted           │
-│ user_action             │   │ created_at          │
-│ actioned_at             │   └─────────────────────┘
-│ notes                   │
-│ created_at              │
-└─────────────────────────┘
+## Production Setup Steps
 
-┌─────────────────────────┐   ┌─────────────────────────┐
-│    receipt_imports      │   │   receipt_line_items    │
-│    (Phase 2)            │   │       (Phase 2)         │
-├─────────────────────────┤   ├─────────────────────────┤
-│ id (PK)                 │◄──│ receipt_import_id (FK)  │
-│ household_key           │   │ id (PK)                 │
-│ source                  │   │ raw_line                │
-│ vendor_name             │   │ raw_item_name           │
-│ purchased_at            │   │ raw_qty_text            │
-│ ocr_provider            │   │ raw_price               │
-│ ocr_raw_text            │   │ normalized_item_name    │
-│ status                  │   │ normalized_unit         │
-│ error_message           │   │ normalized_qty_estimated│
-│ created_at              │   │ confidence (0..1)       │
-└─────────────────────────┘   │ created_at              │
-                              └─────────────────────────┘
-```
+### 1. Create Schema (Optional)
 
-## Rollback Strategy
-
-If you need to rollback:
-
-```bash
-# Run DOWN migration (WARNING: destroys all data)
-psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
-```
-
-For partial rollback, manually drop specific tables:
+Supabase uses the default `public` schema. No need to create a separate schema:
 
 ```sql
--- Drop only events tables
-DROP TABLE IF EXISTS decision_os.drm_events;
-DROP TABLE IF EXISTS decision_os.decision_events;
+-- Not needed for Supabase, but available if you want isolation:
+-- CREATE SCHEMA IF NOT EXISTS decision_os;
 ```
 
-## Receipt Ingestion (Phase 2)
+### 2. Run Migrations
 
-Migration 002 adds support for receipt OCR ingestion into inventory.
+Migrations are numbered sequentially and must be run in order.
 
-### Invariants
+| Migration | Description |
+|-----------|-------------|
+| 001 | Create `user_profiles` table |
+| 002 | Create `meals` table |
+| 003 | Create `decision_events` table (append-only event log) |
+| 004 | Create `taste_signals` table |
+| 005 | Create `taste_meal_scores` table |
+| 006 | Create `receipt_imports` + `inventory_items` tables |
+| 007 | Seed initial data (test user + meals) |
+| 008 | Add `auth_user_id` column to `user_profiles` |
+| 009 | Create `households` table |
+| 010 | Create `household_members` join table |
+| 011 | Create `runtime_flags` table (DB-backed kill switches) |
+| 012 | Create `runtime_metrics_daily` table (durable metrics) |
+| 013 | Add `decision_os_readonly` flag (emergency freeze) |
 
-1. **Advisory only**: Receipt data updates `inventory_items.confidence` but NEVER blocks decisions
-2. **Idempotent-safe**: Same receipt can be re-imported without duplicating inventory
-3. **Auditable**: Raw OCR text stored in `ocr_raw_text` for debugging/reprocessing
-
-### Pipeline Flow
-
-```
-1. Image/Email/Text → receipt_imports (status='received')
-2. OCR processing → receipt_imports.ocr_raw_text updated
-3. Line parsing → receipt_line_items created (status='parsed')
-4. Normalization → normalized_* fields populated
-5. Inventory update → inventory_items updated with confidence boost
-```
-
-### Running Migration 002
+**Run all migrations:**
 
 ```bash
-# Apply receipt ingestion tables
-psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.up.sql
-
-# Verify
-psql $DATABASE_URL -c "SELECT table_name FROM information_schema.tables WHERE table_schema='decision_os' AND table_name LIKE 'receipt%';"
-# Expected: receipt_imports, receipt_line_items
-
-# Rollback (if needed)
-psql $DATABASE_URL -f db/migrations/002_create_receipt_ingestion_tables.down.sql
+npm run db:migrate:staging
 ```
 
-## Receipt Deduplication (Phase 3, Migration 003)
+This runs `db/migrate.ts` which executes all SQL files in `db/migrations/` in order.
 
-Migration 003 adds content hashing for receipt deduplication to prevent duplicate imports from inflating inventory.
+### Migration Verification
 
-### Columns Added to `receipt_imports`
+The migration runner verifies:
 
-- `content_hash` (TEXT) - SHA256 hash of normalized OCR text + vendor + date
-- `is_duplicate` (BOOLEAN) - True if this is a duplicate of another canonical import
-- `duplicate_of_receipt_import_id` (UUID, FK) - Points to the canonical import
+1. **Required Tables**: All core tables exist (user_profiles, meals, decision_events, etc.)
+2. **Required Columns**: Each table has all required columns (prevents schema drift)
+3. **Column Types**: Critical columns have correct types (e.g., `runtime_flags.enabled` is boolean)
+4. **NOT NULL Constraints**: Required columns are NOT NULL (e.g., `decision_events.user_action`)
 
-### Indexes
+If verification fails, the migration exits with a non-zero code and clear error message:
 
-- Partial unique index: `(household_key, content_hash) WHERE is_duplicate = false`
-- General index: `(household_key, content_hash)` for lookups
+```
+ERROR: Missing required tables: households, household_members
 
-### Running Migration 003
+Table 'decision_events' missing columns: household_key, notes
 
+Column 'runtime_flags.enabled' type mismatch: expected 'boolean', got 'text'
+
+Column 'decision_events.user_action' should be NOT NULL but is nullable
+```
+
+**Critical column types verified**:
+- `runtime_flags.enabled` → boolean
+- `runtime_flags.key` → text
+- `runtime_metrics_daily.count` → bigint
+- `decision_events.user_action` → text
+- `decision_events.household_key` → text
+
+**NOT NULL columns verified**:
+- `decision_events.user_action`
+- `decision_events.household_key`
+- `runtime_flags.enabled`
+
+### Troubleshooting Migration Failures
+
+#### Missing Tables
+
+If tables are missing, check:
+- Migrations ran in correct order
+- No migration failed silently
+- Database connection is correct
+
+Run migrations again - they are idempotent:
 ```bash
-psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.up.sql
-
-# Verify
-psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='decision_os' AND table_name='receipt_imports' AND column_name LIKE '%hash%' OR column_name LIKE '%duplicate%';"
-# Expected: content_hash, is_duplicate, duplicate_of_receipt_import_id
-
-# Rollback (if needed)
-psql $DATABASE_URL -f db/migrations/003_add_receipt_dedupe.down.sql
+npm run db:migrate:staging
 ```
 
-## Inventory Decay + Consumption (Phase 3, Migration 004)
+#### Missing Columns
 
-Migration 004 adds consumption tracking and time-based decay to the inventory model.
+If columns are missing, you may need to:
+1. Check if a migration was skipped or failed
+2. Manually add the missing column(s)
+3. Update the `schema_migrations` table if a migration was partially applied
 
-### Columns Added to `inventory_items`
-
-- `qty_used_estimated` (NUMERIC) - Cumulative consumption from approved cook decisions
-- `last_used_at` (TIMESTAMPTZ) - When item was last consumed
-- `decay_rate_per_day` (NUMERIC) - Daily decay rate (default 0.05 = 5% per day)
-
-### Model
-
-```
-estimated_remaining = qty_estimated - qty_used_estimated - time_decay
-time_decay = days_since(last_seen_at) * decay_rate_per_day
+Example manual fix:
+```sql
+ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS household_key TEXT;
+ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS notes TEXT;
 ```
 
-### Invariants
+#### Column Verification Reference
 
-1. **Advisory only**: Decay affects scoring but NEVER blocks decisions
-2. **Separate tracking**: `qty_used_estimated` is tracked separately from `qty_estimated` for audit
-3. **Best-effort**: Consumption updates are best-effort; failures don't break feedback flow
+The migration runner verifies these critical columns:
 
-### Running Migration 004
+| Table | Required Columns |
+|-------|------------------|
+| `user_profiles` | id, auth_user_id, created_at |
+| `households` | id, household_key, created_at |
+| `household_members` | household_id, user_profile_id, created_at |
+| `decision_events` | id, user_profile_id, household_key, user_action, actioned_at, decided_at, notes, decision_payload, decision_type, meal_id, context_hash |
+| `inventory_items` | id, household_key, item_name, remaining_qty, confidence, last_seen_at |
+| `receipt_imports` | id, household_key, status, created_at |
+| `taste_signals` | id, household_key, event_id, weight, created_at |
+| `taste_meal_scores` | id, household_key, meal_id, score, approvals, rejections, updated_at |
+| `schema_migrations` | filename, applied_at |
 
-```bash
-psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.up.sql
+### 3. Seed Meals
 
-# Verify
-psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='decision_os' AND table_name='inventory_items' AND column_name IN ('qty_used_estimated', 'last_used_at', 'decay_rate_per_day');"
-# Expected: qty_used_estimated, last_used_at, decay_rate_per_day
-
-# Rollback (if needed)
-psql $DATABASE_URL -f db/migrations/004_add_inventory_decay.down.sql
-```
-
-## Taste Graph v1 (Phase 4, Migration 005)
-
-Migration 005 adds behavioral taste learning tables.
-
-### Tables
-
-**taste_signals** (APPEND-ONLY)
-- `id` (UUID PK) - Unique signal identifier
-- `household_key` (TEXT) - Household identifier
-- `decided_at` (TIMESTAMPTZ) - When decision was presented
-- `actioned_at` (TIMESTAMPTZ) - When user acted (null if expired)
-- `decision_event_id` (UUID FK) - References feedback copy in decision_events
-- `meal_id` (UUID FK) - References meals table
-- `decision_type` (TEXT) - 'cook', 'order', 'zero_cook'
-- `user_action` (TEXT) - 'approved', 'rejected', 'drm_triggered', 'expired'
-- `context_hash` (TEXT) - Context hash from decision
-- `features` (JSONB) - Internal learning features (NEVER sent to client)
-- `weight` (NUMERIC) - Signal weight: approved +1.0, rejected -1.0, drm_triggered -0.5, expired -0.2
-- `created_at` (TIMESTAMPTZ) - Record creation time
-
-**taste_meal_scores** (DERIVED CACHE - MUTABLE)
-- `household_key` (TEXT) - Household identifier
-- `meal_id` (UUID FK) - References meals table
-- `score` (NUMERIC) - Aggregated score from taste_signals
-- `approvals` (INT) - Count of approvals
-- `rejections` (INT) - Count of rejections
-- `last_seen_at` (TIMESTAMPTZ) - Last time meal was shown
-- `updated_at` (TIMESTAMPTZ) - Last update time
-- PRIMARY KEY: (household_key, meal_id)
-
-### Design Decision: decision_event_id Reference
-
-The `decision_event_id` in `taste_signals` references the **FEEDBACK COPY** row in `decision_events`, not the original pending row.
-
-**Rationale:**
-1. Feedback copy has the actual `user_action` ('approved'/'rejected'/'drm_triggered')
-2. Feedback copy has `actioned_at` timestamp
-3. Represents the complete decision-feedback cycle
-
-### Indexes
-
-- `idx_taste_signals_household_created` - (household_key, created_at DESC)
-- `idx_taste_signals_household_meal_created` - (household_key, meal_id, created_at DESC) WHERE meal_id IS NOT NULL
-- `idx_taste_signals_decision_event` - UNIQUE (decision_event_id) for deduplication
-- `idx_taste_meal_scores_household_score` - (household_key, score DESC)
-
-### Invariants
-
-1. **Behavioral-only**: No user preference UI, no toggles, no questionnaires
-2. **Append-only signals**: taste_signals has triggers preventing UPDATE/DELETE
-3. **Features internal-only**: features JSONB never sent to client
-4. **Learning from events**: Only learns from approve/reject/drm_triggered events
-
-### Running Migration 005
-
-```bash
-psql $DATABASE_URL -f db/migrations/005_create_taste_graph.up.sql
-
-# Verify
-psql $DATABASE_URL -c "SELECT table_name FROM information_schema.tables WHERE table_schema='decision_os' AND table_name LIKE 'taste%';"
-# Expected: taste_signals, taste_meal_scores
-
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema='decision_os' AND event_object_table='taste_signals';"
-# Expected: 2 (no_update, no_delete)
-
-# Rollback (if needed)
-psql $DATABASE_URL -f db/migrations/005_create_taste_graph.down.sql
-```
-
-## Weight CHECK Constraint (Migration 006)
-
-Migration 006 adds the missing CHECK constraint for `weight` on `taste_signals`.
-
-### Constraint Added
+Ensure the `meals` table is populated with your meal catalog before using Decision OS.
 
 ```sql
-CHECK (weight >= -2.0 AND weight <= 2.0)
+INSERT INTO meals (id, name, category, prep_time_minutes) VALUES
+  (1, 'Chicken Pasta', 'dinner', 30),
+  (2, 'Grilled Salmon', 'dinner', 25),
+  -- ... more meals
+;
 ```
 
-### Weight Values
+### 4. Required Environment Variables
 
-| User Action | Weight |
-|-------------|--------|
-| approved | +1.0 |
-| rejected | -1.0 |
-| drm_triggered | -0.5 |
-| expired | -0.2 |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Staging/Prod | - | PostgreSQL connection string |
+| `NODE_ENV` | No | `development` | Environment: `test`, `development`, `production` |
+| `OCR_PROVIDER` | No | `none` | OCR provider: `google_vision` or `none` |
+| `OCR_API_KEY` | If google_vision | - | Google Cloud Vision API key |
+| `OCR_ENDPOINT` | No | Google default | Custom OCR endpoint |
+| `STAGING_URL` | For smoke tests | - | Base URL for staging smoke tests |
 
-### Running Migration 006
+### 5. Verify Deployment
+
+Run the staging smoke test:
 
 ```bash
-psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.up.sql
-
-# Verify
-psql $DATABASE_URL -c "SELECT constraint_name FROM information_schema.check_constraints WHERE constraint_schema='decision_os' AND constraint_name LIKE '%weight%';"
-# Expected: taste_signals_weight_range
-
-# Rollback (if needed)
-psql $DATABASE_URL -f db/migrations/006_add_taste_signals_weight_check.down.sql
+STAGING_URL=https://your-app.vercel.app npm run smoke:staging
 ```
 
-## Production Considerations
+## Schema Overview
 
-1. **Backups**: Take backup before running migrations
-2. **RLS**: For multi-tenant, enable Row Level Security on all tables
-3. **Connection pooling**: Use PgBouncer for connection management
-4. **Indexes**: Additional indexes may be needed based on query patterns
-5. **Receipt OCR storage**: `ocr_raw_text` can be large; consider archiving old imports
-6. **Decay tuning**: Adjust `decay_rate_per_day` per item type (perishables decay faster)
+### `user_profiles`
+
+User profiles for Decision OS users.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL PK | Auto-incrementing user ID |
+| `external_id` | TEXT | Legacy external identifier |
+| `auth_user_id` | TEXT UNIQUE | Supabase Auth user ID (sub claim) |
+| `created_at` | TIMESTAMP | Profile creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+
+### `households`
+
+Household groups for multi-user support.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Household UUID |
+| `household_key` | TEXT UNIQUE | Household key (partition key) |
+| `name` | TEXT | Household name (optional) |
+| `created_at` | TIMESTAMP | Creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+
+### `household_members`
+
+Join table linking users to households.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Membership UUID |
+| `household_id` | UUID FK | Foreign key to households |
+| `user_profile_id` | INTEGER FK | Foreign key to user_profiles |
+| `role` | TEXT | `owner` or `member` |
+| `created_at` | TIMESTAMP | Membership creation time |
+
+**Constraint**: Each user can only belong to one household (MVP).
+
+### `decision_events` (Append-Only Event Log)
+
+The core event table. **NEVER UPDATE or DELETE rows** - this is an append-only log.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Unique event ID |
+| `user_profile_id` | INTEGER FK | User who made the decision |
+| `decided_at` | TIMESTAMP | When decision was presented |
+| `actioned_at` | TIMESTAMP | When user/autopilot acted |
+| `user_action` | TEXT | `approved`, `rejected`, `drm_triggered` |
+| `notes` | TEXT | Markers: `autopilot`, `undo_autopilot` |
+| `decision_payload` | JSONB | Decision context (meal, recipe, etc.) |
+| `decision_type` | TEXT | Type of decision |
+| `meal_id` | INTEGER FK | Associated meal |
+| `context_hash` | TEXT | Hash for idempotency checks |
+
+### Decision Event Markers
+
+The `notes` column contains semantic markers:
+
+| Marker | Meaning |
+|--------|---------|
+| `autopilot` | Event was auto-approved by autopilot |
+| `undo_autopilot` | User undid an autopilot decision |
+| (empty/null) | Normal user action |
+
+### `taste_signals`
+
+Signals from user actions that influence taste preferences.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Signal ID |
+| `user_profile_id` | INTEGER FK | User |
+| `meal_id` | INTEGER FK | Meal |
+| `weight` | REAL | Signal weight (-1.0 to +1.0) |
+| `created_at` | TIMESTAMP | Signal timestamp |
+
+### `taste_meal_scores`
+
+Aggregated taste scores per user per meal.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Score ID |
+| `user_profile_id` | INTEGER FK | User |
+| `meal_id` | INTEGER FK | Meal |
+| `score` | REAL | Current score |
+| `approvals` | INTEGER | Approval count |
+| `rejections` | INTEGER | Rejection count |
+
+### `receipt_imports`
+
+Receipt import records.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Import ID |
+| `user_profile_id` | INTEGER FK | User |
+| `created_at` | TIMESTAMP | Import timestamp |
+| `status` | TEXT | `received`, `parsed`, `failed` |
+| `raw_ocr_text` | TEXT | Raw OCR output (max 50k chars) |
+| `image_hash` | TEXT | Hash for deduplication |
+
+### `inventory_items`
+
+User's food inventory.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PK | Item ID |
+| `user_profile_id` | INTEGER FK | User |
+| `name` | TEXT | Item name |
+| `quantity` | INTEGER | Quantity |
+| `confidence` | REAL | OCR confidence (0.0-1.0) |
+| `source` | TEXT | `receipt` or `manual` |
+| `receipt_import_id` | TEXT FK | Source receipt (if applicable) |
+
+## Undo Semantics
+
+When a user undoes an autopilot decision:
+
+1. A **NEW** row is inserted with:
+   - `user_action = 'rejected'`
+   - `notes = 'undo_autopilot'`
+   
+2. A `taste_signal` is created with weight `-0.5` (autonomy penalty)
+
+3. `taste_meal_scores` is **NOT** updated (undo is not a taste rejection)
+
+4. Autopilot is throttled for 72 hours after any undo
+
+## Authentication
+
+Decision OS uses **Supabase Auth** for authentication.
+
+### Production Mode (NODE_ENV=production)
+
+- All Decision OS endpoints require a valid JWT in `Authorization: Bearer <token>`
+- Missing or invalid tokens return `401 { error: 'unauthorized' }`
+- `userProfileId` is derived from the JWT's `sub` claim, NOT from client input
+
+### Dev Mode (NODE_ENV !== production)
+
+- Requests without auth fall back to the default household (`household_key='default'`)
+- Valid tokens are still processed if provided
+- This allows local development without auth setup
+
+### Auth Flow
+
+1. Client sends request with `Authorization: Bearer <jwt>` header
+2. Server decodes JWT, extracts `sub` (user ID)
+3. Server upserts `user_profile` with `auth_user_id = sub`
+4. Server creates household + membership if user is new
+5. Server derives `household_key` from user's household
+6. Endpoint uses derived `household_key` for all queries
+
+### Protected Endpoints
+
+- `POST /api/decision-os/decision`
+- `POST /api/decision-os/feedback`
+- `POST /api/decision-os/drm`
+- `POST /api/decision-os/receipt/import`
+
+### Error Response (401)
+
+```json
+{ "error": "unauthorized" }
+```
+
+This is a minimal error response - does NOT match success contracts (intentional).
+
+## Invariants
+
+- Decision events are append-only (no UPDATE/DELETE)
+- API responses never contain arrays at root level
+- `modified` action is banned (never used)
+- Receipt import always returns `{ receiptImportId, status }`
+- Decision response may include optional `autopilot: boolean`
+- Error responses use `{ error: string }` format

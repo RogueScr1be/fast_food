@@ -1,0 +1,1451 @@
+# Build and Release Guide
+
+This document describes how to build and release the Fast Food Zero-UI app using EAS (Expo Application Services).
+
+## Source of Truth
+
+- **Release authority:** Git tag `vX.Y.Z`
+- **Release button:** Only accepts tags (semver format required)
+- **Staging gate:** Must be green on the same SHA before release proceeds
+
+## CI/CD Architecture (3 Workflows, 2 Protected Environments)
+
+The project uses a clean separation of concerns with three GitHub Actions workflows and two protected environments.
+
+### Workflows
+
+| Workflow | File | Trigger | Description |
+|----------|------|---------|-------------|
+| **CI** | `ci.yml` | PR + push to main | Tests, build sanity, migration proof (no secrets) |
+| **Staging Deploy** | `staging-deploy.yml` | Manual dispatch | Migrate DB, deploy to Vercel, run healthcheck |
+| **Release to TestFlight** | `release-testflight.yml` | Manual button | EAS build + submit (requires production approval) |
+| **Scheduled Jobs** | `scheduled-jobs.yml` | Cron | Daily session prune, weekly metrics prune |
+
+### Protected Environments
+
+| Environment | Secrets | Rules |
+|-------------|---------|-------|
+| `staging` | DATABASE_URL_STAGING, STAGING_URL, STAGING_AUTH_TOKEN, VERCEL_* | No approval required |
+| `production` | EXPO_TOKEN, APPLE_ID, ASC_APP_ID, APPLE_TEAM_ID | **Approval required** |
+
+### How It Works
+
+```
+PR opened
+    ↓
+ci.yml runs (tests, build sanity, migration test)
+    ↓
+Merge to main
+    ↓
+ci.yml runs again
+    ↓
+[Manual] Run "Staging Deploy + Verify" workflow
+    ↓
+staging-deploy.yml: migrate → deploy → healthcheck
+    ↓
+Create release tag: git tag v1.2.3 && git push origin v1.2.3
+    ↓
+[Manual] Run "Release to TestFlight" workflow with tag
+    ↓
+GATE 1: Tag must be vX.Y.Z (semver)
+    ↓
+GATE 2: CI must be green for tag SHA (GitHub API check)
+    ↓
+GATE 3: Staging Deploy must be green for tag SHA within 6 hours (GitHub API check)
+    ↓
+GATE 4: No existing GitHub Release for this tag (release-lock)
+    ↓
+GitHub prompts for production environment approval
+    ↓
+release-testflight.yml: preflight → EAS build → submit → GitHub Release created
+```
+
+### Hard Rules (Machine-Enforced in Workflows)
+
+1. **Tag-only releases** — Release workflow requires `vX.Y.Z` semver tag (hard fail otherwise)
+2. **CI must be green** — GitHub API check verifies CI passed for tag SHA
+3. **Staging must be green** — GitHub API check verifies Staging Deploy passed for tag SHA (within 6 hours)
+4. **Release-lock via GitHub Release** — Prevents double-submits; release artifact created on success
+5. **Production env approval required** — GitHub environment setting
+6. **Only tags/main allowed for production** — GitHub environment setting
+7. **Release concurrency: only one at a time** — Workflow concurrency setting
+8. **No production secrets in repo** — All in GitHub environment secrets
+
+---
+
+## Legacy Pipeline (Deprecated)
+
+The old `staging-legacy.yml` workflow has been replaced by the new architecture. It is kept for reference only and will not run.
+
+**Old jobs (for reference):**
+
+| Job | Description |
+|-----|-------------|
+| `test` | Runs `npm test` and `npm run smoke:mvp` |
+| `db_migration_test` | Ephemeral Postgres: runs migrations + schema verify + write smoke |
+| `deploy_freeze_gate` | Checks if deploys are frozen |
+| `migrate_staging` | Runs database migrations on staging |
+| `schema_gate` | Verifies DB schema matches required structure |
+| `deploy_staging` | Deploys to Vercel staging |
+| `healthz_gate` | Verifies `/api/healthz` returns 200 |
+| `metrics_gate` | Verifies runtime_metrics_daily table is healthy |
+| `alerts_gate` | Checks durable metrics for alert thresholds |
+| `auth_required_gate` | Verifies endpoints return 401 WITHOUT token |
+| `auth_works_gate` | Verifies endpoints return 200 WITH token |
+| `runtime_flags_gate` | Proves DB runtime flags change live behavior |
+| `readonly_gate` | Proves readonly mode prevents DB writes |
+| `smoke_staging` | Runs full staging smoke tests |
+| `record_last_green` | Records deployment to runtime_deployments_log |
+| `provenance_gate` | Verifies recorded deployment matches actual |
+
+---
+
+### Pipeline Gates
+
+The pipeline has multiple gates that must pass in sequence:
+
+#### 0. Deploy Freeze Gate
+
+**Emergency brake for all deployments.**
+
+This is the first gate after tests pass. If `STAGING_DEPLOY_ENABLED` secret is set to anything other than `"true"`, all deployments will halt.
+
+**To freeze deploys:**
+1. Go to GitHub repo → Settings → Secrets and variables → Actions
+2. Set `STAGING_DEPLOY_ENABLED` to `"false"`
+3. All subsequent pushes to main will fail at the deploy freeze gate
+
+**To unfreeze deploys:**
+1. Set `STAGING_DEPLOY_ENABLED` back to `"true"` (or delete the secret)
+2. Deploys will resume on the next push to main
+
+**Note:** If the secret is not set, deploys are enabled by default.
+
+#### 0a. DB Migration Test (CI Truth Gate)
+
+**Runs on all PRs and pushes** - catches migration/schema drift before it reaches staging.
+
+This gate spins up an **ephemeral Postgres 15** service container and:
+
+1. **Runs migrations** (`npm run db:migrate`) against a fresh database
+2. **Verifies schema** - tables, columns, types, NOT NULL constraints, CHECK constraints
+3. **Tests DB writes** - inserts and reads back a user_profile, household, and decision_event
+
+**Why this matters:**
+- Migrations may apply correctly to staging (existing data) but fail on a fresh DB
+- Schema verification catches column/type mismatches before deploy
+- Write test catches constraint violations that unit tests might miss
+
+**If this gate fails:**
+- Check the migration files for syntax errors
+- Verify REQUIRED_TABLES, REQUIRED_COLUMNS, REQUIRED_COLUMN_TYPES match actual migrations
+- Run migrations locally against a fresh Postgres to reproduce
+
+**Local testing:**
+```bash
+# Start local Postgres (e.g., via Docker)
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:15
+
+# Set DATABASE_URL and run migrations
+DATABASE_URL=postgresql://postgres:test@localhost:5432/postgres npm run db:migrate
+npm run db:verify:staging
+```
+
+#### 1. Schema Gate (Pre-Deploy)
+
+After migrations, verifies the staging DB schema matches required structure:
+- Required tables exist (user_profiles, decision_events, runtime_flags, etc.)
+- Required columns exist per table
+- Column types are correct (runtime_flags.enabled is boolean, etc.)
+- NOT NULL constraints are in place
+
+```bash
+npm run db:verify:staging
+# Expected output:
+# PASS db_connected
+# PASS tables_verified (12 tables)
+# PASS columns_verified (11 tables checked)
+# PASS column_types_verified (5 columns)
+# PASS not_null_verified (3 columns)
+# === SCHEMA VERIFICATION PASSED ===
+```
+
+This gate runs BEFORE deployment to catch schema drift early.
+
+#### 2. Healthz Gate
+
+After deployment, the pipeline calls `GET /api/healthz` and fails if:
+- Response is not 200
+- This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
+
+#### 3. Metrics Health Gate
+
+Verifies the `runtime_metrics_daily` table exists and is queryable:
+
+```bash
+npm run metrics:health
+# Expected output:
+# PASS db_connected
+# PASS table_exists
+# PASS query_succeeded (N metrics for today)
+```
+
+This ensures metrics persistence is working before checking alert thresholds.
+
+#### 4. Alerts Gate
+
+Reads today's metrics from `runtime_metrics_daily` and fails if alert thresholds are exceeded:
+
+| Metric | Threshold | Meaning |
+|--------|-----------|---------|
+| `healthz_ok_false` | > 0 | Healthz returned false at least once today |
+| `metrics_db_failed` | >= 1 | Metrics DB write failed |
+| `ocr_provider_failed` | >= 5 | OCR provider failed multiple times |
+
+```bash
+npm run metrics:alerts
+# Expected output:
+# PASS healthz_ok_false (count=0, threshold=0)
+# PASS metrics_db_failed (count=0, threshold=1)
+# PASS ocr_provider_failed (count=2, threshold=5)
+```
+
+This catches infrastructure issues before they escalate.
+
+#### 5. Auth Required Gate (401)
+
+Verifies protected endpoints correctly REJECT unauthenticated requests:
+- Calls all Decision OS endpoints WITHOUT auth token
+- All must return 401 `{ error: 'unauthorized' }`
+- Prevents silent auth bypass bugs
+
+```bash
+npm run auth:sanity:require401
+# Expected output:
+# PASS healthz
+# PASS decision_401
+# PASS receipt_401
+# PASS feedback_401
+# PASS drm_401
+```
+
+#### 6. Auth Works Gate (200)
+
+Verifies protected endpoints correctly ACCEPT authenticated requests:
+- **Preflight**: Decodes JWT and fails if token expires within 5 minutes
+- Calls all Decision OS endpoints WITH auth token
+- All must return 200 with canonical shapes
+- Prevents "green now, red later" token expiration issues
+
+```bash
+npm run auth:sanity:require200
+# Expected output:
+# PASS token_preflight
+# PASS healthz
+# PASS decision_200
+# PASS receipt_200
+# PASS feedback_200
+# PASS drm_200
+```
+
+#### 7. Runtime Flags Gate
+
+Proves that DB-backed runtime flags actually change live behavior:
+
+1. Sets `decision_drm_enabled = false` in staging DB
+2. Calls DRM endpoint → expects `{ drmActivated: false }` (forced by flag)
+3. Sets `decision_drm_enabled = true` in staging DB
+4. Calls DRM endpoint → expects canonical response (not forced false)
+5. Restores flag to `true` (cleanup)
+
+```bash
+npm run flags:proof
+# Expected output:
+# PASS env_vars_present
+# PASS db_connected
+# PASS set_flag_false
+# PASS drm_returns_false_when_disabled
+# PASS set_flag_true
+# PASS drm_returns_canonical_when_enabled
+# PASS flag_restored
+# === RUNTIME FLAG PROOF PASSED ===
+```
+
+This gate proves that ops can flip flags from Supabase UI to immediately disable features without redeploying.
+
+#### 8. Readonly Gate
+
+Proves that readonly mode (emergency freeze) prevents all DB writes:
+
+1. Counts rows in `decision_events`, `taste_signals`, `inventory_items`, `receipt_imports`
+2. Sets `decision_os_readonly = true` in staging DB
+3. Calls all Decision OS endpoints (decision, feedback, drm, receipt)
+4. Verifies canonical responses returned (200 OK)
+5. Verifies row counts UNCHANGED (no DB writes occurred)
+6. Restores `readonly = false` (cleanup)
+
+```bash
+npm run readonly:proof
+# Expected output:
+# PASS env_vars_present
+# PASS db_connected
+# PASS initial_counts_captured
+# PASS set_readonly_true
+# PASS decision_returns_200
+# PASS receipt_returns_200
+# PASS feedback_returns_200
+# PASS drm_returns_200
+# PASS decision_events_unchanged
+# PASS taste_signals_unchanged
+# PASS inventory_items_unchanged
+# PASS receipt_imports_unchanged
+# PASS readonly_restored
+# === READONLY PROOF PASSED ===
+```
+
+#### 9. Smoke Staging
+
+Full integration test of all Decision OS flows with authenticated requests.
+
+### Weekly Metrics Prune
+
+A scheduled job runs weekly (Sunday at 03:00 UTC) to delete old metrics:
+
+```bash
+METRICS_RETENTION_DAYS=90 npm run metrics:prune
+# Expected output:
+# === Metrics Prune ===
+# Retention: 90 days
+# PASS db_connected
+# PASS pruned X rows older than YYYY-MM-DD
+# PASS total_rows: Y (was Z)
+# === METRICS PRUNE COMPLETED ===
+```
+
+**Configuration**:
+- `METRICS_RETENTION_DAYS`: Number of days to retain (default: 90 for staging, 365 for production)
+- Runs automatically via GitHub Actions schedule
+- Prevents unbounded growth of `runtime_metrics_daily` table
+
+---
+
+## Required GitHub Secrets (Canonical List)
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `DATABASE_URL_STAGING` | Yes | Postgres connection string (Supabase) |
+| `VERCEL_TOKEN` | Yes | Vercel deployment token |
+| `VERCEL_ORG_ID` | Yes | Vercel organization ID |
+| `VERCEL_PROJECT_ID` | Yes | Vercel project ID |
+| `STAGING_URL` | Yes | Deployed staging URL (e.g., `https://your-app.vercel.app`) |
+| `STAGING_AUTH_TOKEN` | Yes | Supabase JWT for authenticated tests |
+
+### How to Set Up Secrets
+
+1. **DATABASE_URL_STAGING**: 
+   - Supabase dashboard → Project Settings → Database → Connection string
+   - Format: `postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres`
+
+2. **Vercel Secrets**:
+   ```bash
+   # Get Vercel token from https://vercel.com/account/tokens
+   # Get org/project IDs from .vercel/project.json after running:
+   vercel link
+   ```
+
+3. **STAGING_URL**: Your Vercel deployment URL (e.g., `https://fast-food-staging.vercel.app`)
+
+4. **STAGING_AUTH_TOKEN**: Supabase JWT for a test user (see below)
+
+### How to Rotate STAGING_AUTH_TOKEN
+
+1. Log into Supabase dashboard
+2. Go to Authentication → Users
+3. Find or create a staging test user (e.g., `staging-test@example.com`)
+4. Generate a new access token:
+   ```javascript
+   // Via Supabase client
+   const { data } = await supabase.auth.signInWithPassword({
+     email: 'staging-test@example.com',
+     password: 'your-password'
+   });
+   console.log(data.session.access_token);
+   ```
+5. Update GitHub secret: Settings → Secrets → Actions → `STAGING_AUTH_TOKEN`
+
+**Note**: Tokens expire. If auth_sanity fails with unexpected responses, rotate the token.
+
+---
+
+## Required Vercel Environment Variables
+
+Set these in Vercel project settings (Settings → Environment Variables):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | Postgres connection string |
+| `NODE_ENV` | Yes | `production` |
+| `SUPABASE_JWT_SECRET` | Yes | JWT secret for auth verification |
+| `OCR_PROVIDER` | No | `none` or `google_vision` |
+| `OCR_API_KEY` | If OCR enabled | Google Vision API key |
+
+### Decision OS Kill Switches (Feature Flags)
+
+Hard kill switches with fail-closed behavior. All default to `"false"` in production when not set.
+
+| Variable | Default (prod) | Default (dev) | Description |
+|----------|----------------|---------------|-------------|
+| `DECISION_OS_ENABLED` | `false` | `true` | Master kill switch - disables all Decision OS endpoints |
+| `DECISION_AUTOPILOT_ENABLED` | `false` | `true` | Autopilot feature - automatic meal approvals |
+| `DECISION_OCR_ENABLED` | `false` | `false` | OCR feature - receipt scanning (always defaults false) |
+| `DECISION_DRM_ENABLED` | `false` | `true` | DRM feature - Dinner Rescue Mode |
+| `FF_MVP_ENABLED` | `false` | `true` | MVP kill switch - if false, app shows "temporarily unavailable" |
+| `FF_QA_ENABLED` | `false` | `true` | QA panel - if false, QA panel is not accessible |
+| `INTERNAL_METRICS_ENABLED` | `false` | `false` | Internal metrics summary endpoint in production |
+
+**Values**: Use string `"true"` or `"false"`. Case-insensitive.
+
+**Behavior when disabled**:
+
+| Flag | Disabled Behavior |
+|------|-------------------|
+| `DECISION_OS_ENABLED=false` | All Decision OS endpoints return `401 { error: 'unauthorized' }` |
+| `DECISION_AUTOPILOT_ENABLED=false` | Autopilot evaluation skipped; no autopilot copies inserted |
+| `DECISION_OCR_ENABLED=false` | Receipt import returns `{ receiptImportId, status: 'failed' }` (200 OK) |
+| `DECISION_DRM_ENABLED=false` | DRM endpoint returns `{ drmActivated: false }` (200 OK) |
+| `FF_MVP_ENABLED=false` | App shows "Fast Food is temporarily unavailable" (client-side) |
+| `FF_QA_ENABLED=false` | QA panel long-press gesture does nothing; /qa route redirects back |
+
+**Production recommendations**:
+
+```bash
+# Minimum viable production (fail-closed):
+DECISION_OS_ENABLED=true
+DECISION_AUTOPILOT_ENABLED=true
+DECISION_DRM_ENABLED=true
+# OCR_ENABLED only if OCR_API_KEY is configured
+DECISION_OCR_ENABLED=false
+
+# Emergency shutdown (all features off):
+DECISION_OS_ENABLED=false
+```
+
+**Cascade behavior**: Feature flags (`autopilot`, `ocr`, `drm`) are only effective when `DECISION_OS_ENABLED=true`. If master is disabled, all features are disabled regardless of their individual settings.
+
+### Runtime Flags (DB-backed Kill Switches)
+
+In addition to ENV flags, Decision OS supports DB-backed runtime flags that can be flipped instantly from Supabase UI without redeploying.
+
+**How it works**:
+1. Set `RUNTIME_FLAGS_ENABLED=true` in Vercel env vars
+2. DB flags are AND'd with ENV flags (both must be `true` for feature to be enabled)
+3. Flags are cached for 30 seconds per process
+4. If DB read fails in production, all features are disabled (fail-closed)
+
+**How to flip runtime flags from Supabase UI**:
+
+1. Open Supabase dashboard → Table Editor → `runtime_flags`
+2. Find the flag you want to change (e.g., `decision_drm_enabled`)
+3. Toggle the `enabled` column to `true` or `false`
+4. Click Save
+5. Changes take effect within 30 seconds (cache TTL)
+
+| Flag Key | Controls |
+|----------|----------|
+| `decision_os_enabled` | Master switch (all endpoints) |
+| `decision_autopilot_enabled` | Autopilot feature |
+| `decision_ocr_enabled` | OCR/receipt scanning |
+| `decision_drm_enabled` | Dinner Rescue Mode |
+| `decision_os_readonly` | Emergency freeze (read-only mode) |
+| `ff_mvp_enabled` | MVP kill switch (client shows "unavailable" if false) |
+
+**Note**: ENV flags take precedence. If ENV says `false`, DB cannot override to `true`.
+
+### Emergency Freeze (Read-only Mode)
+
+When `decision_os_readonly=true` in the `runtime_flags` table:
+
+- All Decision OS endpoints continue to return canonical responses
+- **No database writes** occur (decision_events, taste_signals, inventory_items, receipt_imports unchanged)
+- Useful for emergency situations where you need to stop all writes instantly
+- Can be toggled from Supabase UI without redeploying
+
+**Behavior when readonly**:
+
+| Endpoint | Returns | DB Write |
+|----------|---------|----------|
+| `/api/decision-os/decision` | Normal decision response | **Skipped** |
+| `/api/decision-os/feedback` | `{ recorded: true }` | **Skipped** |
+| `/api/decision-os/drm` | `{ drmActivated: true }` | **Skipped** |
+| `/api/decision-os/receipt/import` | `{ receiptImportId, status: 'received' }` | **Skipped** |
+
+**Important**: Readonly mode requires `decision_os_enabled=true` (AND logic). It doesn't bypass auth.
+
+**DB-Layer Enforcement (Hard Backstop)**:
+
+Readonly mode is enforced at two levels:
+1. **API Layer**: Endpoints check `flags.readonlyMode` and skip DB writes
+2. **DB Client Layer**: The database adapter blocks all write operations (INSERT/UPDATE/DELETE) and throws `Error('readonly_mode')`
+
+This double-layer protection ensures writes cannot accidentally occur even if API-layer checks are bypassed:
+
+```typescript
+// DB adapter blocks writes when readonly
+if (this._readonlyMode && isWriteStatement(sql)) {
+  throw new Error('readonly_mode');
+}
+```
+
+Endpoints catch this error gracefully and return canonical responses (no crashes, no shape drift).
+
+### Internal Metrics Endpoint (Dev/Staging Only)
+
+View runtime metrics at:
+```
+GET /api/decision-os/_internal/metrics
+```
+
+**Security**:
+- Production: Always returns 401 (blocked completely)
+- Dev/Staging: Requires auth if `SUPABASE_JWT_SECRET` is set
+
+**Response**:
+```json
+{
+  "ok": true,
+  "counters": {
+    "decision_called": 42,
+    "receipt_called": 10,
+    "healthz_hit": 100
+  }
+}
+```
+
+**Available metrics**:
+| Metric | Description |
+|--------|-------------|
+| `healthz_hit` | Health check endpoint calls |
+| `decision_called` | Decision endpoint calls |
+| `decision_unauthorized` | Unauthorized decision attempts |
+| `receipt_called` | Receipt import calls |
+| `feedback_called` | Feedback endpoint calls |
+| `drm_called` | DRM endpoint calls |
+| `autopilot_inserted` | Autopilot approvals created |
+| `undo_received` | Undo actions received |
+| `ocr_provider_failed` | OCR failures |
+
+**Privacy**: Metrics are counters only - no user IDs, tokens, meal names, or sensitive data.
+
+### Internal Metrics Summary Endpoint (Staging/Preview Only)
+
+Aggregated session metrics for internal review:
+```
+GET /api/decision-os/_internal/metrics-summary?days=14
+```
+
+**Security**:
+- Production: Returns 401 unless `INTERNAL_METRICS_ENABLED=true`
+- Dev/Staging: Requires auth if `SUPABASE_JWT_SECRET` is set
+
+**Response**:
+```json
+{
+  "ok": true,
+  "days_queried": 14,
+  "summary": {
+    "total_sessions": 42,
+    "accepted_sessions": 25,
+    "rescued_sessions": 10,
+    "abandoned_sessions": 7,
+    "acceptance_rate": 0.60,
+    "rescue_rate": 0.24,
+    "median_time_to_decision_ms": 45000,
+    "p90_time_to_decision_ms": 120000,
+    "intents": {
+      "easy": 20,
+      "cheap": 15,
+      "quick": 8,
+      "no_energy": 12
+    }
+  },
+  "computed_at": "2025-01-20T17:30:00.000Z"
+}
+```
+
+**Dogfood Report**:
+```bash
+STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=... npm run dogfood:report
+```
+
+Prints a concise summary with red flag warnings for:
+- Median time-to-decision > 180s
+- Rescue rate > 40%
+- Acceptance rate < 40%
+- Zero sessions recorded
+
+### Durable Metrics (DB-backed)
+
+In production (or when `METRICS_DB_ENABLED=true`), metrics are also persisted to the `runtime_metrics_daily` table.
+
+**Table structure**:
+```sql
+runtime_metrics_daily (
+  day DATE,        -- UTC date
+  metric_key TEXT, -- Metric name (e.g., 'decision_called')
+  count BIGINT,    -- Cumulative count for this day
+  PRIMARY KEY (day, metric_key)
+)
+```
+
+**Behavior**:
+- Each `record()` call increments both in-memory counter and DB row
+- DB writes are fire-and-forget (non-blocking)
+- DB failures increment `metrics_db_failed` counter (fail-safe)
+- No sensitive data stored (privacy-safe)
+
+**Querying metrics** (from Supabase SQL editor):
+```sql
+-- Today's metrics
+SELECT * FROM runtime_metrics_daily WHERE day = CURRENT_DATE;
+
+-- Last 7 days
+SELECT * FROM runtime_metrics_daily 
+WHERE day >= CURRENT_DATE - INTERVAL '7 days'
+ORDER BY day DESC, metric_key;
+```
+
+### How to Get SUPABASE_JWT_SECRET
+
+1. Supabase dashboard → Project Settings → API
+2. Copy "JWT Secret" (under "JWT Settings")
+3. Add to Vercel env vars
+
+---
+
+## Prerequisites
+
+### 1. Install EAS CLI
+
+```bash
+npm install -g eas-cli
+```
+
+### 2. Login to EAS
+
+```bash
+eas login
+```
+
+You'll need an Expo account. Create one at [expo.dev](https://expo.dev) if you don't have one.
+
+### 3. Apple Developer Account (for iOS)
+
+- Apple Developer Program membership ($99/year)
+- App Store Connect access
+- Certificates and provisioning profiles (EAS handles this automatically)
+
+### 4. Configure Project
+
+First-time setup:
+
+```bash
+eas build:configure
+```
+
+This links your project to EAS.
+
+---
+
+## Build Profiles
+
+| Profile | Purpose | Distribution | Auth Token |
+|---------|---------|--------------|------------|
+| `development` | Local dev with Expo Dev Client | Internal (simulator) | None |
+| `preview` | Internal QA testing | Internal (device) | Optional staging token |
+| `production` | TestFlight / App Store | Store | **NEVER** |
+
+### Environment Variables by Profile
+
+| Variable | development | preview | production |
+|----------|-------------|---------|------------|
+| `EXPO_PUBLIC_DECISION_OS_BASE_URL` | localhost:8081 | Vercel staging | Vercel staging |
+| `EXPO_PUBLIC_APP_VARIANT` | development | preview | production |
+| `EXPO_PUBLIC_STAGING_AUTH_TOKEN` | - | Set in EAS secrets | **NEVER SET** |
+
+---
+
+## Required Secrets Setup
+
+### EAS Secrets (for preview builds)
+
+Set secrets in EAS dashboard or via CLI:
+
+```bash
+# Decision OS staging URL
+eas secret:create --scope project --name EXPO_PUBLIC_DECISION_OS_BASE_URL --value "https://your-app.vercel.app"
+
+# Staging auth token (PREVIEW ONLY - never for production)
+eas secret:create --scope project --name EXPO_PUBLIC_STAGING_AUTH_TOKEN --value "eyJ..."
+```
+
+**WARNING**: Never set `EXPO_PUBLIC_STAGING_AUTH_TOKEN` for production builds.
+
+### Apple Credentials (for TestFlight)
+
+EAS needs these environment variables or will prompt interactively:
+
+| Variable | Description | Where to find |
+|----------|-------------|---------------|
+| `APPLE_ID` | Your Apple ID email | Your Apple Developer account |
+| `ASC_APP_ID` | App Store Connect App ID | App Store Connect → App → General → App Information |
+| `APPLE_TEAM_ID` | Apple Developer Team ID | Apple Developer → Membership → Team ID |
+
+Set in EAS:
+
+```bash
+eas secret:create --scope project --name APPLE_ID --value "your@email.com"
+eas secret:create --scope project --name ASC_APP_ID --value "1234567890"
+eas secret:create --scope project --name APPLE_TEAM_ID --value "ABCD1234"
+```
+
+Or in your environment:
+
+```bash
+export APPLE_ID="your@email.com"
+export ASC_APP_ID="1234567890"
+export APPLE_TEAM_ID="ABCD1234"
+```
+
+---
+
+## Build Commands
+
+### Development Build (Simulator)
+
+```bash
+npm run eas:build:dev
+# or
+eas build --profile development --platform ios
+```
+
+### Preview Build (Internal Testing)
+
+```bash
+npm run eas:build:preview
+# or
+eas build --profile preview --platform ios
+```
+
+After build completes:
+1. Download the `.ipa` from EAS dashboard
+2. Install via TestFlight (internal) or direct install (Ad Hoc)
+
+### Production Build (TestFlight)
+
+```bash
+npm run eas:build:prod
+# or
+eas build --profile production --platform ios
+```
+
+### Submit to TestFlight
+
+After production build completes:
+
+```bash
+npm run eas:submit:prod
+# or
+eas submit --platform ios --latest
+```
+
+### Build + Submit in One Command
+
+```bash
+npm run release:testflight
+# or
+eas build --profile production --platform ios --auto-submit
+```
+
+---
+
+## Release Checklist
+
+### Before Building
+
+- [ ] Run tests: `npm test`
+- [ ] Run smoke tests: `npm run smoke:mvp`
+- [ ] Verify staging API: `npm run smoke:staging`
+- [ ] Check version in `app.json` (bump if needed)
+- [ ] Commit all changes
+- [ ] Ensure EAS secrets are configured
+
+### Build Verification
+
+- [ ] Build completes successfully in EAS dashboard
+- [ ] Download and install on test device
+- [ ] Test critical flows:
+  - [ ] App launches without crash
+  - [ ] Decision OS endpoints respond (or return 401 gracefully)
+  - [ ] Receipt import works (or fails gracefully with OCR disabled)
+
+### TestFlight Submission
+
+- [ ] Submit build to TestFlight
+- [ ] Wait for Apple processing (10-30 minutes)
+- [ ] Verify build appears in TestFlight
+- [ ] Add test notes for testers
+- [ ] Invite testers
+
+---
+
+## Versioning Strategy
+
+### Version Number (`version` in app.json)
+
+Semantic versioning: `MAJOR.MINOR.PATCH`
+
+- **MAJOR**: Breaking changes, major feature releases
+- **MINOR**: New features, significant improvements
+- **PATCH**: Bug fixes, small improvements
+
+### Build Number (`ios.buildNumber`)
+
+- Auto-incremented by EAS with `"autoIncrement": true` in production profile
+- Alternatively, increment manually before each TestFlight submission
+
+### Updating Version
+
+1. Update `version` in `app.json`:
+   ```json
+   {
+     "expo": {
+       "version": "1.1.0"
+     }
+   }
+   ```
+
+2. Commit the change:
+   ```bash
+   git add app.json
+   git commit -m "chore: bump version to 1.1.0"
+   ```
+
+3. Build will auto-increment `buildNumber`
+
+---
+
+## Troubleshooting
+
+### Build Fails
+
+1. Check EAS build logs in dashboard
+2. Verify all secrets are set correctly
+3. Ensure Apple credentials are valid
+4. Run `eas build:inspect` for detailed info
+
+### Submission Fails
+
+1. Verify Apple credentials (APPLE_ID, ASC_APP_ID, APPLE_TEAM_ID)
+2. Check App Store Connect for app status
+3. Ensure bundle identifier matches (`com.fastfood.zeroui`)
+4. Verify no pending compliance questionnaires in ASC
+
+### App Crashes on Launch
+
+1. Check for missing environment variables
+2. Verify API base URL is accessible
+3. Test with Expo Go first
+4. Check Sentry/Crashlytics for crash reports
+
+### 401 Errors in Production
+
+This is **expected** until login UI is implemented:
+- Production builds have no baked-in auth token
+- App should handle 401 gracefully (not crash)
+- Decision OS endpoints will return `{ error: 'unauthorized' }`
+
+---
+
+## Staging Smoke Verification
+
+Before releasing, verify staging:
+
+```bash
+# Set staging URL
+export STAGING_URL="https://your-app.vercel.app"
+
+# Optional: Set auth token for full test coverage
+export STAGING_AUTH_TOKEN="eyJ..."
+
+# Run smoke tests
+npm run smoke:staging
+```
+
+Expected output:
+```
+=== Staging Smoke Tests (Canonical Contract Validation) ===
+Target: https://your-app.vercel.app
+Auth: Token provided (production mode)
+
+[1/5] Receipt Import: PASS
+[2/5] Decision: PASS
+[3/5] Feedback: PASS
+[4/5] DRM Recommendation: PASS
+[5/5] DRM Endpoint: PASS
+
+✓ STAGING SMOKE PASSED
+```
+
+---
+
+## Quick Reference
+
+```bash
+# Login
+eas login
+
+# Build for preview (internal testing)
+npm run eas:build:preview
+
+# Build for production (TestFlight)
+npm run eas:build:prod
+
+# Submit latest build to TestFlight
+npm run eas:submit:prod
+
+# Build AND submit to TestFlight
+npm run release:testflight
+
+# Run ALL preflight checks before release
+npm run release:preflight
+
+# Check build status
+eas build:list
+
+# View secrets
+eas secret:list
+
+# Add a secret
+eas secret:create --scope project --name VAR_NAME --value "value"
+```
+
+---
+
+## TestFlight Ship Plan (No Guessing, No Heroics)
+
+This is the exact sequence for cutting a TestFlight build. **Do not skip steps.**
+
+### Gate 0 — Secrets + Credentials (Must Exist First)
+
+Before touching anything else, verify these exist in your environment:
+
+**Staging:**
+| Secret | Purpose |
+|--------|---------|
+| `DATABASE_URL_STAGING` | Postgres connection for migrations |
+| `STAGING_URL` | Deployed staging URL |
+| `STAGING_AUTH_TOKEN` | JWT for authenticated tests |
+| `VERCEL_TOKEN` | (If deploy is scripted) |
+
+**EAS/TestFlight:**
+| Secret | Purpose |
+|--------|---------|
+| `EXPO_TOKEN` | (Or interactive `eas login`) |
+| `APPLE_ID` | Apple Developer account email |
+| `ASC_APP_ID` | App Store Connect App ID |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+
+**Rule:** If any one is missing, don't start the cut. You'll thrash.
+
+### Phase 10C — Staging "Truth Run"
+
+Run these in order:
+
+```bash
+# 1. Migrate staging
+export DATABASE_URL="$DATABASE_URL_STAGING"
+npm run db:migrate:staging
+npm run db:verify:staging
+
+# 2. Deploy staging (Vercel)
+# Use your normal Vercel flow (manual or scripted)
+# Confirm deployed commit includes latest changes
+
+# 3. Run staging healthcheck
+export STAGING_URL=...
+export STAGING_AUTH_TOKEN=...
+npm run staging:healthcheck
+```
+
+**Pass criteria:** Healthcheck green. No partial passes.
+
+### Phase 10D — Release Cut (TestFlight)
+
+```bash
+# 1. Run ALL preflight checks (test + build:sanity + staging:healthcheck)
+npm run release:preflight
+
+# 2. Verify EAS auth
+eas whoami
+# If not logged in:
+eas login
+
+# 3. Build + submit
+npm run release:testflight
+```
+
+**Pass criteria:** Build uploaded + visible in App Store Connect TestFlight.
+
+### Phase 10E — Post-cut Verification (Fast and Brutal)
+
+On the TestFlight build, verify:
+
+**Production gates:**
+- [ ] QA panel inaccessible (gesture does nothing)
+- [ ] Internal metrics endpoint blocked (401 / disabled)
+- [ ] No staging token embedded
+
+**Kill switch behavior:**
+- [ ] Client `EXPO_PUBLIC_FF_MVP_ENABLED=false` shows unavailable screen
+- [ ] Server `ff_mvp_enabled=false` blocks even if client is true
+
+**Core loop:**
+- [ ] Decide → accept closes session
+- [ ] Reject twice → DRM rescue
+- [ ] Receipt scan → "Receipt added" and subsequent decisions prefer matching inventory
+
+### Single Command: Release Preflight
+
+```bash
+npm run release:preflight
+```
+
+Executes in order:
+1. `npm test` — All tests must pass
+2. `npm run build:sanity` — EAS config must be valid
+3. `npm run staging:healthcheck` — Staging must be healthy
+
+**Fails fast on any error.** No "I'll just try anyway."
+
+---
+
+## Security Notes
+
+1. **Never commit secrets** to git
+2. **Never set `EXPO_PUBLIC_STAGING_AUTH_TOKEN` for production** - it would bake a real auth token into the app bundle
+3. **Use EAS secrets** for all sensitive values
+4. **Review secrets periodically** and rotate if needed
+5. **Production app requires login** - users will see 401 until they authenticate (login UI is a future feature)
+
+---
+
+## Emergency Procedures
+
+### Emergency: Freeze Deploys
+
+**When to use:** Infrastructure issues, security incidents, or when you need to halt all deployments immediately.
+
+**To freeze all staging deployments:**
+
+1. Go to GitHub repo → Settings → Secrets and variables → Actions
+2. Add or update secret: `STAGING_DEPLOY_ENABLED` = `false`
+3. All subsequent pushes to `main` will fail at the `deploy_freeze_gate` job
+4. Error message: "Deploys frozen by STAGING_DEPLOY_ENABLED"
+
+**To unfreeze:**
+
+1. Set `STAGING_DEPLOY_ENABLED` = `true` (or delete the secret)
+2. Deploys resume on the next push to `main`
+
+**Notes:**
+- Tests still run even when deploys are frozen
+- PRs are unaffected (they only run tests, not deploy)
+- If the secret is not set, deploys are **enabled** by default
+- This is a CI/CD level freeze, separate from runtime readonly mode
+
+### Emergency: Readonly Mode (Runtime)
+
+To prevent all DB writes at runtime (without freezing deploys):
+
+1. Go to Supabase → SQL Editor
+2. Run: `UPDATE runtime_flags SET enabled = true WHERE key = 'decision_os_readonly'`
+3. All Decision OS endpoints will return canonical responses but skip DB writes
+4. To restore: `UPDATE runtime_flags SET enabled = false WHERE key = 'decision_os_readonly'`
+
+### Alert Thresholds
+
+The `alerts_gate` job in CI checks these thresholds daily:
+
+| Metric | Threshold | Action When Exceeded |
+|--------|-----------|---------------------|
+| `healthz_ok_false` | > 0 | Investigate healthz failures |
+| `metrics_db_failed` | >= 1 | Check Supabase connectivity |
+| `ocr_provider_failed` | >= 5 | Check OCR provider status |
+
+If any threshold is exceeded, the pipeline fails and you should investigate before proceeding.
+
+### Emergency: Rollback Staging
+
+**When to use:** Bad deployment caused issues but deploy freeze wasn't set in time.
+
+**Automated rollback (recommended):**
+
+1. Go to GitHub repo → Actions → "Rollback Staging" workflow
+2. Click "Run workflow"
+3. Type `rollback` in the confirmation field
+4. Click "Run workflow"
+
+The workflow will:
+- Query `runtime_deployments_log` for the previous green deployment
+- Re-alias `STAGING_URL` to that deployment
+- Verify healthz returns 200
+
+**Manual rollback (if needed):**
+
+```bash
+# Set required env vars
+export DATABASE_URL_STAGING="postgres://..."
+export VERCEL_TOKEN="..."
+export STAGING_URL="https://your-app.vercel.app"
+
+# Execute rollback
+npm run staging:rollback
+```
+
+**Query deployment history:**
+
+```sql
+SELECT env, deployment_url, git_sha, run_id, recorded_at
+FROM runtime_deployments_log
+WHERE env = 'staging'
+ORDER BY recorded_at DESC
+LIMIT 5;
+```
+
+### Emergency: MVP Kill Switch (ff_mvp_enabled)
+
+**When to use:** The MVP has critical issues that make it unusable or harmful. Examples:
+- Multiple options shown to users (violates single-decision contract)
+- DRM fails to produce a decision (rescue broken)
+- Session gets stuck with no navigation
+- Repeated crashes on Tonight/Decision/Execute screens
+- Unacceptable acceptance rate (<20%) after multiple users try
+
+**Step 1: Flip the flag in runtime_flags table**
+
+```sql
+-- Supabase → SQL Editor → Run this:
+UPDATE runtime_flags 
+SET enabled = false, updated_at = NOW() 
+WHERE key = 'ff_mvp_enabled';
+
+-- Verify:
+SELECT key, enabled, updated_at FROM runtime_flags WHERE key = 'ff_mvp_enabled';
+```
+
+**Step 2: Verify it's working (within 30 seconds)**
+
+1. **Client-side**: Open app → Tonight screen should show:
+   - "Fast Food is temporarily unavailable"
+   - "Please try again later"
+
+2. **API-side** (optional): Decision OS endpoints should still return 200 but app won't call them due to client-side gate.
+
+**Step 3: Communicate to testers**
+
+Notify all dogfood testers that MVP is disabled for investigation.
+
+**Step 4: Investigate root cause**
+
+Use the dogfood report and internal metrics:
+
+```bash
+# Get metrics summary
+STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=... npm run dogfood:report
+
+# Check session data directly
+# Supabase → SQL Editor:
+SELECT outcome, COUNT(*) 
+FROM sessions 
+WHERE started_at >= NOW() - INTERVAL '1 day'
+GROUP BY outcome;
+```
+
+**Step 5: Re-enable when fixed**
+
+```sql
+UPDATE runtime_flags 
+SET enabled = true, updated_at = NOW() 
+WHERE key = 'ff_mvp_enabled';
+```
+
+---
+
+### Emergency: QA Panel Kill Switch (ff_qa_enabled)
+
+**When to use:** QA panel accidentally accessible to non-testers or causing issues.
+
+```sql
+-- Disable QA panel (staging/prod):
+UPDATE runtime_flags 
+SET enabled = false, updated_at = NOW() 
+WHERE key = 'ff_qa_enabled';
+
+-- Re-enable (staging/prod):
+UPDATE runtime_flags 
+SET enabled = true, updated_at = NOW() 
+WHERE key = 'ff_qa_enabled';
+```
+
+**Environment Variable Override:**
+
+In addition to DB flag, the client-side also checks `EXPO_PUBLIC_FF_QA_ENABLED`:
+- `development` and `preview` profiles: Set to `"true"` by default in `eas.json`
+- `production` profile: Set to `"false"` by default
+
+Both conditions must be met for QA panel access:
+1. Long-press gesture performed on Tonight screen title
+2. `ff_qa_enabled` DB flag is `true` OR `EXPO_PUBLIC_FF_QA_ENABLED=true`
+
+---
+
+### Deployment Provenance
+
+Every successful staging pipeline run records to `runtime_deployments_log`:
+- `env`: Environment name (staging)
+- `deployment_url`: Vercel deployment URL
+- `git_sha`: Git commit SHA
+- `run_id`: GitHub Actions run ID
+- `recorded_at`: Timestamp
+
+The `provenance_gate` job verifies that the recorded deployment URL matches the actual deployment.
+
+---
+
+## SQL Style Contract v1 (Tenant-Safe Dialect)
+
+All SQL executed through `lib/decision-os/db/client.ts` adapters MUST follow this contract.
+
+### The $1 Rule
+
+**`$1` is ALWAYS `household_key` for tenant-scoped queries.**
+
+Other parameters start at `$2`. This is non-negotiable.
+
+```sql
+-- Reads: $1 = household_key, $2+ = other params
+SELECT * FROM decision_events de WHERE de.household_key = $1 AND de.id = $2
+
+-- Updates: $1 = household_key, $2+ = values/conditions
+UPDATE receipt_imports SET status = $2 WHERE household_key = $1 AND id = $3
+```
+
+### Tenant Tables
+
+These tables require `household_key` predicate in ALL queries:
+
+- `decision_events`
+- `receipt_imports`
+- `inventory_items`
+- `taste_signals`
+- `taste_meal_scores`
+
+### Required Patterns
+
+#### SELECT (Single Table)
+```sql
+SELECT * FROM decision_events de WHERE de.household_key = $1
+```
+
+#### SELECT (JOIN) - BOTH tables need predicates
+```sql
+SELECT * FROM decision_events de 
+JOIN receipt_imports ri ON ri.id = de.receipt_id
+WHERE de.household_key = $1 AND ri.household_key = $1
+```
+
+#### INSERT with UPSERT
+```sql
+INSERT INTO inventory_items (household_key, item_name, ...)
+VALUES ($1, $2, ...)
+ON CONFLICT (household_key, item_name) DO UPDATE SET ...
+```
+
+#### UPDATE
+```sql
+UPDATE receipt_imports SET status = $2 
+WHERE household_key = $1 AND id = $3
+```
+
+### Banned Patterns (CI Fails)
+
+| Pattern | Why Banned |
+|---------|------------|
+| `WHERE household_key = $1` (unqualified in multi-table) | Ambiguous in JOINs |
+| `$1 = de.household_key` (reversed) | Non-standard, hard to parse |
+| `WHERE de.household_key = $2` (wrong param) | $1 MUST be household_key |
+| `WHERE de.household_key = 'literal'` | No literals for tenant key |
+| `WHERE de.household_key IN ($1, $2)` | Multi-tenant leak risk |
+| `WHERE de.household_key = $1 OR ...` | Tenant in OR = leak |
+| `ON CONFLICT (id)` on tenant table | Cross-tenant overwrite |
+| `ON CONFLICT ON CONSTRAINT ...` | Banned entirely (use columns) |
+| `UPDATE ... WHERE id = $1` (no household_key) | Cross-tenant mutation |
+| `DELETE FROM tenant_table` | Banned entirely |
+| SQL with `;` (multi-statement) | Injection risk |
+| DDL (`ALTER`, `CREATE`, `DROP`) | Not allowed at runtime |
+| `WITH ... AS (...)` (CTE) on tenant SQL | Obscures tenant isolation |
+| `EXISTS (SELECT ...)` on tenant SQL | Subqueries hide predicates |
+| `IN (SELECT ...)` on tenant SQL | Subqueries hide predicates |
+
+### CTEs and Subqueries Banned for Tenant SQL
+
+Tenant SQL must be **flat and parseable**. No CTEs or subqueries:
+
+```sql
+-- BANNED (CTE on tenant SQL):
+WITH x AS (SELECT 1) 
+SELECT * FROM decision_events de WHERE de.household_key = $1
+
+-- BANNED (subquery on tenant SQL):
+SELECT * FROM decision_events de 
+WHERE de.household_key = $1 
+  AND EXISTS (SELECT 1 FROM receipt_imports ri WHERE ri.household_key = $1)
+
+-- ALLOWED (flat tenant SQL):
+SELECT * FROM decision_events de WHERE de.household_key = $1
+
+-- ALLOWED (CTE/subquery on non-tenant tables):
+WITH x AS (SELECT 1) SELECT * FROM x
+SELECT 1 WHERE EXISTS (SELECT 1)
+```
+
+**Reason:** We only support flat, parseable, predicate-verifiable SQL in tenant context.
+
+### Schema/Quote Handling
+
+The contract detects tenant tables even when schema-qualified or quoted:
+
+```sql
+-- All detected as 'receipt_imports':
+FROM receipt_imports ri
+FROM public.receipt_imports ri
+FROM "receipt_imports" ri
+FROM "public"."receipt_imports" ri
+UPDATE public.receipt_imports SET ...
+INSERT INTO "inventory_items" ...
+```
+
+### False Positive Prevention
+
+String literals are stripped before banned token scanning:
+
+```sql
+-- ALLOWED (semicolon/DROP are in string literals):
+SELECT ';' as semi FROM users
+SELECT 'DROP TABLE users' as note FROM users
+
+-- REJECTED (semicolon outside strings):
+SELECT 'ok'; DELETE FROM users
+```
+
+### Helper Functions
+
+Use `lib/decision-os/db/sql.ts` helpers for consistent SQL:
+
+```typescript
+import { tenantWhere, tenantAnd, tenantConflict, TABLE_ALIASES } from '../db/sql';
+
+// Single table
+const sql = `SELECT * FROM decision_events de WHERE ${tenantWhere('de')}`;
+// -> SELECT * FROM decision_events de WHERE de.household_key = $1
+
+// JOIN
+const sql = `
+  SELECT * FROM decision_events de 
+  JOIN receipt_imports ri ON ri.id = de.id
+  WHERE ${tenantWhere('de')} ${tenantAnd('ri')}
+`;
+// -> ... WHERE de.household_key = $1 AND ri.household_key = $1
+
+// UPSERT
+const sql = `
+  INSERT INTO inventory_items (...)
+  VALUES (...)
+  ${tenantConflict('item_name')} DO UPDATE SET ...
+`;
+// -> ON CONFLICT (household_key, item_name) DO UPDATE SET ...
+```
+
+### Standard Table Aliases
+
+| Table | Alias |
+|-------|-------|
+| decision_events | `de` |
+| receipt_imports | `ri` |
+| inventory_items | `ii` |
+| taste_signals | `ts` |
+| taste_meal_scores | `tms` |
+
+### Enforcement (3 Layers)
+
+#### Layer 1: Runtime Checks
+Contract violations are caught at runtime by:
+1. `assertSqlStyleContract()` - Checks banned patterns, $1 enforcement, OR/IN clauses
+2. `checkTenantSafety()` - Verifies JOIN predicates for all tenant tables
+3. `checkOnConflictSafety()` - Verifies UPSERT safety
+
+All three run automatically in `assertTenantSafe()` which is called by both adapters.
+
+#### Layer 2: Golden SQL Test
+`lib/decision-os/__tests__/golden-sql-contract.test.ts` validates:
+- All runtime SQL strings pass the contract
+- SELECT queries use `$1` for household_key
+- UPDATE queries have `WHERE household_key = $1`
+- INSERT ON CONFLICT includes household_key in target
+
+**If you add new SQL, add it to RUNTIME_SQL in golden-sql-contract.test.ts**
+
+#### Layer 3: CI Grep Gate
+`npm run sql:contract:gate` fails if SQL touching tenant tables appears outside:
+- `lib/decision-os/db/sql.ts` (helpers)
+- `lib/decision-os/db/client.ts` (runtime SQL)
+- `lib/decision-os/auth/helper.ts` (auth tables)
+- Test files
+
+Runs in CI on every PR and push.
+
+**Violations are bugs. CI fails. Blocked merge.**
+
+### Final Warning
+
+Even "bypass-proof" regex checks are NOT the same as real multi-tenant isolation.
+The gold standard is:
+- **Postgres RLS** with household_key enforced at the DB policy layer
+- Plus app-layer contract + tests (what we have now)
+
+Treat this SQL contract as a **stopgap + developer discipline tool**, not the ultimate firewall.
+
+---
+
+## Related Documentation
+
+- [TESTFLIGHT.md](./TESTFLIGHT.md) — Quick reference for EAS builds and TestFlight submission
+- [DOGFOOD_FIRST_20_DINNERS.md](./DOGFOOD_FIRST_20_DINNERS.md) — Testing protocol for dogfood phase
+
+---
+
+## QA Panel (Device Testing)
+
+A hidden QA panel is available on device for debugging:
+
+1. On Tonight screen
+2. **Long-press "What sounds good tonight?" for 2 seconds**
+3. QA Panel opens
+
+Features:
+- Current environment (API URL, build profile, MVP enabled)
+- One-tap "Force DRM" (triggers DRM with explicit_done)
+- One-tap "Reset session" (clears local sessionId)
+- View last 10 API events (endpoint, status, timestamp)
+
+The QA panel is invisible during normal use and does not affect the MVP UX.

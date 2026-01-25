@@ -1,352 +1,181 @@
 /**
- * FAST FOOD: Receipt Import API
+ * Receipt Import API Endpoint
+ * 
  * POST /api/decision-os/receipt/import
  * 
- * Imports a receipt via OCR, parses items, normalizes them, and updates inventory.
- * 
- * INVARIANTS (enforced):
- * - Response NEVER contains arrays
- * - Single receiptImportId + status returned
- * - Failures do not throw 500 (return status='failed' with valid response)
- * - assertNoArraysDeep on response payload
- * - Dedupe: duplicate imports are marked but still return success (idempotent)
- * - Dedupe is safe: false positives skip inventory upsert, never delete data
- * 
- * LIFECYCLE:
- * 1. Insert receipt_imports with status='received' and preliminary hash
- * 2. OCR extract text
- * 3. Recompute hash with OCR text, check for duplicates
- * 4. If duplicate: mark as duplicate, skip inventory upsert, return success
- * 5. If not duplicate: parse, normalize, insert line items, upsert inventory
- * 6. Update receipt_imports to status='parsed' or 'failed'
- */
-
-import { randomUUID } from 'crypto';
-import {
-  isValidReceiptImportRequest,
-  type ReceiptImportRequest,
-  type ReceiptImportResponse,
-} from '@/types/decision-os/receipt';
-import { ocrExtractTextFromImageBase64 } from '@/lib/decision-os/ocr';
-import { parseReceiptText, extractVendorName, extractPurchaseDate } from '@/lib/decision-os/receipt-parser';
-import { normalizeItemName, normalizeUnitAndQty } from '@/lib/decision-os/normalizer';
-import { assertNoArraysDeep } from '@/lib/decision-os/invariants';
-import { computeContentHash, computePreliminaryHash } from '@/lib/decision-os/content-hash';
-import {
-  insertReceiptImport,
-  updateReceiptImportStatus,
-  insertReceiptLineItem,
-  upsertInventoryItemFromReceipt,
-  findCanonicalReceiptByHash,
-} from '@/lib/decision-os/database';
-
-// Confidence threshold for inventory upsert
-const INVENTORY_CONFIDENCE_THRESHOLD = 0.60;
-
-/**
- * POST /api/decision-os/receipt/import
+ * AUTHENTICATION:
+ * - Production: Requires valid Supabase JWT in Authorization header
+ * - Dev/Test: Falls back to default household if no auth
  * 
  * Request body:
  * {
- *   "householdKey": "default",
- *   "source": "image_upload",
- *   "purchasedAtIso": "optional",
- *   "vendorName": "optional",
- *   "receiptImageBase64": "<base64-string>"
+ *   imageBase64: string    // Base64 encoded image
  * }
  * 
- * Response:
+ * NOTE: userProfileId is derived from auth, NOT from client input (production)
+ * 
+ * Response (CANONICAL CONTRACT - DO NOT CHANGE SHAPE):
  * {
- *   "receiptImportId": "<uuid>",
- *   "status": "received|parsed|failed"
+ *   receiptImportId: string,
+ *   status: 'received' | 'parsed' | 'failed'
  * }
+ * 
+ * Error Response (401):
+ * { error: 'unauthorized' }
+ * 
+ * INVARIANTS:
+ * - Always returns 200 OK for success (best-effort)
+ * - OCR failures return status='failed', not 500
+ * - No arrays exposed in response
  */
-export async function POST(request: Request): Promise<Response> {
-  let receiptImportId: string | null = null;
-  
-  try {
-    // Parse request body
-    const body = await request.json();
-    
-    // Validate request
-    if (!isValidReceiptImportRequest(body)) {
-      return new Response(
-        JSON.stringify({
-          error: 'Invalid request body',
-          details: 'Required: householdKey (string), source (image_upload|email_forward|manual_text), receiptImageBase64 (string)',
-        }),
-        {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-    
-    const req: ReceiptImportRequest = body;
-    receiptImportId = randomUUID();
-    
-    // Compute preliminary hash (before OCR - just vendor + date if available)
-    const preliminaryHash = computePreliminaryHash(
-      req.vendorName,
-      req.purchasedAtIso
-    );
-    
-    // Step 1: Insert receipt_imports with status='received' and preliminary hash
-    await insertReceiptImport({
-      id: receiptImportId,
-      household_key: req.householdKey,
-      source: req.source,
-      vendor_name: req.vendorName ?? null,
-      purchased_at: req.purchasedAtIso ?? null,
-      ocr_provider: null,
-      ocr_raw_text: null,
-      status: 'received',
-      error_message: null,
-      content_hash: preliminaryHash,
-      is_duplicate: false,
-      duplicate_of_receipt_import_id: null,
-    });
-    
-    // Step 2: OCR extract text
-    const ocrResult = await ocrExtractTextFromImageBase64(req.receiptImageBase64);
-    
-    if (!ocrResult.rawText || ocrResult.rawText.trim() === '') {
-      // OCR failed or returned empty - update status to failed
-      await updateReceiptImportStatus(receiptImportId, {
-        status: 'failed',
-        ocr_provider: ocrResult.provider,
-        ocr_raw_text: ocrResult.rawText || '',
-        error_message: 'OCR returned empty text',
-      });
-      
-      const response: ReceiptImportResponse = {
-        receiptImportId,
-        status: 'failed',
-      };
-      
-      // INVARIANT CHECK: No arrays in response
-      assertNoArraysDeep(response);
-      
-      return new Response(
-        JSON.stringify(response),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-    
-    // Step 3: Parse receipt text into line items
-    const parseResult = parseReceiptText(ocrResult.rawText);
-    
-    // PRECEDENCE: Request-provided values take precedence over parser-derived values
-    // If request includes vendorName/purchasedAtIso, those are stored as-is
-    // Parser extraction only fills in when request fields are absent
-    
-    // Vendor name: request > parser > null
-    let vendorName = req.vendorName ?? null;
-    if (vendorName === null) {
-      // Only attempt parser extraction if request didn't provide a value
-      vendorName = extractVendorName(ocrResult.rawText);
-    }
-    
-    // Purchase date: request > parser > null
-    let purchasedAt = req.purchasedAtIso ?? null;
-    if (purchasedAt === null) {
-      // Only attempt parser extraction if request didn't provide a value
-      const extractedDate = extractPurchaseDate(ocrResult.rawText);
-      if (extractedDate) {
-        purchasedAt = extractedDate.toISOString();
-      }
-    }
-    
-    // Step 3.5: Compute full content hash with OCR text
-    const contentHash = computeContentHash({
-      ocrRawText: ocrResult.rawText,
-      vendorName,
-      purchasedAtIso: purchasedAt,
-    });
-    
-    // Step 3.6: DEDUPE CHECK - look for existing canonical import with same hash
-    const existingCanonical = await findCanonicalReceiptByHash(
-      req.householdKey,
-      contentHash
-    );
-    
-    if (existingCanonical) {
-      // DUPLICATE DETECTED
-      // Mark this import as duplicate, skip inventory upsert, but still return success
-      // This is safe: worst case we skip inventory update, but we never delete data
-      
-      await updateReceiptImportStatus(receiptImportId, {
-        status: 'parsed', // Still mark as parsed (OCR succeeded)
-        ocr_provider: ocrResult.provider,
-        ocr_raw_text: ocrResult.rawText,
-        vendor_name: vendorName,
-        purchased_at: purchasedAt,
-        content_hash: contentHash,
-        is_duplicate: true,
-        duplicate_of_receipt_import_id: existingCanonical.id,
-      });
-      
-      // Note: We could optionally still insert line items for audit purposes,
-      // but we MUST NOT upsert inventory_items (would inflate counts)
-      
-      const response: ReceiptImportResponse = {
-        receiptImportId,
-        status: 'parsed', // Return success - idempotent behavior
-      };
-      
-      // INVARIANT CHECK: No arrays in response
-      assertNoArraysDeep(response);
-      
-      return new Response(
-        JSON.stringify(response),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-    
-    // NOT A DUPLICATE - proceed with full processing
-    
-    // Use purchase date or now for last_seen_at
-    const lastSeenAt = purchasedAt ?? new Date().toISOString();
-    
-    // Step 4 & 5: Normalize items and insert receipt_line_items
-    for (const parsedLine of parseResult.lines) {
-      // Normalize item name
-      const nameResult = normalizeItemName(parsedLine.rawItemName ?? parsedLine.rawLine);
-      
-      // Normalize unit and quantity
-      const unitQtyResult = normalizeUnitAndQty(parsedLine.rawQtyText, parsedLine.rawLine);
-      
-      // Calculate final confidence
-      let confidence = nameResult.confidence + unitQtyResult.confidenceDelta;
-      confidence = Math.max(0, Math.min(1, confidence));
-      
-      // Generate line item ID
-      const lineItemId = randomUUID();
-      
-      // Insert receipt_line_item
-      await insertReceiptLineItem({
-        id: lineItemId,
-        receipt_import_id: receiptImportId,
-        raw_line: parsedLine.rawLine,
-        raw_item_name: parsedLine.rawItemName,
-        raw_qty_text: parsedLine.rawQtyText,
-        raw_price: parsedLine.rawPrice,
-        normalized_item_name: nameResult.normalizedName,
-        normalized_unit: unitQtyResult.unit,
-        normalized_qty_estimated: unitQtyResult.qtyEstimated,
-        confidence,
-      });
-      
-      // Step 6: Upsert inventory_items (only if confidence >= threshold)
-      // ONLY for non-duplicate imports
-      if (confidence >= INVENTORY_CONFIDENCE_THRESHOLD && nameResult.normalizedName) {
-        await upsertInventoryItemFromReceipt({
-          id: randomUUID(), // Only used for new inserts
-          householdKey: req.householdKey,
-          itemName: nameResult.normalizedName,
-          qtyEstimated: unitQtyResult.qtyEstimated,
-          unit: unitQtyResult.unit,
-          confidence,
-          lastSeenAt,
-        });
-      }
-    }
-    
-    // Step 7: Update receipt_imports to status='parsed' with final hash
-    await updateReceiptImportStatus(receiptImportId, {
-      status: 'parsed',
-      ocr_provider: ocrResult.provider,
-      ocr_raw_text: ocrResult.rawText,
-      vendor_name: vendorName,
-      purchased_at: purchasedAt,
-      content_hash: contentHash,
-      is_duplicate: false,
-      duplicate_of_receipt_import_id: null,
-    });
-    
-    // Build response
-    const response: ReceiptImportResponse = {
-      receiptImportId,
-      status: 'parsed',
-    };
-    
-    // INVARIANT CHECK: No arrays in response
-    assertNoArraysDeep(response);
-    
-    return new Response(
-      JSON.stringify(response),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-    
-  } catch (error) {
-    console.error('Receipt import error:', error);
-    
-    // If we have a receiptImportId, update status to failed
-    if (receiptImportId) {
-      try {
-        await updateReceiptImportStatus(receiptImportId, {
-          status: 'failed',
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-        });
-      } catch (updateError) {
-        console.error('Failed to update receipt status:', updateError);
-      }
-      
-      // Return valid response with failed status (NOT 500)
-      const response: ReceiptImportResponse = {
-        receiptImportId,
-        status: 'failed',
-      };
-      
-      return new Response(
-        JSON.stringify(response),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-    
-    // Only return 500 for truly unexpected errors before receipt creation
-    return new Response(
-      JSON.stringify({
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
+
+import { processReceiptImport } from '../../../../lib/decision-os/receipt/handler';
+import { validateReceiptImportResponse, validateErrorResponse } from '../../../../lib/decision-os/invariants';
+import { authenticateRequest } from '../../../../lib/decision-os/auth/helper';
+import { resolveFlags, getFlags } from '../../../../lib/decision-os/config/flags';
+import { record } from '../../../../lib/decision-os/monitoring/metrics';
+import { getDb, isReadonlyModeError } from '../../../../lib/decision-os/db/client';
+import type { ReceiptImportResponse } from '../../../../types/decision-os';
+
+interface ReceiptRequest {
+  imageBase64: string;
 }
 
 /**
- * GET /api/decision-os/receipt/import
- * 
- * Not supported - no browsing endpoints
+ * Validate request body
  */
-export async function GET(): Promise<Response> {
-  return new Response(
-    JSON.stringify({
-      error: 'Method not allowed',
-      details: 'Use POST to import a receipt. Browsing receipts is not supported.',
-    }),
-    {
-      status: 405,
-      headers: {
-        'Content-Type': 'application/json',
-        'Allow': 'POST',
-      },
+function validateRequest(body: unknown): ReceiptRequest | null {
+  if (!body || typeof body !== 'object') {
+    return null;
+  }
+  
+  const req = body as Record<string, unknown>;
+  
+  if (typeof req.imageBase64 !== 'string' || !req.imageBase64) {
+    return null;
+  }
+  
+  return {
+    imageBase64: req.imageBase64,
+  };
+}
+
+/**
+ * Build error response (401 Unauthorized)
+ */
+function buildErrorResponse(error: string): Response {
+  const response = { error };
+  const validation = validateErrorResponse(response);
+  if (!validation.valid) {
+    console.error('Error response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 401 });
+}
+
+/**
+ * Build success response
+ */
+function buildSuccessResponse(receiptImportId: string, status: ReceiptImportResponse['status']): Response {
+  const response: ReceiptImportResponse = { receiptImportId, status };
+  const validation = validateReceiptImportResponse(response);
+  if (!validation.valid) {
+    console.error('Receipt import response validation failed:', validation.errors);
+  }
+  return Response.json(response, { status: 200 });
+}
+
+/**
+ * Generate a unique receipt import ID (used when OCR is disabled)
+ */
+function generateReceiptImportId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `rec-${timestamp}-${random}`;
+}
+
+/**
+ * POST handler for receipt import
+ */
+export async function POST(request: Request): Promise<Response> {
+  record('receipt_called');
+  
+  try {
+    const db = getDb();
+    
+    // Resolve flags (ENV + optional DB override)
+    const flags = await resolveFlags({
+      env: getFlags(),
+      db: db,
+      useCache: true,
+    });
+    
+    // KILL SWITCH: Check if Decision OS is enabled
+    if (!flags.decisionOsEnabled) {
+      // Return 401 unauthorized when Decision OS is disabled
+      return buildErrorResponse('unauthorized');
     }
-  );
+    
+    // Authenticate request
+    const authHeader = request.headers.get('Authorization');
+    const authResult = await authenticateRequest(authHeader);
+    
+    if (!authResult.success) {
+      return buildErrorResponse('unauthorized');
+    }
+    
+    const authContext = authResult.context;
+    const userProfileId = authContext.userProfileId;
+    
+    const body = await request.json();
+    const validatedRequest = validateRequest(body);
+    
+    if (!validatedRequest) {
+      // Invalid request - return failed status (best-effort, no 400)
+      return buildSuccessResponse('', 'failed');
+    }
+    
+    // KILL SWITCH: Check if OCR feature is enabled
+    if (!flags.ocrEnabled) {
+      // Return canonical failed response (still 200 OK)
+      // Generate a receipt import ID for tracking even when OCR is disabled
+      record('ocr_provider_failed');
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'failed');
+    }
+    
+    // READONLY MODE: Skip all DB writes but return valid response
+    if (flags.readonlyMode) {
+      record('readonly_hit');
+      // Return response indicating receipt would be processed (but no actual write)
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'received');
+    }
+    
+    // Process the receipt import
+    const result = await processReceiptImport(
+      validatedRequest.imageBase64,
+      userProfileId,
+      authContext.householdKey
+    );
+    
+    // Track OCR failures
+    if (result.status === 'failed') {
+      record('ocr_provider_failed');
+    }
+    
+    return buildSuccessResponse(result.receiptImportId, result.status);
+  } catch (error) {
+    // Handle readonly_mode error from DB layer (hard backstop)
+    if (isReadonlyModeError(error)) {
+      record('readonly_hit');
+      // Return success with 'received' status - readonly is transparent to client
+      const receiptImportId = generateReceiptImportId();
+      return buildSuccessResponse(receiptImportId, 'received');
+    }
+    
+    // Best-effort: return failed status, never 500
+    console.error('Receipt import error:', error);
+    record('ocr_provider_failed');
+    return buildSuccessResponse('', 'failed');
+  }
 }
