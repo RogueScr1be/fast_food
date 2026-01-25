@@ -1,0 +1,265 @@
+# Release to TestFlight Workflow — THE BUTTON
+#
+# Uses GitHub Environment: production (requires approval + prod secrets)
+#
+# HARD GUARANTEES:
+# 1. Only semver tags (vX.Y.Z) are accepted
+# 2. Staging must be green on the SAME commit SHA
+# 3. CI must be green on the SAME commit SHA
+# 4. Production environment approval required
+# 5. GitHub Release created as release-lock artifact
+#
+# If ANY of these fail, the button refuses to proceed.
+
+name: Release to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (must be vX.Y.Z format, e.g., v1.0.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # For creating GitHub Release
+  actions: read    # For checking workflow runs
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # =============================================================================
+  # GATE 1: Validate tag format (semver required)
+  # =============================================================================
+  validate_tag:
+    name: Validate Tag Format
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ inputs.tag }}
+      sha: ${{ steps.get_sha.outputs.sha }}
+    steps:
+      - name: Validate semver format
+        run: |
+          TAG="${{ inputs.tag }}"
+          echo "=== Validating Tag Format ==="
+          echo "Tag: $TAG"
+          
+          # Must match vX.Y.Z (semver)
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo ""
+            echo "❌ INVALID TAG FORMAT"
+            echo "Tag must be semver format: vX.Y.Z (e.g., v1.0.0, v2.1.3)"
+            echo "Received: $TAG"
+            exit 1
+          fi
+          
+          echo "✅ Tag format valid: $TAG"
+
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Get commit SHA for tag
+        id: get_sha
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "✅ Tag ${{ inputs.tag }} points to SHA: $SHA"
+
+  # =============================================================================
+  # GATE 2: Verify CI is green for this SHA
+  # =============================================================================
+  verify_ci:
+    name: Verify CI Green
+    runs-on: ubuntu-latest
+    needs: validate_tag
+    steps:
+      - name: Check CI workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ needs.validate_tag.outputs.sha }}"
+          echo "=== Checking CI Status for SHA: $SHA ==="
+          
+          # Get CI workflow runs for this SHA
+          RUNS=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed" \
+            --jq '.workflow_runs | map(select(.conclusion == "success")) | length')
+          
+          if [ "$RUNS" -eq "0" ]; then
+            echo ""
+            echo "❌ NO SUCCESSFUL CI RUN FOUND"
+            echo "CI must pass for SHA $SHA before release."
+            echo ""
+            echo "Either:"
+            echo "  1. Push to main/PR and wait for CI to pass"
+            echo "  2. The tag must be on a commit that has passed CI"
+            exit 1
+          fi
+          
+          echo "✅ CI passed for SHA $SHA ($RUNS successful run(s) found)"
+
+  # =============================================================================
+  # GATE 3: Verify Staging Deploy is green for this SHA (within 6 hours)
+  # =============================================================================
+  verify_staging:
+    name: Verify Staging Green
+    runs-on: ubuntu-latest
+    needs: validate_tag
+    steps:
+      - name: Check Staging Deploy workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ needs.validate_tag.outputs.sha }}"
+          echo "=== Checking Staging Deploy Status for SHA: $SHA ==="
+          
+          # Get staging deploy workflow runs
+          # Look for successful runs in the last 6 hours
+          SIX_HOURS_AGO=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-6H +%Y-%m-%dT%H:%M:%SZ)
+          
+          RUNS=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/workflows/staging-deploy.yml/runs?status=completed&created=>$SIX_HOURS_AGO" \
+            --jq ".workflow_runs | map(select(.conclusion == \"success\" and .head_sha == \"$SHA\")) | length")
+          
+          if [ "$RUNS" -eq "0" ]; then
+            echo ""
+            echo "❌ NO RECENT STAGING DEPLOY FOUND"
+            echo ""
+            echo "Staging Deploy + Verify must succeed for SHA $SHA within the last 6 hours."
+            echo ""
+            echo "Run the 'Staging Deploy + Verify' workflow first:"
+            echo "  1. Go to Actions → Staging Deploy + Verify"
+            echo "  2. Click 'Run workflow'"
+            echo "  3. Enter ref: ${{ inputs.tag }}"
+            echo "  4. Wait for it to complete successfully"
+            echo "  5. Then retry this release"
+            exit 1
+          fi
+          
+          echo "✅ Staging Deploy passed for SHA $SHA within last 6 hours"
+
+  # =============================================================================
+  # GATE 4: Check release doesn't already exist (prevent double-submit)
+  # =============================================================================
+  check_release_lock:
+    name: Check Release Lock
+    runs-on: ubuntu-latest
+    needs: validate_tag
+    steps:
+      - name: Check if GitHub Release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          echo "=== Checking Release Lock for $TAG ==="
+          
+          # Check if release already exists
+          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo ""
+            echo "❌ RELEASE ALREADY EXISTS"
+            echo ""
+            echo "A GitHub Release for $TAG already exists."
+            echo "This prevents accidental double-submissions."
+            echo ""
+            echo "If you need to re-release:"
+            echo "  1. Delete the existing release (if build failed)"
+            echo "  2. Or create a new tag (v*.*.* + 1)"
+            exit 1
+          fi
+          
+          echo "✅ No existing release for $TAG (lock is clear)"
+
+  # =============================================================================
+  # RELEASE: Build + Submit (requires production approval)
+  # =============================================================================
+  release:
+    name: Build + Submit to TestFlight
+    runs-on: ubuntu-latest
+    needs: [validate_tag, verify_ci, verify_staging, check_release_lock]
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Final preflight (tests + sanity)
+        run: |
+          echo "=== Final Preflight ==="
+          npm test
+          npm run build:sanity
+          echo "✅ Preflight passed"
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: EAS Build + Submit (TestFlight)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "=== Building for TestFlight ==="
+          echo "Tag: ${{ inputs.tag }}"
+          echo "SHA: ${{ needs.validate_tag.outputs.sha }}"
+          echo ""
+          npm run release:testflight
+
+      # Create GitHub Release as lock artifact
+      - name: Create GitHub Release (Lock)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "Release ${{ inputs.tag }}" \
+            --notes "Released to TestFlight
+
+          **Tag:** ${{ inputs.tag }}
+          **SHA:** ${{ needs.validate_tag.outputs.sha }}
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          ## Verification
+          - ✅ CI passed
+          - ✅ Staging Deploy + Verify passed
+          - ✅ Production approval obtained
+          - ✅ EAS build submitted"
+
+      - name: Release Summary
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║  ✅ RELEASE ${{ inputs.tag }} SUBMITTED TO TESTFLIGHT     ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Tag: ${{ inputs.tag }}"
+          echo "SHA: ${{ needs.validate_tag.outputs.sha }}"
+          echo "GitHub Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.tag }}"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Check App Store Connect for build processing status"
+          echo "  2. Once processed, build will be available in TestFlight"
+          echo "  3. Run post-cut verification (see docs/RELEASE.md)"

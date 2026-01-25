@@ -1,0 +1,683 @@
+# =============================================================================
+# DEPRECATED: This workflow has been replaced by the new CI/CD architecture
+#
+# New workflows:
+# - ci.yml — Tests on PR and main (no secrets)
+# - staging-deploy.yml — Manual staging deploy + verify
+# - release-testflight.yml — Manual release button (production env)
+# - scheduled-jobs.yml — Cron jobs (prune sessions, prune metrics)
+#
+# This file is kept for reference only. It will not run.
+# =============================================================================
+
+name: "[DEPRECATED] Staging Pipeline"
+
+on:
+  # DISABLED - replaced by new workflows
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  # schedule:
+  #   - cron: '0 2 * * *'
+  #   - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "This workflow is deprecated. Use ci.yml, staging-deploy.yml, or release-testflight.yml"
+        required: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # =============================================================================
+  # JOB 1: Test (always runs)
+  # =============================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run smoke tests (in-memory)
+        run: npm run smoke:mvp
+
+      - name: SQL Contract Gate
+        run: npm run sql:contract:gate
+
+  # =============================================================================
+  # JOB 2: Ephemeral Postgres Migration Test (always runs)
+  # Spins up Postgres, runs migrations, verifies schema, tests writes
+  # This catches migration/schema drift before pushing to staging
+  # =============================================================================
+  db_migration_test:
+    name: DB Migration Test
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: decision_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/decision_os_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U test; do
+            echo "Waiting for Postgres..."
+            sleep 1
+          done
+          echo "PASS postgres_ready"
+
+      - name: Run migrations
+        run: |
+          npm run db:migrate
+          echo "PASS migrations_applied"
+
+      - name: Verify schema (tables, columns, types, constraints)
+        run: |
+          # Use the same verify script but point to ephemeral DB
+          npx ts-node scripts/db-verify-staging.ts
+          echo "PASS schema_verified"
+
+      - name: DB write smoke test + household isolation
+        run: |
+          # Test: Insert data, read it back, verify household isolation
+          npx ts-node -e "
+          const { Client } = require('pg');
+          async function test() {
+            const client = new Client({ connectionString: process.env.DATABASE_URL });
+            await client.connect();
+            
+            // Insert user profile
+            await client.query(\`
+              INSERT INTO user_profiles (id, auth_user_id, created_at)
+              VALUES (999, 'test-auth-user', NOW())
+              ON CONFLICT (id) DO NOTHING
+            \`);
+            console.log('PASS insert_user_profile');
+            
+            // Insert household A
+            await client.query(\`
+              INSERT INTO households (id, household_key, created_at)
+              VALUES ('test-hh-id-a', 'household-a', NOW())
+              ON CONFLICT (household_key) DO NOTHING
+            \`);
+            // Insert household B
+            await client.query(\`
+              INSERT INTO households (id, household_key, created_at)
+              VALUES ('test-hh-id-b', 'household-b', NOW())
+              ON CONFLICT (household_key) DO NOTHING
+            \`);
+            console.log('PASS insert_households');
+            
+            // Insert decision event in household A
+            await client.query(\`
+              INSERT INTO decision_events (
+                id, user_profile_id, household_key, decided_at, actioned_at,
+                user_action, decision_type, notes, decision_payload, context_hash
+              ) VALUES (
+                'test-event-hh-a', 999, 'household-a', NOW(), NOW(),
+                'approved', 'meal_decision', 'test', '{}', 'test-hash-a'
+              )
+            \`);
+            console.log('PASS insert_decision_event_hh_a');
+            
+            // Insert decision event in household B
+            await client.query(\`
+              INSERT INTO decision_events (
+                id, user_profile_id, household_key, decided_at, actioned_at,
+                user_action, decision_type, notes, decision_payload, context_hash
+              ) VALUES (
+                'test-event-hh-b', 999, 'household-b', NOW(), NOW(),
+                'rejected', 'meal_decision', 'test', '{}', 'test-hash-b'
+              )
+            \`);
+            console.log('PASS insert_decision_event_hh_b');
+            
+            // Household-scoped read: household A only gets its event
+            const resA = await client.query(
+              'SELECT * FROM decision_events WHERE household_key = \$1',
+              ['household-a']
+            );
+            if (resA.rows.length === 1 && resA.rows[0].id === 'test-event-hh-a') {
+              console.log('PASS household_isolation_read_a');
+            } else {
+              console.log('FAIL household_isolation_read_a - expected 1 row, got', resA.rows.length);
+              process.exit(1);
+            }
+            
+            // Household-scoped read: household B only gets its event
+            const resB = await client.query(
+              'SELECT * FROM decision_events WHERE household_key = \$1',
+              ['household-b']
+            );
+            if (resB.rows.length === 1 && resB.rows[0].id === 'test-event-hh-b') {
+              console.log('PASS household_isolation_read_b');
+            } else {
+              console.log('FAIL household_isolation_read_b - expected 1 row, got', resB.rows.length);
+              process.exit(1);
+            }
+            
+            // Verify NOT NULL constraint on household_key
+            try {
+              await client.query(\`
+                INSERT INTO decision_events (
+                  id, user_profile_id, household_key, decided_at, actioned_at,
+                  user_action, decision_type, decision_payload
+                ) VALUES (
+                  'test-null-hh', 999, NULL, NOW(), NOW(),
+                  'approved', 'meal_decision', '{}'
+                )
+              \`);
+              console.log('FAIL household_key_not_null - should have rejected NULL');
+              process.exit(1);
+            } catch (e) {
+              console.log('PASS household_key_not_null - rejected NULL as expected');
+            }
+            
+            await client.end();
+          }
+          test().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+          "
+
+  # =============================================================================
+  # JOB 3: Deploy Freeze Gate (push to main only)
+  # Emergency brake - set STAGING_DEPLOY_ENABLED=false in GitHub secrets to freeze
+  # =============================================================================
+  deploy_freeze_gate:
+    name: Deploy Freeze Gate
+    runs-on: ubuntu-latest
+    needs: [test, db_migration_test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check deploy freeze status
+        env:
+          STAGING_DEPLOY_ENABLED: ${{ secrets.STAGING_DEPLOY_ENABLED }}
+        run: |
+          # Default to "true" if not set (allows deploys by default)
+          ENABLED="${STAGING_DEPLOY_ENABLED:-true}"
+          
+          if [ "$ENABLED" != "true" ]; then
+            echo "::error::Deploys frozen by STAGING_DEPLOY_ENABLED"
+            echo "FAIL deploys_frozen"
+            exit 1
+          fi
+          
+          echo "PASS deploy_enabled"
+
+  # =============================================================================
+  # JOB 3: Migrate Staging DB (push to main only)
+  # =============================================================================
+  migrate_staging:
+    name: Migrate Staging DB
+    runs-on: ubuntu-latest
+    needs: deploy_freeze_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run db:migrate:staging
+
+  # =============================================================================
+  # JOB 4: Schema Gate (push to main only)
+  # Verifies staging DB schema matches required structure
+  # =============================================================================
+  schema_gate:
+    name: Schema Gate
+    runs-on: ubuntu-latest
+    needs: migrate_staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify schema
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run db:verify:staging
+
+  # =============================================================================
+  # JOB 5: Deploy to Vercel (push to main only)
+  # =============================================================================
+  deploy_staging:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    needs: schema_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.deployment_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vercel Pull
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Vercel Build
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Vercel Deploy
+        id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$url" >> $GITHUB_OUTPUT
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Validate URL format
+        run: |
+          echo "${{ steps.deploy.outputs.deployment_url }}" | grep -qE '^https://[a-z0-9-]+\.vercel\.app$'
+          if [ $? -ne 0 ]; then
+            echo "FAIL invalid_deployment_url_format"
+            exit 1
+          fi
+          echo "PASS url_validated"
+
+  # =============================================================================
+  # JOB 6: Healthz Gate (push to main only)
+  # =============================================================================
+  healthz_gate:
+    name: Healthz Gate
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Wait for deployment to be ready
+        run: sleep 30
+
+      - name: Check healthz endpoint
+        run: |
+          echo "Checking ${{ secrets.STAGING_URL }}/api/healthz"
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/api/healthz")
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Healthz check failed with status: $RESPONSE"
+            exit 1
+          fi
+          echo "Healthz check passed (200)"
+
+  # =============================================================================
+  # JOB 7: Metrics Health Gate (push to main only)
+  # Verifies runtime_metrics_daily table exists and is queryable
+  # =============================================================================
+  metrics_gate:
+    name: Metrics Health Gate
+    runs-on: ubuntu-latest
+    needs: healthz_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check metrics health
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run metrics:health
+
+  # =============================================================================
+  # JOB 8: Alerts Gate (push to main only)
+  # Checks durable metrics for alert thresholds
+  # =============================================================================
+  alerts_gate:
+    name: Alerts Gate
+    runs-on: ubuntu-latest
+    needs: metrics_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check metrics alerts
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run metrics:alerts
+
+  # =============================================================================
+  # JOB 9: Auth Required Gate (push to main only)
+  # Verifies protected endpoints return 401 WITHOUT auth token
+  # =============================================================================
+  auth_required_gate:
+    name: Auth Required Gate (401)
+    runs-on: ubuntu-latest
+    needs: alerts_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify endpoints require auth (expect 401)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+        run: npm run auth:sanity:require401
+
+  # =============================================================================
+  # JOB 10: Auth Works Gate (push to main only)
+  # Verifies protected endpoints return 200 WITH valid auth token
+  # =============================================================================
+  auth_works_gate:
+    name: Auth Works Gate (200)
+    runs-on: ubuntu-latest
+    needs: auth_required_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify endpoints work with auth (expect 200)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: npm run auth:sanity:require200
+
+  # =============================================================================
+  # JOB 11: Runtime Flags Gate (push to main only)
+  # Proves DB runtime flags actually change live behavior
+  # =============================================================================
+  runtime_flags_gate:
+    name: Runtime Flags Gate
+    runs-on: ubuntu-latest
+    needs: auth_works_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prove runtime flags work
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: npm run flags:proof
+
+  # =============================================================================
+  # JOB 12: Readonly Mode Gate (push to main only)
+  # Proves readonly mode prevents DB writes while maintaining valid responses
+  # =============================================================================
+  readonly_gate:
+    name: Readonly Mode Gate
+    runs-on: ubuntu-latest
+    needs: runtime_flags_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prove readonly mode works
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: npm run readonly:proof
+
+  # =============================================================================
+  # JOB 13: Smoke Test Staging (push to main only)
+  # =============================================================================
+  smoke_staging:
+    name: Smoke Test Staging
+    runs-on: ubuntu-latest
+    needs: readonly_gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run staging smoke tests
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: npm run smoke:staging
+
+      - name: Contract compliance summary
+        run: |
+          echo "=== Contract Compliance ==="
+          echo "All canonical response shapes validated:"
+          echo "  - Decision: { decision, drmRecommended, reason?, autopilot? }"
+          echo "  - DRM: { drmActivated }"
+          echo "  - Feedback: { recorded: true }"
+          echo "  - Receipt: { receiptImportId, status }"
+          echo "=== PASSED ==="
+
+  # =============================================================================
+  # JOB 14: Record Last Green (push to main only)
+  # Records successful deployment to runtime_deployments_log for rollback support
+  # =============================================================================
+  record_last_green:
+    name: Record Last Green
+    runs-on: ubuntu-latest
+    needs: smoke_staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Record last green deployment
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          DEPLOYMENT_URL: ${{ needs.deploy_staging.outputs.deployment_url }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          ENV_NAME: staging
+        run: npm run deploy:record:lastgreen
+
+  # =============================================================================
+  # JOB 15: Provenance Gate (push to main only)
+  # Verifies recorded deployment matches actual deployment
+  # =============================================================================
+  provenance_gate:
+    name: Provenance Gate
+    runs-on: ubuntu-latest
+    needs: record_last_green
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify provenance
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          EXPECTED_DEPLOYMENT_URL: ${{ needs.deploy_staging.outputs.deployment_url }}
+          ENV_NAME: staging
+        run: npm run deploy:provenance:proof
+
+  # =============================================================================
+  # JOB: Daily Sessions Prune (scheduled only - daily at 02:00 UTC)
+  # Marks pending sessions older than 30 min as abandoned
+  # =============================================================================
+  sessions_prune:
+    name: Daily Sessions Prune
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune abandoned sessions
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          ABANDONED_TTL_MINUTES: '30'
+        run: npm run sessions:prune
+
+  # =============================================================================
+  # JOB: Weekly Metrics Prune (scheduled only - Sunday at 03:00 UTC)
+  # Deletes old metrics to prevent unbounded DB growth
+  # =============================================================================
+  metrics_prune:
+    name: Weekly Metrics Prune
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune old metrics
+        env:
+          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
+          METRICS_RETENTION_DAYS: '90'
+        run: npm run metrics:prune

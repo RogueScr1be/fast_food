@@ -1,0 +1,105 @@
+# Scheduled Jobs Workflow
+#
+# Runs maintenance tasks on a schedule:
+# - Daily: Prune abandoned sessions
+# - Weekly: Prune old metrics
+#
+# Uses GitHub Environment: staging (for database access)
+# These are operational writes to staging DB - treated as staging infrastructure.
+
+name: Scheduled Jobs
+
+on:
+  schedule:
+    # Daily sessions prune: Every day at 02:00 UTC
+    - cron: '0 2 * * *'
+    # Weekly metrics prune: Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        required: true
+        default: "sessions_prune"
+        type: choice
+        options:
+          - sessions_prune
+          - metrics_prune
+          - both
+
+# Minimal permissions - only needs to read code
+permissions:
+  contents: read
+
+# Prevent overlapping runs
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # =============================================================================
+  # Daily: Prune abandoned sessions
+  # =============================================================================
+  sessions_prune:
+    name: Prune Abandoned Sessions
+    runs-on: ubuntu-latest
+    environment: staging
+    if: |
+      github.event_name == 'schedule' && github.event.schedule == '0 2 * * *' ||
+      github.event_name == 'workflow_dispatch' && (inputs.job == 'sessions_prune' || inputs.job == 'both')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune abandoned sessions
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          ABANDONED_TTL_MINUTES: '30'
+        run: |
+          echo "=== Pruning Abandoned Sessions ==="
+          npm run sessions:prune
+          echo "PASS sessions_pruned"
+
+  # =============================================================================
+  # Weekly: Prune old metrics
+  # =============================================================================
+  metrics_prune:
+    name: Prune Old Metrics
+    runs-on: ubuntu-latest
+    environment: staging
+    if: |
+      github.event_name == 'schedule' && github.event.schedule == '0 3 * * 0' ||
+      github.event_name == 'workflow_dispatch' && (inputs.job == 'metrics_prune' || inputs.job == 'both')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune old metrics
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          METRICS_RETENTION_DAYS: '90'
+        run: |
+          echo "=== Pruning Old Metrics ==="
+          npm run metrics:prune
+          echo "PASS metrics_pruned"
