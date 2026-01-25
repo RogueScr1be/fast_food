@@ -60,9 +60,10 @@ jobs:
       # DB migrate + verify
       - name: Migrate staging DB
         env:
+          NODE_OPTIONS: --dns-result-order=ipv4first
           DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
-          NODE_OPTIONS: '--dns-result-order=ipv4first'
           PGSSLMODE: require
+          
         run: |
           echo "=== Migrating Staging DB ==="
           npm run db:migrate:staging
