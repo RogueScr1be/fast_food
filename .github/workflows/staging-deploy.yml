@@ -25,7 +25,7 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
-  NODE_OPTIONS: --dns-result-order=ipv4first
+  # Force Node to prefer IPv4 over IPv6 to avoid Supabase pooler AAAA -> ENETUNREACH on GitHub runners
   NODE_OPTIONS: --dns-result-order=ipv4first
 
 jobs:
@@ -68,7 +68,6 @@ jobs:
           npm run db:migrate:staging
           echo "PASS migrations_applied"
 
-
       - name: Verify staging DB schema
         env:
           DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
@@ -78,11 +77,6 @@ jobs:
           echo "=== Verifying Staging Schema ==="
           npm run db:verify:staging
           echo "PASS schema_verified"
-
-      - name: Migrate staging DB
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
-        run: npm run db:migrate:staging
 
       # Vercel deploy
       - name: Deploy to Vercel (staging)
