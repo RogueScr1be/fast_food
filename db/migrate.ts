@@ -15,6 +15,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import dns from 'node:dns/promises';
+import { parse as parsePgConnection } from 'pg-connection-string';
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
