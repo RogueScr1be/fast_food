@@ -73,6 +73,11 @@ jobs:
           npm run db:verify:staging
           echo "PASS schema_verified"
 
+      - name: Migrate staging DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+        run: npm run db:migrate:staging
+
       # Vercel deploy
       - name: Deploy to Vercel (staging)
         id: deploy
