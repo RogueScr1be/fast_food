@@ -60,6 +60,7 @@ jobs:
       - name: Migrate staging DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          PGSSLMODE: require
         run: |
           echo "=== Migrating Staging DB ==="
           npm run db:migrate:staging
