@@ -1,15 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "framework": "expo",
+
   "buildCommand": "expo export -p web",
   "outputDirectory": "dist",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
-    }
-  ],
+
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
   "functions": {
     "app/api/**/*.ts": {
       "maxDuration": 30
