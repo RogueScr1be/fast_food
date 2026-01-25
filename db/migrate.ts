@@ -633,11 +633,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   
-  const pool = new pg.Pool({
-    connectionString: databaseUrl,
-    max: 1,
-    connectionTimeoutMillis: 10000,
-  });
+  const needsSSL =
+  databaseUrl.includes('supabase.com') ||
+  databaseUrl.includes('sslmode=require') ||
+  databaseUrl.includes('sslmode=verify-full');
+
+const pool = new pg.Pool({
+  connectionString: databaseUrl,
+  ssl: needsSSL ? { rejectUnauthorized: false } : false,
+  max: 1,
+  connectionTimeoutMillis: 10000,
+});
   
   try {
     // Test connection
