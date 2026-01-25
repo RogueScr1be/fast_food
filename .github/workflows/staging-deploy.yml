@@ -61,9 +61,7 @@ jobs:
       - name: Migrate staging DB
         env:
           NODE_OPTIONS: --dns-result-order=ipv4first
-          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
-          PGSSLMODE: require
-          
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}&uselibpqcompat=true
         run: |
           echo "=== Migrating Staging DB ==="
           npm run db:migrate:staging
