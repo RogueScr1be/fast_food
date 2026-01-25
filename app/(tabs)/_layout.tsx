@@ -1,45 +1,47 @@
+/**
+ * Tab Layout — MVP Navigation
+ * 
+ * UI CONTRACT:
+ * - Minimal tabs: Tonight (main), Profile (settings)
+ * - No chat, no feeds, no browsing
+ */
+
 import { Tabs } from 'expo-router';
-import { Home, MessageCircle, User, Settings } from 'lucide-react-native';
+import { Utensils, User } from 'lucide-react-native';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#8A2BE2',
+        tabBarActiveTintColor: '#FF6B35',
         tabBarInactiveTintColor: '#999',
         tabBarStyle: {
           backgroundColor: '#FFF',
           borderTopWidth: 1,
-          borderTopColor: '#E5E5E5',
+          borderTopColor: '#F0F0F0',
           paddingBottom: 8,
           paddingTop: 8,
           height: 60,
         },
         tabBarLabelStyle: {
           fontSize: 12,
-          fontFamily: 'Inter-SemiBold',
+          fontWeight: '600',
           marginTop: 4,
         },
       }}>
+      {/* Main Tab: Tonight (Intent Capture) */}
       <Tabs.Screen
-        name="index"
+        name="tonight"
         options={{
-          title: 'Home',
+          title: 'Tonight',
           tabBarIcon: ({ size, color }) => (
-            <Home size={size} color={color} />
+            <Utensils size={size} color={color} />
           ),
         }}
       />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: 'Chat',
-          tabBarIcon: ({ size, color }) => (
-            <MessageCircle size={size} color={color} />
-          ),
-        }}
-      />
+      
+      {/* Profile Tab (Household Settings) */}
       <Tabs.Screen
         name="profile"
         options={{
@@ -49,13 +51,18 @@ export default function TabLayout() {
           ),
         }}
       />
+      
+      {/* Hide old screens from tab bar */}
       <Tabs.Screen
-        name="settings"
+        name="index"
         options={{
-          title: 'Settings',
-          tabBarIcon: ({ size, color }) => (
-            <Settings size={size} color={color} />
-          ),
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          href: null, // Hide from tab bar
         }}
       />
     </Tabs>
