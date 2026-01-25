@@ -69,9 +69,8 @@ jobs:
 
       - name: Verify staging DB schema
         env:
-          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
-          NODE_OPTIONS: '--dns-result-order=ipv4first'
-          PGSSLMODE: require
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}&uselibpqcompat=true
         run: |
           echo "=== Verifying Staging Schema ==="
           npm run db:verify:staging
