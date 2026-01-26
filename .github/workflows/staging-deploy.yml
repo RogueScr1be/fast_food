@@ -96,15 +96,38 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -euo pipefail
           echo "=== Deploying to Vercel ==="
           npx vercel --version
 
-          # Force team scope. This is the #1 fix for phantom "project not found".
-          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
-          npx vercel build --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
-          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID")
+          # Hard fail if any required secret is missing (prevents misleading downstream errors)
+          [ -n "${VERCEL_TOKEN:-}" ] || (echo "MISSING: VERCEL_TOKEN" && exit 1)
+          [ -n "${VERCEL_ORG_ID:-}" ] || (echo "MISSING: VERCEL_ORG_ID" && exit 1)
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || (echo "MISSING: VERCEL_PROJECT_ID" && exit 1)
+
+          echo "=== Linking repo to Vercel project ==="
+          # This creates .vercel/project.json in the workspace
+          npx vercel pull \
+            --yes \
+            --environment=preview \
+            --token="$VERCEL_TOKEN" \
+            --scope="$VERCEL_ORG_ID" \
+            --project="$VERCEL_PROJECT_ID"
+
+          if [ ! -f ".vercel/project.json" ]; then
+            echo "FAIL: .vercel/project.json not created. Repo not linked to project."
+            echo "Check VERCEL_ORG_ID + VERCEL_PROJECT_ID match the token's team."
+            exit 1
+          fi
+          echo "PASS linked (.vercel/project.json exists)"
+
+          echo "=== Building ==="
+          npx vercel build --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID" --project="$VERCEL_PROJECT_ID"
+
+          echo "=== Deploying ==="
+          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID" --project="$VERCEL_PROJECT_ID")
 
           echo "deployment_url=$url" >> $GITHUB_OUTPUT
           echo "PASS deployed to $url"
