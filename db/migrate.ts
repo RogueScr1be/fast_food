@@ -635,17 +635,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   
-  const needsSSL =
-  databaseUrl.includes('supabase.com') ||
-  databaseUrl.includes('sslmode=require') ||
-  databaseUrl.includes('sslmode=verify-full');
+    const wantsSsl =
+    /sslmode=/i.test(databaseUrl) ||
+    !!process.env.PGSSLMODE ||
+    databaseUrl.includes("supabase.com");
 
-const pool = new pg.Pool({
-  connectionString: databaseUrl,
-  ssl: needsSSL ? { rejectUnauthorized: false } : false,
-  max: 1,
-  connectionTimeoutMillis: 10000,
-});
+  const ssl = wantsSsl ? { rejectUnauthorized: false } : undefined;
+
+  const pool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    connectionTimeoutMillis: 10000,
+    ssl,
+  });
   
   try {
     // Test connection
