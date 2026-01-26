@@ -34,15 +34,18 @@ interface DbClient {
   query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
   end(): Promise<void>;
 }
+    const wantsSsl =
+      /sslmode=/i.test(DATABASE_URL) || !!process.env.PGSSLMODE;
 
-async function getDbClient(): Promise<DbClient | null> {
-  try {
-    const pg = await import('pg');
+    const ssl = wantsSsl ? { rejectUnauthorized: false } : undefined;
+
     const pool = new pg.Pool({
       connectionString: DATABASE_URL,
       max: 1,
       connectionTimeoutMillis: 10000,
+      ssl,
     });
+
     return pool;
   } catch (error) {
     console.log('FAIL db_connection_error');
