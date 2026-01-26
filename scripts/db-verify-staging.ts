@@ -34,7 +34,6 @@ interface DbClient {
   query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
   end(): Promise<void>;
 }
-
     const wantsSsl =
       /sslmode=/i.test(DATABASE_URL) || !!process.env.PGSSLMODE;
 
