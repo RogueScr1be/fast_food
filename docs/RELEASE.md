@@ -71,6 +71,25 @@ release-testflight.yml: preflight → EAS build → submit → GitHub Release cr
 7. **Release concurrency: only one at a time** — Workflow concurrency setting
 8. **No production secrets in repo** — All in GitHub environment secrets
 
+### GitHub Settings Checklist
+
+**Environments** (Settings → Environments):
+
+| Environment | Configuration |
+|-------------|---------------|
+| `staging` | Secrets added, no approval required |
+| `production` | Required reviewers configured, deployment branches = `main` and tags `v*` |
+
+**Branch Protection on `main`** (Settings → Branches → Add rule):
+
+| Setting | Value |
+|---------|-------|
+| Require pull request | ✅ Enabled |
+| Required status checks | `CI / test`, `CI / db_migration_test` |
+| Require branches to be up to date | ✅ Enabled |
+
+These exact check names (`CI / test`, `CI / db_migration_test`) must match the workflow job names.
+
 ---
 
 ## Legacy Pipeline (Deprecated)
