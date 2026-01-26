@@ -80,41 +80,18 @@ jobs:
       - name: Deploy to Vercel (staging)
         id: deploy
         env:
-          NODE_OPTIONS: --dns-result-order=ipv4first
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -euo pipefail
-
-          echo "=== Vercel Preflight ==="
+          echo "=== Deploying to Vercel ==="
           npx vercel --version
 
-          echo "Who am I (token identity)?"
-          npx vercel whoami --token="$VERCEL_TOKEN" || true
-
-          echo "Checking access to org/project..."
-          echo "ORG=$VERCEL_ORG_ID"
-          echo "PROJECT=$VERCEL_PROJECT_ID"
-
-          # Hard fail fast if org/project cannot be retrieved
-          npx vercel project ls --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID" >/tmp/vercel-projects.txt || true
-          if ! grep -q "$VERCEL_PROJECT_ID" /tmp/vercel-projects.txt; then
-            echo ""
-            echo "❌ Vercel project not found for this token/scope."
-            echo "Fix required:"
-            echo "1) Ensure VERCEL_TOKEN is created in the SAME Vercel team/account as the project."
-            echo "2) Re-copy VERCEL_ORG_ID + VERCEL_PROJECT_ID from the Vercel Project Settings."
-            echo ""
-            echo "Debug output (project list):"
-            cat /tmp/vercel-projects.txt || true
-            exit 1
-          fi
-
-          echo "=== Deploying to Vercel ==="
+          # Force team scope. This is the #1 fix for phantom "project not found".
           npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
           npx vercel build --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
           url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID")
+
           echo "deployment_url=$url" >> $GITHUB_OUTPUT
           echo "PASS deployed to $url"
 
