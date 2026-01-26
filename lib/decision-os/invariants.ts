@@ -1,463 +1,322 @@
 /**
- * Decision OS Response Invariants
+ * FAST FOOD: Decision OS Invariants
  * 
- * CANONICAL RESPONSE SHAPES (enforced by validators):
+ * Runtime invariant checks to ensure system never violates core principles.
  * 
- * Decision: { decision: object|null, drmRecommended: boolean, reason?: string, autopilot?: boolean }
- * DRM: { drmActivated: boolean }
- * Feedback: { recorded: true }
- * Receipt Import: { receiptImportId: string, status: 'received'|'parsed'|'failed' }
+ * INVARIANTS:
+ * - No arrays anywhere in decision responses
+ * - No hidden lists in decision_payload
+ * - Single action only
  */
 
-export interface ValidationResult {
-  valid: boolean;
-  errors: Array<{ field: string; message: string; value?: unknown }>;
-}
+// =============================================================================
+// DEEP ARRAY CHECK
+// =============================================================================
 
 /**
- * Allowed fields for each response type (single source of truth)
+ * Recursively check if an object contains any arrays at any depth
+ * 
+ * @param obj - Object to check
+ * @param path - Current path for error reporting
+ * @returns Array of paths where arrays were found
  */
-export const DECISION_RESPONSE_ALLOWED_FIELDS = new Set(['decision', 'drmRecommended', 'reason', 'autopilot']);
-export const DRM_RESPONSE_ALLOWED_FIELDS = new Set(['drmActivated', 'reason', 'decision']);
-export const FEEDBACK_RESPONSE_ALLOWED_FIELDS = new Set(['recorded', 'drmRequired', 'sessionId']);
-export const RECEIPT_RESPONSE_ALLOWED_FIELDS = new Set(['receiptImportId', 'status']);
-
-/**
- * Recursively checks that no arrays exist deep in an object structure.
- */
-export function assertNoArraysDeep(
-  obj: unknown,
-  path: string = 'root'
-): Array<{ field: string; message: string; value?: unknown }> {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
+export function findArraysDeep(obj: unknown, path: string = ''): string[] {
+  const arrayPaths: string[] = [];
+  
+  if (obj === null || obj === undefined) {
+    return arrayPaths;
+  }
+  
   if (Array.isArray(obj)) {
-    errors.push({ field: path, message: `Unexpected array at ${path}`, value: obj });
-    return errors;
+    arrayPaths.push(path || 'root');
+    // Also check inside the array
+    obj.forEach((item, index) => {
+      arrayPaths.push(...findArraysDeep(item, `${path}[${index}]`));
+    });
+    return arrayPaths;
   }
-
-  if (obj !== null && typeof obj === 'object') {
+  
+  if (typeof obj === 'object') {
     for (const [key, value] of Object.entries(obj)) {
-      const nestedPath = `${path}.${key}`;
-      if (Array.isArray(value)) {
-        errors.push({ field: nestedPath, message: `Unexpected array at ${nestedPath}`, value });
-      } else if (value !== null && typeof value === 'object') {
-        errors.push(...assertNoArraysDeep(value, nestedPath));
-      }
-    }
-  }
-
-  return errors;
-}
-
-/**
- * Check for unknown fields in response
- */
-function checkUnknownFields(
-  resp: Record<string, unknown>,
-  allowedFields: Set<string>,
-  responseName: string
-): Array<{ field: string; message: string; value?: unknown }> {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-  
-  for (const key of Object.keys(resp)) {
-    if (!allowedFields.has(key)) {
-      errors.push({
-        field: key,
-        message: `Unknown field '${key}' in ${responseName} response (allowed: ${Array.from(allowedFields).join(', ')})`,
-        value: resp[key],
-      });
+      const newPath = path ? `${path}.${key}` : key;
+      arrayPaths.push(...findArraysDeep(value, newPath));
     }
   }
   
-  return errors;
+  return arrayPaths;
 }
 
 /**
- * Validates a Decision endpoint response.
+ * Assert that an object contains no arrays at any depth
+ * Throws InvariantViolationError if arrays are found
  * 
- * CANONICAL CONTRACT:
- * - decision: object | null (required)
- * - drmRecommended: boolean (required)
- * - reason?: string (optional)
- * - autopilot?: boolean (optional)
- * 
- * REJECTS:
- * - decisionEventId (banned)
- * - message (banned - use reason)
- * - any unknown fields
- * - any arrays
+ * @param obj - Object to check
+ * @param context - Context string for error message (e.g., "response payload")
+ * @throws InvariantViolationError if any arrays are found
  */
-export function validateDecisionResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
+export function assertNoArraysDeep(obj: unknown, context: string = 'object'): void {
+  const arrayPaths = findArraysDeep(obj);
+  
+  if (arrayPaths.length > 0) {
+    throw new InvariantViolationError(
+      `INVARIANT VIOLATION: Arrays found in ${context} at: ${arrayPaths.join(', ')}`
+    );
   }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields (includes banned fields like decisionEventId, message)
-  errors.push(...checkUnknownFields(resp, DECISION_RESPONSE_ALLOWED_FIELDS, 'decision'));
-
-  // drmRecommended: required boolean
-  if (!('drmRecommended' in resp)) {
-    errors.push({ field: 'drmRecommended', message: 'drmRecommended is required' });
-  } else if (typeof resp.drmRecommended !== 'boolean') {
-    errors.push({ field: 'drmRecommended', message: 'drmRecommended must be a boolean', value: resp.drmRecommended });
-  }
-
-  // decision: required, must be object or null (NOT array)
-  if (!('decision' in resp)) {
-    errors.push({ field: 'decision', message: 'decision is required' });
-  } else if (Array.isArray(resp.decision)) {
-    errors.push({ field: 'decision', message: 'decision must be an object or null, not an array', value: resp.decision });
-  } else if (resp.decision !== null && typeof resp.decision !== 'object') {
-    errors.push({ field: 'decision', message: 'decision must be an object or null', value: resp.decision });
-  }
-
-  // reason: optional string
-  if ('reason' in resp && resp.reason !== undefined) {
-    if (typeof resp.reason !== 'string') {
-      errors.push({ field: 'reason', message: 'reason must be a string if provided', value: resp.reason });
-    }
-  }
-
-  // autopilot: optional boolean
-  if ('autopilot' in resp && resp.autopilot !== undefined) {
-    if (typeof resp.autopilot !== 'boolean') {
-      errors.push({ field: 'autopilot', message: 'autopilot must be a boolean if provided', value: resp.autopilot });
-    }
-  }
-
-  // Apply assertNoArraysDeep
-  errors.push(...assertNoArraysDeep(resp, 'response'));
-
-  return { valid: errors.length === 0, errors };
 }
 
+// =============================================================================
+// CUSTOM ERROR CLASS
+// =============================================================================
+
 /**
- * Validates a DRM endpoint response.
- * 
- * CANONICAL CONTRACT (Phase 2 - MVP):
- * - drmActivated: boolean (required)
- * - reason?: string (optional - 'explicit_done' | 'time_threshold' | 'rejection_threshold' | 'no_valid_meal')
- * - decision?: object (optional - full fallback decision with execution_payload)
- * 
- * REJECTS:
- * - rescueActivated (banned)
- * - rescueType (banned)
- * - recorded (banned)
- * - message (banned)
- * - any unknown fields
- * - decision as array (must be object or null)
+ * Error thrown when a system invariant is violated
  */
-export function validateDrmResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
-  }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, DRM_RESPONSE_ALLOWED_FIELDS, 'drm'));
-
-  // drmActivated: required boolean
-  if (!('drmActivated' in resp)) {
-    errors.push({ field: 'drmActivated', message: 'drmActivated is required' });
-  } else if (typeof resp.drmActivated !== 'boolean') {
-    errors.push({ field: 'drmActivated', message: 'drmActivated must be a boolean', value: resp.drmActivated });
-  }
-
-  // reason: optional string
-  if ('reason' in resp && resp.reason !== undefined) {
-    if (typeof resp.reason !== 'string') {
-      errors.push({ field: 'reason', message: 'reason must be a string if provided', value: resp.reason });
+export class InvariantViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvariantViolationError';
+    
+    // Maintain proper stack trace for where error was thrown
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, InvariantViolationError);
     }
   }
+}
 
-  // decision: optional, must be object or null (NOT array)
-  if ('decision' in resp && resp.decision !== undefined) {
+// =============================================================================
+// RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate a decision response for all invariants
+ * - No arrays anywhere
+ * - decision is object or null (not array)
+ * - drmRecommended is boolean
+ * 
+ * @param response - Response to validate
+ * @throws InvariantViolationError on violation
+ */
+export function validateDecisionResponse(response: unknown): void {
+  if (typeof response !== 'object' || response === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: Response must be an object'
+    );
+  }
+  
+  const resp = response as Record<string, unknown>;
+  
+  // Check drmRecommended is boolean
+  if (typeof resp.drmRecommended !== 'boolean') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: drmRecommended must be a boolean'
+    );
+  }
+  
+  // Check decision is object or null, not array
+  if (resp.decision !== null) {
     if (Array.isArray(resp.decision)) {
-      errors.push({ field: 'decision', message: 'decision must be an object or null, not an array', value: resp.decision });
-    } else if (resp.decision !== null && typeof resp.decision !== 'object') {
-      errors.push({ field: 'decision', message: 'decision must be an object or null', value: resp.decision });
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: decision must be a single object, not an array'
+      );
+    }
+    if (typeof resp.decision !== 'object') {
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: decision must be an object or null'
+      );
     }
   }
-
-  // Note: We do NOT apply assertNoArraysDeep to the decision object
-  // because execution_payload.steps is an array per Arbiter Contract
-
-  return { valid: errors.length === 0, errors };
+  
+  // Deep check for arrays anywhere in the response
+  assertNoArraysDeep(response, 'response payload');
 }
 
 /**
- * Validates a Feedback endpoint response.
+ * Validate decision_payload before database insert
  * 
- * CANONICAL CONTRACT:
- * - recorded: true (required, always true)
- * 
- * REJECTS:
- * - eventId (banned)
- * - any unknown fields
- * - any arrays
+ * @param payload - Payload to validate
+ * @throws InvariantViolationError on violation
  */
-export function validateFeedbackResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
-  }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, FEEDBACK_RESPONSE_ALLOWED_FIELDS, 'feedback'));
-
-  // recorded: required, must be true
-  if (!('recorded' in resp)) {
-    errors.push({ field: 'recorded', message: 'recorded is required' });
-  } else if (resp.recorded !== true) {
-    errors.push({ field: 'recorded', message: 'recorded must be true', value: resp.recorded });
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-/**
- * Validates a Receipt Import endpoint response.
- * 
- * CANONICAL CONTRACT:
- * - receiptImportId: string (required)
- * - status: 'received' | 'parsed' | 'failed' (required)
- * 
- * REJECTS:
- * - any unknown fields
- * - any arrays
- */
-export function validateReceiptImportResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
-  }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, RECEIPT_RESPONSE_ALLOWED_FIELDS, 'receiptImport'));
-
-  // receiptImportId: required string
-  if (!('receiptImportId' in resp)) {
-    errors.push({ field: 'receiptImportId', message: 'receiptImportId is required' });
-  } else if (typeof resp.receiptImportId !== 'string') {
-    errors.push({ field: 'receiptImportId', message: 'receiptImportId must be a string', value: resp.receiptImportId });
-  }
-
-  // status: required, must be one of valid values
-  const validStatuses = ['received', 'parsed', 'failed'];
-  if (!('status' in resp)) {
-    errors.push({ field: 'status', message: 'status is required' });
-  } else if (typeof resp.status !== 'string' || !validStatuses.includes(resp.status)) {
-    errors.push({ 
-      field: 'status', 
-      message: `status must be one of: ${validStatuses.join(', ')}`, 
-      value: resp.status 
-    });
-  }
-
-  return { valid: errors.length === 0, errors };
+export function validateDecisionPayload(payload: unknown): void {
+  assertNoArraysDeep(payload, 'decision_payload');
 }
 
 // =============================================================================
-// HEALTHZ RESPONSE VALIDATION
+// SINGLE ACTION VALIDATION
 // =============================================================================
 
 /**
- * Allowed fields for healthz responses
- */
-export const HEALTHZ_RESPONSE_ALLOWED_FIELDS = new Set(['ok']);
-
-/**
- * Validates a healthz endpoint response.
+ * Validate that an action object has the required structure
+ * and no forbidden fields
  * 
- * CANONICAL CONTRACT:
- * - ok: boolean (required)
- * 
- * REJECTS:
- * - any unknown fields
- * - any arrays
- * - ok not boolean
+ * @param action - Action to validate
+ * @throws InvariantViolationError on violation
  */
-export function validateHealthzResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
+export function validateSingleAction(action: unknown): void {
+  if (typeof action !== 'object' || action === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: action must be an object'
+    );
   }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, HEALTHZ_RESPONSE_ALLOWED_FIELDS, 'healthz'));
-
-  // ok: required boolean
-  if (!('ok' in resp)) {
-    errors.push({ field: 'ok', message: 'ok is required' });
-  } else if (typeof resp.ok !== 'boolean') {
-    errors.push({ field: 'ok', message: 'ok must be a boolean', value: resp.ok });
-  } else if (Array.isArray(resp.ok)) {
-    errors.push({ field: 'ok', message: 'ok must not be an array', value: resp.ok });
+  
+  const act = action as Record<string, unknown>;
+  
+  // Must have decisionType
+  if (!['cook', 'order', 'zero_cook'].includes(act.decisionType as string)) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: action.decisionType must be cook, order, or zero_cook'
+    );
   }
-
+  
+  // Must have decisionEventId
+  if (typeof act.decisionEventId !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: action.decisionEventId must be a string'
+    );
+  }
+  
   // No arrays anywhere
-  errors.push(...assertNoArraysDeep(resp, 'response'));
-
-  return { valid: errors.length === 0, errors };
-}
-
-// =============================================================================
-// INTERNAL METRICS RESPONSE VALIDATION
-// =============================================================================
-
-/**
- * Allowed fields for internal metrics responses
- */
-export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set([
-  'ok', 
-  'counters', 
-  'last_flush_at', 
-  'db_flush_ok'
-]);
-
-/**
- * Validates an internal metrics endpoint response.
- * 
- * CANONICAL CONTRACT:
- * - ok: boolean (required)
- * - counters: object with string keys and number values only (required)
- * - last_flush_at: string | null (required) - ISO timestamp of last DB flush attempt
- * - db_flush_ok: boolean | null (required) - true if last flush succeeded, false if failed
- * 
- * REJECTS:
- * - any unknown fields
- * - any arrays
- * - non-numeric values in counters
- */
-export function validateInternalMetricsResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
-  }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS, 'internalMetrics'));
-
-  // ok: required boolean
-  if (!('ok' in resp)) {
-    errors.push({ field: 'ok', message: 'ok is required' });
-  } else if (typeof resp.ok !== 'boolean') {
-    errors.push({ field: 'ok', message: 'ok must be a boolean', value: resp.ok });
-  }
-
-  // counters: required object with number values
-  if (!('counters' in resp)) {
-    errors.push({ field: 'counters', message: 'counters is required' });
-  } else if (resp.counters === null || typeof resp.counters !== 'object' || Array.isArray(resp.counters)) {
-    errors.push({ field: 'counters', message: 'counters must be a non-null object', value: resp.counters });
-  } else {
-    // Validate all counter values are numbers
-    const counters = resp.counters as Record<string, unknown>;
-    for (const [key, value] of Object.entries(counters)) {
-      if (typeof value !== 'number') {
-        errors.push({ 
-          field: `counters.${key}`, 
-          message: `counters.${key} must be a number`, 
-          value 
-        });
-      }
+  assertNoArraysDeep(action, 'action');
+  
+  // No forbidden fields
+  const forbiddenFields = [
+    'options', 'alternatives', 'suggestions', 'otherMeals',
+    'recommendations', 'choices', 'list', 'items'
+  ];
+  
+  for (const field of forbiddenFields) {
+    if (field in act) {
+      throw new InvariantViolationError(
+        `INVARIANT VIOLATION: action must not contain '${field}' field`
+      );
     }
   }
-
-  // last_flush_at: required, must be string or null
-  if (!('last_flush_at' in resp)) {
-    errors.push({ field: 'last_flush_at', message: 'last_flush_at is required' });
-  } else if (resp.last_flush_at !== null && typeof resp.last_flush_at !== 'string') {
-    errors.push({ 
-      field: 'last_flush_at', 
-      message: 'last_flush_at must be a string or null', 
-      value: resp.last_flush_at 
-    });
-  }
-
-  // db_flush_ok: required, must be boolean or null
-  if (!('db_flush_ok' in resp)) {
-    errors.push({ field: 'db_flush_ok', message: 'db_flush_ok is required' });
-  } else if (resp.db_flush_ok !== null && typeof resp.db_flush_ok !== 'boolean') {
-    errors.push({ 
-      field: 'db_flush_ok', 
-      message: 'db_flush_ok must be a boolean or null', 
-      value: resp.db_flush_ok 
-    });
-  }
-
-  // No arrays anywhere
-  errors.push(...assertNoArraysDeep(resp, 'response'));
-
-  return { valid: errors.length === 0, errors };
 }
 
 // =============================================================================
-// ERROR RESPONSE VALIDATION
+// DRM RESPONSE VALIDATION
 // =============================================================================
 
 /**
- * Allowed fields for error responses
+ * Validate a DRM response for all invariants
+ * - No arrays anywhere
+ * - rescue is object or null (not array)
+ * - exhausted is boolean
+ * - drmEventId required when rescue present
+ * 
+ * @param response - Response to validate
+ * @throws InvariantViolationError on violation
  */
-export const ERROR_RESPONSE_ALLOWED_FIELDS = new Set(['error']);
+export function validateDrmResponse(response: unknown): void {
+  if (typeof response !== 'object' || response === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: DRM response must be an object'
+    );
+  }
+  
+  const resp = response as Record<string, unknown>;
+  
+  // Check exhausted is boolean
+  if (typeof resp.exhausted !== 'boolean') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: exhausted must be a boolean'
+    );
+  }
+  
+  // Check rescue is object or null, not array
+  if (resp.rescue !== null) {
+    if (Array.isArray(resp.rescue)) {
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: rescue must be a single object, not an array'
+      );
+    }
+    if (typeof resp.rescue !== 'object') {
+      throw new InvariantViolationError(
+        'INVARIANT VIOLATION: rescue must be an object or null'
+      );
+    }
+    
+    // When rescue is present, validate it
+    validateSingleRescue(resp.rescue);
+  }
+  
+  // Deep check for arrays anywhere in the response
+  assertNoArraysDeep(response, 'DRM response payload');
+}
 
 /**
- * Validates an error response.
+ * Validate a single rescue action
  * 
- * Error responses are NOT required to match success contracts,
- * but must be minimal and have no arrays.
- * 
- * CANONICAL CONTRACT:
- * - error: string (required)
+ * @param rescue - Rescue action to validate
+ * @throws InvariantViolationError on violation
  */
-export function validateErrorResponse(response: unknown): ValidationResult {
-  const errors: Array<{ field: string; message: string; value?: unknown }> = [];
-
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    errors.push({ field: 'response', message: 'Response must be a non-null object', value: response });
-    return { valid: false, errors };
+export function validateSingleRescue(rescue: unknown): void {
+  if (typeof rescue !== 'object' || rescue === null) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue must be an object'
+    );
   }
-
-  const resp = response as Record<string, unknown>;
-
-  // Check for unknown fields
-  errors.push(...checkUnknownFields(resp, ERROR_RESPONSE_ALLOWED_FIELDS, 'error'));
-
-  // error: required string
-  if (!('error' in resp)) {
-    errors.push({ field: 'error', message: 'error is required' });
-  } else if (typeof resp.error !== 'string') {
-    errors.push({ field: 'error', message: 'error must be a string', value: resp.error });
+  
+  const resc = rescue as Record<string, unknown>;
+  
+  // Must have rescueType
+  if (!['order', 'zero_cook'].includes(resc.rescueType as string)) {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.rescueType must be order or zero_cook'
+    );
   }
+  
+  // Must have drmEventId
+  if (typeof resc.drmEventId !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.drmEventId must be a string'
+    );
+  }
+  
+  // Must have title
+  if (typeof resc.title !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.title must be a string'
+    );
+  }
+  
+  // Must have estMinutes
+  if (typeof resc.estMinutes !== 'number') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.estMinutes must be a number'
+    );
+  }
+  
+  // Must have contextHash
+  if (typeof resc.contextHash !== 'string') {
+    throw new InvariantViolationError(
+      'INVARIANT VIOLATION: rescue.contextHash must be a string'
+    );
+  }
+  
+  // No arrays anywhere
+  assertNoArraysDeep(rescue, 'rescue');
+  
+  // No forbidden fields (same as action validation)
+  const forbiddenFields = [
+    'options', 'alternatives', 'suggestions', 'otherMeals',
+    'recommendations', 'choices', 'list', 'items', 'meals'
+  ];
+  
+  for (const field of forbiddenFields) {
+    if (field in resc) {
+      throw new InvariantViolationError(
+        `INVARIANT VIOLATION: rescue must not contain '${field}' field`
+      );
+    }
+  }
+}
 
-  // No arrays
-  errors.push(...assertNoArraysDeep(resp, 'response'));
-
-  return { valid: errors.length === 0, errors };
+/**
+ * Validate rescue_payload before database insert
+ * 
+ * @param payload - Payload to validate
+ * @throws InvariantViolationError on violation
+ */
+export function validateRescuePayload(payload: unknown): void {
+  assertNoArraysDeep(payload, 'rescue_payload');
 }

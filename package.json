@@ -86,13 +86,11 @@
     "react-native-vector-icons": "^10.2.0",
     "react-native-web": "~0.19.12"
   },
-  "optionalDependencies": {
-    "pg": "^8.17.2"
-  },
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@testing-library/jest-native": "^5.4.3",
     "@testing-library/react-native": "^12.4.0",
+    "@types/jest": "^30.0.0",
     "@types/react": "~18.3.12",
     "@types/react-native": "~0.73.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
