@@ -13,8 +13,8 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowRight, Clock, DollarSign, ChefHat, Heart, Share2, ArrowLeft } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppContext } from '@/contexts/AppContext';
-import AnimatedCard from '@/components/AnimatedCard';
-import GradientButton from '@/components/GradientButton';
+import AnimatedCard from '../../components/AnimatedCard';
+import GradientButton from '../../components/GradientButton';
 
 export default function RecipeDetailScreen() {
   const { id } = useLocalSearchParams();
