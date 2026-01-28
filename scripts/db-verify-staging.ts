@@ -34,6 +34,10 @@ interface DbClient {
   query<T = unknown>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
   end(): Promise<void>;
 }
+
+async function getDbClient(): Promise<DbClient | null> {
+  try {
+    const pg = await import('pg');
     const wantsSsl =
       /sslmode=/i.test(DATABASE_URL) || !!process.env.PGSSLMODE;
 
