@@ -106,7 +106,7 @@ jobs:
         run: |
           npx ts-node -e "
           const { Client } = require('pg');
-          async function test() {
+          async function runSmokeTest() {
             const client = new Client({ connectionString: process.env.DATABASE_URL });
             await client.connect();
 
@@ -132,5 +132,5 @@ jobs:
             await client.end();
             console.log('PASS db_smoke_test_complete');
           }
-          test().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+          runSmokeTest().catch(e => { console.error('FAIL', e.message); process.exit(1); });
           "
