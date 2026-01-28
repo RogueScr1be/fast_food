@@ -16,7 +16,8 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Environment files (keep .env.example tracked)
+# Environment files (keep .env.example and .env.staging.example tracked)
+.env
 .env.local
 .env.*.local
 
@@ -35,3 +36,6 @@ build/
 *.tmp
 *.temp
 .cache/
+
+# Prevent stray credential files
+db.js
