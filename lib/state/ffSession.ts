@@ -12,6 +12,10 @@ interface FFSessionState {
   excludeAllergens: AllergenTag[];
   constraints: ConstraintTag[];
   sessionStartTime: number | null;
+  // Phase 2: Deal tracking
+  passCount: number;
+  dealHistory: string[]; // Recipe IDs shown this session
+  currentDealId: string | null;
 }
 
 // Module-level state (singleton)
@@ -20,6 +24,9 @@ let state: FFSessionState = {
   excludeAllergens: [],
   constraints: [],
   sessionStartTime: null,
+  passCount: 0,
+  dealHistory: [],
+  currentDealId: null,
 };
 
 // Subscribers for reactive updates (optional, for future use)
@@ -48,6 +55,18 @@ export function getConstraints(): ConstraintTag[] {
 
 export function getSessionStartTime(): number | null {
   return state.sessionStartTime;
+}
+
+export function getPassCount(): number {
+  return state.passCount;
+}
+
+export function getDealHistory(): string[] {
+  return [...state.dealHistory];
+}
+
+export function getCurrentDealId(): string | null {
+  return state.currentDealId;
 }
 
 export function getSessionState(): Readonly<FFSessionState> {
@@ -97,17 +116,51 @@ export function toggleConstraint(constraint: ConstraintTag): void {
   notifyListeners();
 }
 
+export function setCurrentDealId(id: string | null): void {
+  state.currentDealId = id;
+  notifyListeners();
+}
+
+export function incrementPassCount(): void {
+  state.passCount++;
+  notifyListeners();
+}
+
+export function addToDealHistory(recipeId: string): void {
+  if (!state.dealHistory.includes(recipeId)) {
+    state.dealHistory = [...state.dealHistory, recipeId];
+  }
+  notifyListeners();
+}
+
 // ============================================
 // RESET
 // ============================================
 
+/**
+ * Full session reset (back to mode selection)
+ */
 export function resetSession(): void {
   state = {
     selectedMode: null,
     excludeAllergens: [],
     constraints: [],
     sessionStartTime: null,
+    passCount: 0,
+    dealHistory: [],
+    currentDealId: null,
   };
+  notifyListeners();
+}
+
+/**
+ * Reset deal state only (keep mode + allergens, restart dealing)
+ */
+export function resetDealState(): void {
+  state.passCount = 0;
+  state.dealHistory = [];
+  state.currentDealId = null;
+  state.sessionStartTime = Date.now();
   notifyListeners();
 }
 

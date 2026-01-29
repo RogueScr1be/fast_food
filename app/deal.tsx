@@ -1,11 +1,14 @@
 /**
- * Deal Screen — Placeholder (Phase 1)
+ * Deal Screen — Swipeable Recipe Cards
  * 
- * This screen will show the swipeable decision cards in Phase 2.
- * For now, it displays the selected session state for QA verification.
+ * Phase 2: Shows one recipe at a time with swipe-to-pass gestures.
+ * - Reads mode + allergens from session state
+ * - Picks recipes from local seeds
+ * - Tracks pass count and deal history
+ * - Navigates to checklist on accept
  */
 
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,66 +16,222 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
-import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import { getSessionState } from '../lib/state/ffSession';
+import { ArrowLeft, RefreshCw } from 'lucide-react-native';
+import { colors, spacing, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import {
+  getSelectedMode,
+  getExcludeAllergens,
+  getConstraints,
+  getDealHistory,
+  getCurrentDealId,
+  setCurrentDealId,
+  incrementPassCount,
+  addToDealHistory,
+  resetDealState,
+  getPassCount,
+} from '../lib/state/ffSession';
+import {
+  pickNextRecipe,
+  getRandomWhy,
+  getAvailableCount,
+} from '../lib/seeds';
+import type { RecipeSeed } from '../lib/seeds/types';
+import { DecisionCard, PassDirection } from '../components/DecisionCard';
 
 export default function DealScreen() {
-  const session = getSessionState();
+  const [currentRecipe, setCurrentRecipe] = useState<RecipeSeed | null>(null);
+  const [whyText, setWhyText] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [noMoreRecipes, setNoMoreRecipes] = useState(false);
+
+  // Get session state
+  const mode = getSelectedMode();
+  const excludeAllergens = getExcludeAllergens();
+  const constraints = getConstraints();
+
+  /**
+   * Deal a new recipe
+   */
+  const dealNextRecipe = useCallback(() => {
+    if (!mode) {
+      setIsLoading(false);
+      return;
+    }
+
+    const dealHistory = getDealHistory();
+    const recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
+
+    if (recipe) {
+      setCurrentRecipe(recipe);
+      setWhyText(getRandomWhy(recipe));
+      setCurrentDealId(recipe.id);
+      addToDealHistory(recipe.id);
+      setExpanded(false);
+      setNoMoreRecipes(false);
+    } else {
+      // No more recipes available
+      setCurrentRecipe(null);
+      setNoMoreRecipes(true);
+    }
+    setIsLoading(false);
+  }, [mode, excludeAllergens, constraints]);
+
+  // Deal first recipe on mount
+  useEffect(() => {
+    dealNextRecipe();
+  }, [dealNextRecipe]);
+
+  /**
+   * Handle pass (swipe)
+   */
+  const handlePass = useCallback((direction: PassDirection) => {
+    incrementPassCount();
+    // Small delay for animation to complete
+    setTimeout(() => {
+      dealNextRecipe();
+    }, 50);
+  }, [dealNextRecipe]);
+
+  /**
+   * Handle accept ("Let's do this")
+   */
+  const handleAccept = useCallback(() => {
+    if (currentRecipe) {
+      router.push({
+        pathname: '/checklist/[recipeId]',
+        params: { recipeId: currentRecipe.id },
+      });
+    }
+  }, [currentRecipe]);
+
+  /**
+   * Toggle ingredients tray
+   */
+  const handleToggleExpand = useCallback(() => {
+    setExpanded(prev => !prev);
+  }, []);
+
+  /**
+   * Reset and start over
+   */
+  const handleStartOver = useCallback(() => {
+    resetDealState();
+    setIsLoading(true);
+    setTimeout(() => {
+      dealNextRecipe();
+    }, 100);
+  }, [dealNextRecipe]);
+
+  // No mode selected - redirect back
+  if (!mode) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>No mode selected</Text>
+          <TouchableOpacity
+            style={styles.backLink}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backLinkText}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.accentBlue} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // No more recipes
+  if (noMoreRecipes) {
+    const passCount = getPassCount();
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <ArrowLeft size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Deal</Text>
+          <View style={styles.headerButton} />
+        </View>
+
+        <View style={styles.centered}>
+          <Text style={styles.emptyEmoji}>🍽️</Text>
+          <Text style={styles.emptyTitle}>That's all for {mode}</Text>
+          <Text style={styles.emptySubtitle}>
+            You've seen all {passCount + 1} recipes
+          </Text>
+          <TouchableOpacity
+            style={styles.startOverButton}
+            onPress={handleStartOver}
+            accessibilityRole="button"
+            accessibilityLabel="Start over"
+          >
+            <RefreshCw size={18} color={colors.textInverse} />
+            <Text style={styles.startOverText}>Start Over</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Main deal screen
+  const availableCount = getAvailableCount(mode, excludeAllergens, getDealHistory());
+  const passCount = getPassCount();
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.backButton}
+          style={styles.headerButton}
           onPress={() => router.back()}
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
           <ArrowLeft size={24} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.title}>Deal</Text>
-        <View style={styles.backButton} />
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>{mode}</Text>
+          <Text style={styles.headerSubtitle}>
+            {availableCount} more · {passCount} passed
+          </Text>
+        </View>
+        <View style={styles.headerButton} />
       </View>
 
-      {/* Content */}
-      <View style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Deal screen coming next phase</Text>
-          
-          <View style={styles.divider} />
-          
-          {/* Session State for QA */}
-          <Text style={styles.sectionTitle}>Session State (QA)</Text>
-          
-          <View style={styles.stateRow}>
-            <Text style={styles.stateLabel}>Mode:</Text>
-            <Text style={styles.stateValue}>
-              {session.selectedMode || '(none)'}
-            </Text>
-          </View>
-          
-          <View style={styles.stateRow}>
-            <Text style={styles.stateLabel}>Allergens:</Text>
-            <Text style={styles.stateValue}>
-              {session.excludeAllergens.length > 0
-                ? session.excludeAllergens.join(', ')
-                : '(none)'}
-            </Text>
-          </View>
-          
-          <View style={styles.stateRow}>
-            <Text style={styles.stateLabel}>Constraints:</Text>
-            <Text style={styles.stateValue}>
-              {session.constraints.length > 0
-                ? session.constraints.join(', ')
-                : '(none)'}
-            </Text>
-          </View>
-        </View>
+      {/* Card */}
+      {currentRecipe && (
+        <DecisionCard
+          recipe={currentRecipe}
+          whyText={whyText}
+          expanded={expanded}
+          onToggleExpand={handleToggleExpand}
+          onAccept={handleAccept}
+          onPass={handlePass}
+        />
+      )}
+
+      {/* Swipe hint at bottom */}
+      <View style={styles.footer}>
+        <Text style={styles.footerHint}>Swipe to pass · Tap for ingredients</Text>
       </View>
     </SafeAreaView>
   );
@@ -87,68 +246,84 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingTop: Platform.OS === 'ios' ? spacing.sm : spacing.lg,
-    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.sm,
+    paddingTop: Platform.OS === 'ios' ? spacing.sm : spacing.md,
+    paddingBottom: spacing.sm,
   },
-  backButton: {
+  headerButton: {
     width: MIN_TOUCH_TARGET,
     height: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  title: {
+  headerCenter: {
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: typography.lg,
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+    textTransform: 'capitalize',
+  },
+  headerSubtitle: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  errorText: {
+    fontSize: typography.base,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  backLink: {
+    padding: spacing.sm,
+  },
+  backLinkText: {
+    fontSize: typography.base,
+    color: colors.accentBlue,
+    fontWeight: typography.medium,
+  },
+  emptyEmoji: {
+    fontSize: 64,
+    marginBottom: spacing.md,
+  },
+  emptyTitle: {
     fontSize: typography.xl,
     fontWeight: typography.bold,
     color: colors.textPrimary,
+    marginBottom: spacing.xs,
   },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.xl,
-    padding: spacing.lg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  cardTitle: {
-    fontSize: typography.lg,
-    fontWeight: typography.semibold,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: spacing.md,
-  },
-  stateRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
-  },
-  stateLabel: {
+  emptySubtitle: {
     fontSize: typography.base,
     color: colors.textSecondary,
+    marginBottom: spacing.lg,
   },
-  stateValue: {
+  startOverButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accentBlue,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: spacing.sm,
+    gap: spacing.sm,
+  },
+  startOverText: {
     fontSize: typography.base,
-    fontWeight: typography.medium,
-    color: colors.textPrimary,
+    fontWeight: typography.semibold,
+    color: colors.textInverse,
+  },
+  footer: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+  },
+  footerHint: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
   },
 });

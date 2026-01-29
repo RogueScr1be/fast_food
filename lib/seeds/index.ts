@@ -115,3 +115,48 @@ export function getModeCounts(): Record<Mode, number> {
     cheap: getByMode('cheap').length,
   };
 }
+
+/**
+ * Pick next recipe for dealing.
+ * Combines mode filtering, allergen exclusion, and history tracking.
+ * 
+ * @param mode - Recipe mode to filter by
+ * @param excludeAllergensList - Allergens to exclude
+ * @param dealHistory - Recipe IDs already shown
+ * @param constraints - Optional constraints to apply
+ * @returns Next recipe or null if none available
+ */
+export function pickNextRecipe(
+  mode: Mode,
+  excludeAllergensList: AllergenTag[] = [],
+  dealHistory: string[] = [],
+  constraints: ConstraintTag[] = []
+): RecipeSeed | null {
+  // Get recipes for mode
+  let candidates = getByMode(mode);
+  
+  // Apply allergen filter
+  candidates = excludeAllergens(candidates, excludeAllergensList);
+  
+  // Apply constraints if any
+  if (constraints.length > 0) {
+    candidates = applyConstraints(candidates, constraints);
+  }
+  
+  // Pick from remaining, avoiding already-shown
+  return pickNext(candidates, dealHistory);
+}
+
+/**
+ * Get count of available recipes for a mode after filtering
+ */
+export function getAvailableCount(
+  mode: Mode,
+  excludeAllergensList: AllergenTag[] = [],
+  dealHistory: string[] = []
+): number {
+  let candidates = getByMode(mode);
+  candidates = excludeAllergens(candidates, excludeAllergensList);
+  const available = candidates.filter(r => !dealHistory.includes(r.id));
+  return available.length;
+}
