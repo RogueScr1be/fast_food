@@ -2,15 +2,20 @@
  * PrimaryButton — Consistent primary CTA
  * 
  * A calm, prominent action button used across:
- * - Tonight: "Decide for Me"
- * - Deal: "Let's do this"
- * - Checklist: "Done"
+ * - Tonight: "Decide for Me" (tone: primary/blue - system action)
+ * - Deal: "Let's do this" (tone: accept/green - commitment)
+ * - Checklist: "Done" (tone: accept/green - commitment)
  * 
  * Specs:
  * - Height: 56px (MIN_TOUCH_TARGET + 8)
  * - Radius: lg (16px)
  * - Typography: lg bold
- * - Variants: primary (green), muted (grey)
+ * 
+ * Tones:
+ * - primary: Blue (navigation/system action)
+ * - accept: Green (acceptance/commitment)
+ * - danger: Red (destructive action)
+ * - neutral: Grey (secondary action)
  */
 
 import React from 'react';
@@ -19,14 +24,20 @@ import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '.
 
 const BUTTON_HEIGHT = MIN_TOUCH_TARGET + 8; // 56px
 
-type ButtonVariant = 'primary' | 'muted';
+/** Semantic tone for button color */
+type ButtonTone = 'primary' | 'accept' | 'danger' | 'neutral';
+
+/** Visual variant for state */
+type ButtonVariant = 'solid' | 'muted';
 
 interface PrimaryButtonProps {
   /** Button label text */
   label: string;
   /** Press handler */
   onPress: () => void;
-  /** Visual variant (default: primary) */
+  /** Semantic tone (default: accept for backward compat) */
+  tone?: ButtonTone;
+  /** Visual variant (default: solid) */
   variant?: ButtonVariant;
   /** Disabled state */
   disabled?: boolean;
@@ -38,26 +49,39 @@ interface PrimaryButtonProps {
   icon?: React.ReactNode;
 }
 
+/** Map tone to background color */
+const TONE_COLORS: Record<ButtonTone, string> = {
+  primary: colors.accentBlue,
+  accept: colors.accentGreen,
+  danger: colors.error,
+  neutral: colors.muted,
+};
+
 export function PrimaryButton({
   label,
   onPress,
-  variant = 'primary',
+  tone = 'accept',
+  variant = 'solid',
   disabled = false,
   style,
   accessibilityLabel,
   icon,
 }: PrimaryButtonProps) {
-  const isDisabled = disabled || variant === 'muted';
-  const buttonStyle = [
+  const isMuted = variant === 'muted';
+  const backgroundColor = isMuted ? colors.muted : TONE_COLORS[tone];
+  
+  const buttonStyle: ViewStyle[] = [
     styles.button,
-    variant === 'muted' && styles.buttonMuted,
+    { backgroundColor },
+    isMuted && styles.buttonMuted,
     disabled && styles.buttonDisabled,
-    style,
-  ];
+    style as ViewStyle,
+  ].filter(Boolean) as ViewStyle[];
+  
   const textStyle: TextStyle[] = [
     styles.text,
-    (variant === 'muted' || disabled) && styles.textMuted,
-  ];
+    (isMuted || disabled) && styles.textMuted,
+  ].filter(Boolean) as TextStyle[];
 
   return (
     <TouchableOpacity
@@ -82,13 +106,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: BUTTON_HEIGHT,
     borderRadius: radii.lg,
-    backgroundColor: colors.accentGreen,
     paddingHorizontal: spacing.lg,
     gap: spacing.sm,
     ...shadows.md,
   },
   buttonMuted: {
-    backgroundColor: colors.muted,
     shadowOpacity: 0,
     elevation: 0,
   },

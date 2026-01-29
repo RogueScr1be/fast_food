@@ -286,7 +286,8 @@ export default function TonightScreen() {
         <PrimaryButton
           label="Decide for Me"
           onPress={handleDecide}
-          variant={selectedMode ? 'primary' : 'muted'}
+          tone="primary"
+          variant={selectedMode ? 'solid' : 'muted'}
         />
       </View>
 

@@ -177,8 +177,10 @@ export function RescueCard({
               style={styles.heroImage}
               resizeMode="cover"
             />
-            {/* Warm-toned overlay */}
-            <View style={styles.heroOverlay} />
+            {/* Warm scrim gradient (3 stacked layers, amber tint) */}
+            <View style={styles.scrimTop} />
+            <View style={styles.scrimMiddle} />
+            <View style={styles.scrimBottom} />
             
             {/* Rescue Badge */}
             <View style={styles.rescueBadge}>
@@ -254,13 +256,30 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  heroOverlay: {
+  // Warm scrim gradient: 3 stacked layers with amber tint
+  scrimTop: {
+    position: 'absolute',
+    bottom: '45%',
+    left: 0,
+    right: 0,
+    height: '20%',
+    backgroundColor: 'rgba(120, 53, 15, 0.08)',
+  },
+  scrimMiddle: {
+    position: 'absolute',
+    bottom: '20%',
+    left: 0,
+    right: 0,
+    height: '25%',
+    backgroundColor: 'rgba(120, 53, 15, 0.25)',
+  },
+  scrimBottom: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: '45%',
-    backgroundColor: 'rgba(120, 53, 15, 0.50)', // Warm amber tint, 50% opacity
+    height: '35%',
+    backgroundColor: 'rgba(92, 40, 12, 0.55)',
   },
   rescueBadge: {
     position: 'absolute',

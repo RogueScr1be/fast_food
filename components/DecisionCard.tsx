@@ -191,8 +191,10 @@ export function DecisionCard({
               style={styles.heroImage}
               resizeMode="cover"
             />
-            {/* Dark gradient overlay for text legibility */}
-            <View style={styles.heroOverlay} />
+            {/* Scrim gradient overlay (3 stacked views for pseudo-gradient) */}
+            <View style={styles.scrimTop} />
+            <View style={styles.scrimMiddle} />
+            <View style={styles.scrimBottom} />
             
             {/* Text on overlay */}
             <View style={styles.heroContent}>
@@ -261,14 +263,30 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  heroOverlay: {
+  // Scrim gradient: 3 stacked layers for smooth transition (no dependency)
+  scrimTop: {
+    position: 'absolute',
+    bottom: '45%',
+    left: 0,
+    right: 0,
+    height: '20%',
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  scrimMiddle: {
+    position: 'absolute',
+    bottom: '20%',
+    left: 0,
+    right: 0,
+    height: '25%',
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+  },
+  scrimBottom: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: '45%',
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    // Dark overlay for text legibility on bright images
+    height: '35%',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
   },
   heroContent: {
     position: 'absolute',
