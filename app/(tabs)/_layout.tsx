@@ -51,20 +51,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      
-      {/* Hide old screens from tab bar */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          href: null, // Hide from tab bar
-        }}
-      />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          href: null, // Hide from tab bar
-        }}
-      />
     </Tabs>
   );
 }
