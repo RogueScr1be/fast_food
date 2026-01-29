@@ -1,14 +1,17 @@
 /**
- * Deal Screen — Swipeable Recipe Cards
+ * Deal Screen — Swipeable Recipe Cards with DRM
  * 
- * Phase 2: Shows one recipe at a time with swipe-to-pass gestures.
+ * Phase 3: Includes Dinner Rescue Mode (DRM) insertion.
+ * - Shows one recipe at a time with swipe-to-pass gestures
  * - Reads mode + allergens from session state
  * - Picks recipes from local seeds
  * - Tracks pass count and deal history
+ * - Inserts DRM after 3 passes OR 45 seconds
+ * - "I'm allergic" button for in-deal allergen filtering
  * - Navigates to checklist on accept
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,56 +20,118 @@ import {
   TouchableOpacity,
   Platform,
   ActivityIndicator,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, RefreshCw } from 'lucide-react-native';
-import { colors, spacing, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import { ArrowLeft, RefreshCw, AlertCircle, X, Check } from 'lucide-react-native';
+import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getSelectedMode,
   getExcludeAllergens,
   getConstraints,
   getDealHistory,
-  getCurrentDealId,
   setCurrentDealId,
   incrementPassCount,
   addToDealHistory,
   resetDealState,
   getPassCount,
+  getDrmInserted,
+  setDrmInserted,
+  markDealStart,
+  shouldTriggerDrm,
+  setExcludeAllergens,
+  DRM_PASS_THRESHOLD,
+  DRM_TIME_THRESHOLD_MS,
 } from '../lib/state/ffSession';
 import {
   pickNextRecipe,
+  pickDrmMeal,
   getRandomWhy,
   getAvailableCount,
+  hasConflictingAllergens,
 } from '../lib/seeds';
-import type { RecipeSeed } from '../lib/seeds/types';
+import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard, PassDirection } from '../components/DecisionCard';
+import { RescueCard } from '../components/RescueCard';
+
+// All allergens for the modal
+const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
+  { tag: 'dairy', label: 'Dairy' },
+  { tag: 'nuts', label: 'Nuts' },
+  { tag: 'gluten', label: 'Gluten' },
+  { tag: 'eggs', label: 'Eggs' },
+  { tag: 'soy', label: 'Soy' },
+  { tag: 'shellfish', label: 'Shellfish' },
+];
+
+type CurrentDeal = 
+  | { type: 'recipe'; data: RecipeSeed }
+  | { type: 'drm'; data: DrmSeed }
+  | null;
 
 export default function DealScreen() {
-  const [currentRecipe, setCurrentRecipe] = useState<RecipeSeed | null>(null);
+  const [currentDeal, setCurrentDeal] = useState<CurrentDeal>(null);
   const [whyText, setWhyText] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [noMoreRecipes, setNoMoreRecipes] = useState(false);
+  
+  // Allergy modal state
+  const [showAllergyModal, setShowAllergyModal] = useState(false);
+  const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
+  const [localExcludeAllergens, setLocalExcludeAllergens] = useState<AllergenTag[]>(getExcludeAllergens());
+  
+  // DRM timer ref
+  const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
 
   // Get session state
   const mode = getSelectedMode();
-  const excludeAllergens = getExcludeAllergens();
   const constraints = getConstraints();
 
   /**
-   * Deal a new recipe
+   * Deal a new card (recipe or DRM)
    */
-  const dealNextRecipe = useCallback(() => {
+  const dealNextCard = useCallback(() => {
     if (!mode) {
       setIsLoading(false);
       return;
     }
 
     const dealHistory = getDealHistory();
+    const passCount = getPassCount();
+    const drmInserted = getDrmInserted();
+    const excludeAllergens = getExcludeAllergens();
+
+    // Check if DRM should be inserted
+    const triggerDrm = !drmInserted && (
+      passCount >= DRM_PASS_THRESHOLD || drmTimerTriggered
+    );
+
+    if (triggerDrm) {
+      // Try to get a DRM meal
+      const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
+      if (drmMeal) {
+        setCurrentDeal({ type: 'drm', data: drmMeal });
+        setWhyText(getRandomWhy(drmMeal));
+        setCurrentDealId(drmMeal.id);
+        addToDealHistory(drmMeal.id);
+        setDrmInserted(true);
+        setExpanded(false);
+        setNoMoreRecipes(false);
+        setIsLoading(false);
+        return;
+      }
+      // If no DRM available, mark as inserted and continue with recipes
+      setDrmInserted(true);
+    }
+
+    // Try to get a recipe
     const recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
 
     if (recipe) {
-      setCurrentRecipe(recipe);
+      setCurrentDeal({ type: 'recipe', data: recipe });
       setWhyText(getRandomWhy(recipe));
       setCurrentDealId(recipe.id);
       addToDealHistory(recipe.id);
@@ -74,39 +139,68 @@ export default function DealScreen() {
       setNoMoreRecipes(false);
     } else {
       // No more recipes available
-      setCurrentRecipe(null);
+      setCurrentDeal(null);
       setNoMoreRecipes(true);
     }
     setIsLoading(false);
-  }, [mode, excludeAllergens, constraints]);
+  }, [mode, constraints, drmTimerTriggered]);
 
-  // Deal first recipe on mount
+  // Mark deal start and set up 45s timer on mount
   useEffect(() => {
-    dealNextRecipe();
-  }, [dealNextRecipe]);
+    markDealStart();
+    
+    // Set up 45s timer for DRM trigger
+    drmTimerRef.current = setTimeout(() => {
+      setDrmTimerTriggered(true);
+    }, DRM_TIME_THRESHOLD_MS);
+
+    return () => {
+      if (drmTimerRef.current) {
+        clearTimeout(drmTimerRef.current);
+      }
+    };
+  }, []);
+
+  // When drmTimerTriggered changes, check if we need to insert DRM
+  useEffect(() => {
+    if (drmTimerTriggered && !getDrmInserted() && currentDeal) {
+      // Timer triggered - next deal should be DRM
+      // Don't auto-switch mid-viewing, just flag it for next deal
+    }
+  }, [drmTimerTriggered, currentDeal]);
+
+  // Deal first card on mount
+  useEffect(() => {
+    dealNextCard();
+  }, [dealNextCard]);
+
+  // Update local allergen state when global changes
+  useEffect(() => {
+    setLocalExcludeAllergens(getExcludeAllergens());
+  }, [showAllergyModal]);
 
   /**
-   * Handle pass (swipe)
+   * Handle pass (swipe) - increments pass count toward DRM
    */
   const handlePass = useCallback((direction: PassDirection) => {
     incrementPassCount();
     // Small delay for animation to complete
     setTimeout(() => {
-      dealNextRecipe();
+      dealNextCard();
     }, 50);
-  }, [dealNextRecipe]);
+  }, [dealNextCard]);
 
   /**
    * Handle accept ("Let's do this")
    */
   const handleAccept = useCallback(() => {
-    if (currentRecipe) {
+    if (currentDeal) {
       router.push({
         pathname: '/checklist/[recipeId]',
-        params: { recipeId: currentRecipe.id },
+        params: { recipeId: currentDeal.data.id },
       });
     }
-  }, [currentRecipe]);
+  }, [currentDeal]);
 
   /**
    * Toggle ingredients tray
@@ -116,15 +210,92 @@ export default function DealScreen() {
   }, []);
 
   /**
-   * Reset and start over
+   * Reset and start over (shuffle)
    */
-  const handleStartOver = useCallback(() => {
+  const handleShuffle = useCallback(() => {
     resetDealState();
+    setDrmTimerTriggered(false);
     setIsLoading(true);
+    
+    // Reset timer
+    if (drmTimerRef.current) {
+      clearTimeout(drmTimerRef.current);
+    }
+    drmTimerRef.current = setTimeout(() => {
+      setDrmTimerTriggered(true);
+    }, DRM_TIME_THRESHOLD_MS);
+    
     setTimeout(() => {
-      dealNextRecipe();
+      dealNextCard();
     }, 100);
-  }, [dealNextRecipe]);
+  }, [dealNextCard]);
+
+  /**
+   * Open allergy modal
+   */
+  const openAllergyModal = useCallback(() => {
+    setTempAllergens(getExcludeAllergens());
+    setShowAllergyModal(true);
+  }, []);
+
+  /**
+   * Toggle allergen in temp state
+   */
+  const toggleAllergen = (tag: AllergenTag) => {
+    setTempAllergens(prev =>
+      prev.includes(tag)
+        ? prev.filter(a => a !== tag)
+        : [...prev, tag]
+    );
+  };
+
+  /**
+   * Save allergens and close modal
+   * Does NOT increment pass count, does NOT trigger DRM
+   */
+  const saveAllergens = useCallback(() => {
+    setExcludeAllergens(tempAllergens);
+    setLocalExcludeAllergens(tempAllergens);
+    setShowAllergyModal(false);
+    
+    // Check if current card conflicts with new allergens
+    if (currentDeal && hasConflictingAllergens(currentDeal.data, tempAllergens)) {
+      // Re-deal without incrementing pass count
+      setTimeout(() => {
+        // Deal next card (don't call handlePass, which increments)
+        const dealHistory = getDealHistory();
+        const excludeAllergens = tempAllergens;
+        
+        if (currentDeal.type === 'drm') {
+          // Try another DRM
+          const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
+          if (drmMeal) {
+            setCurrentDeal({ type: 'drm', data: drmMeal });
+            setWhyText(getRandomWhy(drmMeal));
+            setCurrentDealId(drmMeal.id);
+            addToDealHistory(drmMeal.id);
+            setExpanded(false);
+            return;
+          }
+        }
+        
+        // Fall back to recipe
+        if (mode) {
+          const recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
+          if (recipe) {
+            setCurrentDeal({ type: 'recipe', data: recipe });
+            setWhyText(getRandomWhy(recipe));
+            setCurrentDealId(recipe.id);
+            addToDealHistory(recipe.id);
+            setExpanded(false);
+          } else {
+            setCurrentDeal(null);
+            setNoMoreRecipes(true);
+          }
+        }
+      }, 50);
+    }
+  }, [tempAllergens, currentDeal, mode, constraints]);
 
   // No mode selected - redirect back
   if (!mode) {
@@ -154,7 +325,7 @@ export default function DealScreen() {
     );
   }
 
-  // No more recipes
+  // No more recipes - calm empty state
   if (noMoreRecipes) {
     const passCount = getPassCount();
     return (
@@ -173,19 +344,18 @@ export default function DealScreen() {
         </View>
 
         <View style={styles.centered}>
-          <Text style={styles.emptyEmoji}>🍽️</Text>
           <Text style={styles.emptyTitle}>That's all for {mode}</Text>
           <Text style={styles.emptySubtitle}>
-            You've seen all {passCount + 1} recipes
+            You've seen all {passCount + 1} options
           </Text>
           <TouchableOpacity
-            style={styles.startOverButton}
-            onPress={handleStartOver}
+            style={styles.shuffleButton}
+            onPress={handleShuffle}
             accessibilityRole="button"
-            accessibilityLabel="Start over"
+            accessibilityLabel="Shuffle again"
           >
-            <RefreshCw size={18} color={colors.textInverse} />
-            <Text style={styles.startOverText}>Start Over</Text>
+            <RefreshCw size={18} color={colors.accentBlue} />
+            <Text style={styles.shuffleButtonText}>Shuffle again</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -193,7 +363,7 @@ export default function DealScreen() {
   }
 
   // Main deal screen
-  const availableCount = getAvailableCount(mode, excludeAllergens, getDealHistory());
+  const availableCount = getAvailableCount(mode, localExcludeAllergens, getDealHistory());
   const passCount = getPassCount();
 
   return (
@@ -214,13 +384,34 @@ export default function DealScreen() {
             {availableCount} more · {passCount} passed
           </Text>
         </View>
-        <View style={styles.headerButton} />
+        {/* Allergy button - quiet placement */}
+        <TouchableOpacity
+          style={styles.allergyButton}
+          onPress={openAllergyModal}
+          accessibilityRole="button"
+          accessibilityLabel="Manage allergies"
+        >
+          <AlertCircle 
+            size={20} 
+            color={localExcludeAllergens.length > 0 ? colors.accentBlue : colors.textMuted} 
+          />
+        </TouchableOpacity>
       </View>
 
-      {/* Card */}
-      {currentRecipe && (
+      {/* Card - Recipe or Rescue */}
+      {currentDeal?.type === 'recipe' && (
         <DecisionCard
-          recipe={currentRecipe}
+          recipe={currentDeal.data}
+          whyText={whyText}
+          expanded={expanded}
+          onToggleExpand={handleToggleExpand}
+          onAccept={handleAccept}
+          onPass={handlePass}
+        />
+      )}
+      {currentDeal?.type === 'drm' && (
+        <RescueCard
+          meal={currentDeal.data}
           whyText={whyText}
           expanded={expanded}
           onToggleExpand={handleToggleExpand}
@@ -233,6 +424,67 @@ export default function DealScreen() {
       <View style={styles.footer}>
         <Text style={styles.footerHint}>Swipe to pass · Tap for ingredients</Text>
       </View>
+
+      {/* Allergy Modal */}
+      <Modal
+        visible={showAllergyModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowAllergyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>I'm allergic to...</Text>
+              <TouchableOpacity
+                style={styles.modalClose}
+                onPress={() => setShowAllergyModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <X size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Allergen List */}
+            <ScrollView style={styles.allergenList}>
+              {ALL_ALLERGENS.map(({ tag, label }) => (
+                <TouchableOpacity
+                  key={tag}
+                  style={styles.allergenRow}
+                  onPress={() => toggleAllergen(tag)}
+                  activeOpacity={0.7}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: tempAllergens.includes(tag) }}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    tempAllergens.includes(tag) && styles.checkboxChecked,
+                  ]}>
+                    {tempAllergens.includes(tag) && (
+                      <Check size={16} color={colors.textInverse} />
+                    )}
+                  </View>
+                  <Text style={styles.allergenLabel}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Save Button */}
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={saveAllergens}
+                accessibilityRole="button"
+                accessibilityLabel="Save allergies"
+              >
+                <Text style={styles.saveButtonText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -270,6 +522,12 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
+  allergyButton: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -289,34 +547,32 @@ const styles = StyleSheet.create({
     color: colors.accentBlue,
     fontWeight: typography.medium,
   },
-  emptyEmoji: {
-    fontSize: 64,
-    marginBottom: spacing.md,
-  },
   emptyTitle: {
     fontSize: typography.xl,
-    fontWeight: typography.bold,
+    fontWeight: typography.semibold,
     color: colors.textPrimary,
     marginBottom: spacing.xs,
   },
   emptySubtitle: {
     fontSize: typography.base,
     color: colors.textSecondary,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
-  startOverButton: {
+  shuffleButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.accentBlue,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderRadius: spacing.sm,
     gap: spacing.sm,
   },
-  startOverText: {
+  shuffleButtonText: {
     fontSize: typography.base,
-    fontWeight: typography.semibold,
-    color: colors.textInverse,
+    fontWeight: typography.medium,
+    color: colors.accentBlue,
   },
   footer: {
     paddingVertical: spacing.md,
@@ -325,5 +581,83 @@ const styles = StyleSheet.create({
   footerHint: {
     fontSize: typography.xs,
     color: colors.textMuted,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: typography.lg,
+    fontWeight: typography.semibold,
+    color: colors.textPrimary,
+  },
+  modalClose: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: -spacing.sm,
+  },
+  allergenList: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  allergenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: radii.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
+    marginRight: spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
+  },
+  allergenLabel: {
+    fontSize: typography.base,
+    color: colors.textPrimary,
+  },
+  modalFooter: {
+    padding: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  saveButton: {
+    backgroundColor: colors.accentBlue,
+    height: MIN_TOUCH_TARGET + 4,
+    borderRadius: radii.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+    color: colors.textInverse,
   },
 });

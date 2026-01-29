@@ -7,6 +7,10 @@
 
 import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
 
+// DRM trigger constants
+export const DRM_PASS_THRESHOLD = 3;
+export const DRM_TIME_THRESHOLD_MS = 45000; // 45 seconds
+
 interface FFSessionState {
   selectedMode: Mode | null;
   excludeAllergens: AllergenTag[];
@@ -16,6 +20,9 @@ interface FFSessionState {
   passCount: number;
   dealHistory: string[]; // Recipe IDs shown this session
   currentDealId: string | null;
+  // Phase 3: DRM tracking
+  drmInserted: boolean;
+  dealStartMs: number | null; // When dealing started (for 45s timer)
 }
 
 // Module-level state (singleton)
@@ -27,6 +34,8 @@ let state: FFSessionState = {
   passCount: 0,
   dealHistory: [],
   currentDealId: null,
+  drmInserted: false,
+  dealStartMs: null,
 };
 
 // Subscribers for reactive updates (optional, for future use)
@@ -67,6 +76,14 @@ export function getDealHistory(): string[] {
 
 export function getCurrentDealId(): string | null {
   return state.currentDealId;
+}
+
+export function getDrmInserted(): boolean {
+  return state.drmInserted;
+}
+
+export function getDealStartMs(): number | null {
+  return state.dealStartMs;
 }
 
 export function getSessionState(): Readonly<FFSessionState> {
@@ -133,6 +150,45 @@ export function addToDealHistory(recipeId: string): void {
   notifyListeners();
 }
 
+export function setDrmInserted(value: boolean): void {
+  state.drmInserted = value;
+  notifyListeners();
+}
+
+/**
+ * Mark the start of deal session (for 45s timer)
+ */
+export function markDealStart(): void {
+  if (state.dealStartMs === null) {
+    state.dealStartMs = Date.now();
+    notifyListeners();
+  }
+}
+
+// ============================================
+// DRM TRIGGER LOGIC
+// ============================================
+
+/**
+ * Check if DRM should be triggered.
+ * Pure function - does not modify state.
+ * 
+ * @param passCount - Current pass count
+ * @param elapsedMs - Milliseconds since deal started
+ * @returns true if DRM should be inserted
+ */
+export function shouldTriggerDrm(passCount: number, elapsedMs: number): boolean {
+  return passCount >= DRM_PASS_THRESHOLD || elapsedMs >= DRM_TIME_THRESHOLD_MS;
+}
+
+/**
+ * Get elapsed time since deal started
+ */
+export function getElapsedDealTimeMs(): number {
+  if (state.dealStartMs === null) return 0;
+  return Date.now() - state.dealStartMs;
+}
+
 // ============================================
 // RESET
 // ============================================
@@ -149,6 +205,8 @@ export function resetSession(): void {
     passCount: 0,
     dealHistory: [],
     currentDealId: null,
+    drmInserted: false,
+    dealStartMs: null,
   };
   notifyListeners();
 }
@@ -160,6 +218,8 @@ export function resetDealState(): void {
   state.passCount = 0;
   state.dealHistory = [];
   state.currentDealId = null;
+  state.drmInserted = false;
+  state.dealStartMs = null;
   state.sessionStartTime = Date.now();
   notifyListeners();
 }

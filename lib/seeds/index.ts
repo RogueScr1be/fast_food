@@ -160,3 +160,29 @@ export function getAvailableCount(
   const available = candidates.filter(r => !dealHistory.includes(r.id));
   return available.length;
 }
+
+/**
+ * Pick a DRM meal for rescue mode.
+ * Convenience wrapper for pickDrm with simpler signature.
+ * 
+ * @param excludeAllergensList - Allergens to exclude
+ * @param dealHistory - Optional meal IDs already shown (avoids repeats)
+ * @returns DRM meal or null if none available
+ */
+export function pickDrmMeal(
+  excludeAllergensList: AllergenTag[] = [],
+  dealHistory: string[] = []
+): DrmSeed | null {
+  return pickDrm(dealHistory, excludeAllergensList);
+}
+
+/**
+ * Check if a recipe has allergens that conflict with exclusions
+ */
+export function hasConflictingAllergens(
+  recipe: RecipeSeed | DrmSeed,
+  excludeAllergensList: AllergenTag[]
+): boolean {
+  if (excludeAllergensList.length === 0) return false;
+  return recipe.allergens.some(allergen => excludeAllergensList.includes(allergen));
+}

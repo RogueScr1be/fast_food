@@ -1,14 +1,9 @@
 /**
- * DecisionCard — Swipeable Recipe Card
+ * RescueCard — DRM (Dinner Rescue Mode) Card
  * 
- * Displays a single recipe with swipe-to-pass gestures.
- * Uses React Native Animated + PanResponder for smooth gestures.
- * 
- * Swipe left: "Not feeling it"
- * Swipe right: "Doesn't fit"
- * Tap: Toggle ingredients tray
- * 
- * Design: Calm, OS-like. No emojis, minimal rotation, subtle hints.
+ * Visually distinct rescue card for panic meals.
+ * Slightly warmer surface, "Rescue" badge, calmer motion.
+ * Same interactions: tap expands, swipe = no, CTA = accept.
  */
 
 import React, { useRef } from 'react';
@@ -21,21 +16,21 @@ import {
   Dimensions,
   TouchableOpacity,
 } from 'react-native';
-import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
+import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import type { DrmSeed } from '../lib/seeds/types';
 import { IngredientsTray } from './IngredientsTray';
 import { WhyWhisper } from './WhyWhisper';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
-const HINT_FADE_START = 50; // px before hints start fading in
-const MAX_ROTATION = 3; // degrees - subtle, not "dating app"
+const HINT_FADE_START = 50;
+const MAX_ROTATION = 2; // Even calmer than regular card
 
 export type PassDirection = 'left' | 'right';
 
-interface DecisionCardProps {
-  recipe: RecipeSeed | DrmSeed;
+interface RescueCardProps {
+  meal: DrmSeed;
   whyText: string;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -43,31 +38,31 @@ interface DecisionCardProps {
   onPass: (direction: PassDirection) => void;
 }
 
-export function DecisionCard({
-  recipe,
+export function RescueCard({
+  meal,
   whyText,
   expanded,
   onToggleExpand,
   onAccept,
   onPass,
-}: DecisionCardProps) {
+}: RescueCardProps) {
   const position = useRef(new Animated.ValueXY()).current;
   const swipeDirection = useRef<PassDirection | null>(null);
 
-  // Subtle hint labels - fade in late (after 50px), stay low-contrast
+  // Subtle hint labels
   const leftHintOpacity = position.x.interpolate({
     inputRange: [-SWIPE_THRESHOLD, -HINT_FADE_START, 0],
-    outputRange: [0.6, 0, 0], // max 60% opacity for subtlety
+    outputRange: [0.5, 0, 0],
     extrapolate: 'clamp',
   });
 
   const rightHintOpacity = position.x.interpolate({
     inputRange: [0, HINT_FADE_START, SWIPE_THRESHOLD],
-    outputRange: [0, 0, 0.6],
+    outputRange: [0, 0, 0.5],
     extrapolate: 'clamp',
   });
 
-  // Card rotation during swipe - subtle ±3° max
+  // Card rotation - even calmer ±2°
   const rotation = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
     outputRange: [`-${MAX_ROTATION}deg`, '0deg', `${MAX_ROTATION}deg`],
@@ -78,11 +73,9 @@ export function DecisionCard({
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only capture horizontal gestures
         return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 30;
       },
       onPanResponderGrant: () => {
-        // Reset position offset
         position.setOffset({
           x: (position.x as any)._value,
           y: 0,
@@ -92,7 +85,6 @@ export function DecisionCard({
       onPanResponderMove: (_, gestureState) => {
         position.setValue({ x: gestureState.dx, y: 0 });
         
-        // Track direction for hint
         if (gestureState.dx < -HINT_FADE_START) {
           swipeDirection.current = 'left';
         } else if (gestureState.dx > HINT_FADE_START) {
@@ -105,7 +97,6 @@ export function DecisionCard({
         position.flattenOffset();
 
         if (gestureState.dx > SWIPE_THRESHOLD) {
-          // Swipe right - animate out
           Animated.timing(position, {
             toValue: { x: SCREEN_WIDTH + 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
@@ -115,7 +106,6 @@ export function DecisionCard({
             resetPosition();
           });
         } else if (gestureState.dx < -SWIPE_THRESHOLD) {
-          // Swipe left - animate out
           Animated.timing(position, {
             toValue: { x: -SCREEN_WIDTH - 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
@@ -125,7 +115,6 @@ export function DecisionCard({
             resetPosition();
           });
         } else {
-          // Spring back to center
           Animated.spring(position, {
             toValue: { x: 0, y: 0 },
             friction: 5,
@@ -149,12 +138,9 @@ export function DecisionCard({
     ],
   };
 
-  // Get estimated cost (only on RecipeSeed, not DrmSeed)
-  const estimatedCost = 'estimatedCost' in recipe ? recipe.estimatedCost : null;
-
   return (
     <View style={styles.container}>
-      {/* Swipe Hint Labels - subtle, late fade-in */}
+      {/* Swipe Hint Labels */}
       <Animated.View style={[styles.hintLeft, { opacity: leftHintOpacity }]}>
         <Text style={styles.hintText}>Not feeling it</Text>
       </Animated.View>
@@ -162,40 +148,41 @@ export function DecisionCard({
         <Text style={styles.hintText}>Doesn't fit</Text>
       </Animated.View>
 
-      {/* Main Card */}
+      {/* Main Card - warmer surface */}
       <Animated.View
         style={[styles.card, cardStyle]}
         {...panResponder.panHandlers}
       >
+        {/* Rescue Badge */}
+        <View style={styles.rescueBadge}>
+          <Text style={styles.rescueBadgeText}>Rescue</Text>
+        </View>
+
         {/* Tap Area for Expand */}
         <TouchableOpacity
           style={styles.cardContent}
           onPress={onToggleExpand}
           activeOpacity={0.95}
           accessibilityRole="button"
-          accessibilityLabel={`${recipe.name}. Tap to ${expanded ? 'hide' : 'show'} ingredients`}
+          accessibilityLabel={`${meal.name}. Tap to ${expanded ? 'hide' : 'show'} ingredients`}
         >
-          {/* Recipe Name - prominent, no emoji */}
-          <Text style={styles.recipeName}>{recipe.name}</Text>
+          {/* Meal Name */}
+          <Text style={styles.mealName}>{meal.name}</Text>
 
           {/* Why Whisper */}
           <WhyWhisper text={whyText} />
 
           {/* Meta Info */}
           <View style={styles.metaRow}>
-            <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
-            {estimatedCost && (
-              <>
-                <View style={styles.metaDot} />
-                <Text style={styles.metaText}>{estimatedCost}</Text>
-              </>
-            )}
+            <Text style={styles.metaText}>{meal.estimatedTime}</Text>
+            <View style={styles.metaDot} />
+            <Text style={styles.metaText}>No-stress</Text>
           </View>
         </TouchableOpacity>
 
         {/* Ingredients Tray */}
         <IngredientsTray
-          ingredients={recipe.ingredients}
+          ingredients={meal.ingredients}
           visible={expanded}
         />
 
@@ -223,17 +210,40 @@ const styles = StyleSheet.create({
   card: {
     width: SCREEN_WIDTH - spacing.lg * 2,
     maxWidth: 380,
-    backgroundColor: colors.surface,
+    backgroundColor: '#FFFBF5', // Slightly warmer surface
     borderRadius: radii.xl,
-    ...shadows.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F5EFE6', // Subtle warm border
+  },
+  rescueBadge: {
+    position: 'absolute',
+    top: spacing.md,
+    left: spacing.md,
+    backgroundColor: '#FEF3C7', // Warm yellow bg
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.sm,
+    zIndex: 1,
+  },
+  rescueBadgeText: {
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+    color: '#92400E', // Amber text
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   cardContent: {
     padding: spacing.lg,
-    paddingTop: spacing.xl,
+    paddingTop: spacing.xl + spacing.md, // Extra space for badge
     alignItems: 'center',
   },
-  recipeName: {
+  mealName: {
     fontSize: typography['2xl'],
     fontWeight: typography.bold,
     color: colors.textPrimary,
@@ -257,10 +267,10 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.sm,
   },
   acceptButton: {
-    backgroundColor: colors.accentGreen,
+    backgroundColor: '#F59E0B', // Warm amber CTA
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
-    height: MIN_TOUCH_TARGET + 4, // 52px
+    height: MIN_TOUCH_TARGET + 4,
     borderRadius: radii.md,
     justifyContent: 'center',
     alignItems: 'center',
@@ -270,7 +280,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.bold,
     color: colors.textInverse,
   },
-  // Hint labels - subtle styling
+  // Hint labels
   hintLeft: {
     position: 'absolute',
     left: spacing.md,

@@ -66,7 +66,6 @@ export default function ChecklistScreen() {
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {/* Recipe Card */}
         <View style={styles.card}>
-          <Text style={styles.emoji}>{recipe.emoji}</Text>
           <Text style={styles.recipeName}>{recipe.name}</Text>
           <Text style={styles.metaText}>
             {recipe.estimatedTime} · {'estimatedCost' in recipe ? recipe.estimatedCost : 'Quick'}
@@ -171,10 +170,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
-  },
-  emoji: {
-    fontSize: 48,
-    marginBottom: spacing.sm,
   },
   recipeName: {
     fontSize: typography.xl,

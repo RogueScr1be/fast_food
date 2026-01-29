@@ -14,6 +14,8 @@ import {
   getRecipeById,
   pickNextRecipe,
   getAvailableCount,
+  pickDrmMeal,
+  hasConflictingAllergens,
 } from '../index';
 import { RECIPES, DRM_MEALS } from '../recipes';
 import type { RecipeSeed, AllergenTag, ConstraintTag } from '../types';
@@ -368,6 +370,71 @@ describe('Seed Helpers', () => {
       
       const count = getAvailableCount('fancy', [], dealHistory);
       expect(count).toBe(0);
+    });
+  });
+
+  // Phase 3: DRM helper tests
+  describe('pickDrmMeal', () => {
+    it('returns a DRM meal', () => {
+      const meal = pickDrmMeal([], []);
+      expect(meal).not.toBeNull();
+      expect(meal?.id.startsWith('drm-')).toBe(true);
+    });
+
+    it('respects allergen exclusions', () => {
+      for (let i = 0; i < 10; i++) {
+        const meal = pickDrmMeal(['dairy'], []);
+        if (meal) {
+          expect(meal.allergens).not.toContain('dairy');
+        }
+      }
+    });
+
+    it('avoids meals in deal history', () => {
+      const drm1 = pickDrmMeal([], []);
+      expect(drm1).not.toBeNull();
+      
+      // Pick several more times with first in history
+      for (let i = 0; i < 10; i++) {
+        const meal = pickDrmMeal([], [drm1!.id]);
+        if (meal) {
+          expect(meal.id).not.toBe(drm1!.id);
+        }
+      }
+    });
+
+    it('returns null when all DRM exhausted', () => {
+      const allDrmIds = DRM_MEALS.map(m => m.id);
+      const meal = pickDrmMeal([], allDrmIds);
+      expect(meal).toBeNull();
+    });
+  });
+
+  describe('hasConflictingAllergens', () => {
+    it('returns false when no allergens excluded', () => {
+      const recipe = RECIPES[0];
+      expect(hasConflictingAllergens(recipe, [])).toBe(false);
+    });
+
+    it('returns true when recipe has excluded allergen', () => {
+      // Find a recipe with dairy
+      const dairyRecipe = RECIPES.find(r => r.allergens.includes('dairy'));
+      if (dairyRecipe) {
+        expect(hasConflictingAllergens(dairyRecipe, ['dairy'])).toBe(true);
+      }
+    });
+
+    it('returns false when recipe has no excluded allergens', () => {
+      // Find a recipe without dairy
+      const noDairyRecipe = RECIPES.find(r => !r.allergens.includes('dairy'));
+      if (noDairyRecipe) {
+        expect(hasConflictingAllergens(noDairyRecipe, ['dairy'])).toBe(false);
+      }
+    });
+
+    it('works with DRM meals', () => {
+      const drmMeal = DRM_MEALS[0];
+      expect(hasConflictingAllergens(drmMeal, [])).toBe(false);
     });
   });
 });
