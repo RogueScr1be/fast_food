@@ -10,7 +10,7 @@
  * Follows Design Constitution: calm, OS-like, minimal, elegant.
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,6 @@ import {
   TouchableOpacity,
   Platform,
   SafeAreaView,
-  Pressable,
   Modal,
   ScrollView,
 } from 'react-native';
@@ -44,13 +43,6 @@ const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
   { tag: 'soy', label: 'Soy' },
   { tag: 'shellfish', label: 'Shellfish' },
 ];
-
-/**
- * Check if QA panel is enabled (client-side gate)
- */
-function isQaEnabled(): boolean {
-  return process.env.EXPO_PUBLIC_FF_QA_ENABLED === 'true';
-}
 
 /**
  * Mode Button Component
@@ -121,27 +113,6 @@ export default function TonightScreen() {
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
   const [showHelper, setShowHelper] = useState(false);
   
-  // QA Panel access: Long-press timer
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const LONG_PRESS_DURATION = 2000;
-  
-  /**
-   * Handle title long press for QA panel
-   */
-  const handleTitlePressIn = () => {
-    if (!isQaEnabled()) return;
-    longPressTimer.current = setTimeout(() => {
-      router.push('/qa');
-    }, LONG_PRESS_DURATION);
-  };
-  
-  const handleTitlePressOut = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-  
   /**
    * Handle mode selection
    */
@@ -202,12 +173,7 @@ export default function TonightScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          onPressIn={handleTitlePressIn}
-          onPressOut={handleTitlePressOut}
-        >
-          <Text style={styles.title}>Tonight</Text>
-        </Pressable>
+        <Text style={styles.title}>Tonight</Text>
         <Text style={styles.subtitle}>What kind of dinner?</Text>
       </View>
 
