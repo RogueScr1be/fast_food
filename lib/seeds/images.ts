@@ -13,10 +13,11 @@
 import { ImageSourcePropType } from 'react-native';
 
 /**
- * Default placeholder image when no specific image is available.
- * Uses app icon as fallback - replace with a proper food placeholder later.
+ * Default fallback image - a calm neutral gradient.
+ * 800x600 PNG, ~73KB - intentionally minimal for fast loading.
+ * Replace individual recipe keys with real food photos as available.
  */
-const DEFAULT_IMAGE = require('../../assets/icon.png');
+const FALLBACK_IMAGE = require('../../assets/recipes/_fallback.png');
 
 /**
  * Recipe image registry.
@@ -29,68 +30,68 @@ const DEFAULT_IMAGE = require('../../assets/icon.png');
  */
 export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
   // Fancy recipes
-  'salmon': DEFAULT_IMAGE,
-  'risotto': DEFAULT_IMAGE,
-  'steak': DEFAULT_IMAGE,
-  'scampi': DEFAULT_IMAGE,
-  'chicken-marsala': DEFAULT_IMAGE,
-  'ratatouille': DEFAULT_IMAGE,
+  'salmon': FALLBACK_IMAGE,
+  'risotto': FALLBACK_IMAGE,
+  'steak': FALLBACK_IMAGE,
+  'scampi': FALLBACK_IMAGE,
+  'chicken-marsala': FALLBACK_IMAGE,
+  'ratatouille': FALLBACK_IMAGE,
   
   // Easy recipes
-  'stir-fry': DEFAULT_IMAGE,
-  'pasta-marinara': DEFAULT_IMAGE,
-  'quesadillas': DEFAULT_IMAGE,
-  'fried-rice': DEFAULT_IMAGE,
-  'caprese-salad': DEFAULT_IMAGE,
-  'sheet-pan-chicken': DEFAULT_IMAGE,
+  'stir-fry': FALLBACK_IMAGE,
+  'pasta-marinara': FALLBACK_IMAGE,
+  'quesadillas': FALLBACK_IMAGE,
+  'fried-rice': FALLBACK_IMAGE,
+  'caprese-salad': FALLBACK_IMAGE,
+  'sheet-pan-chicken': FALLBACK_IMAGE,
   
   // Cheap recipes
-  'beans-rice': DEFAULT_IMAGE,
-  'ramen-upgrade': DEFAULT_IMAGE,
-  'potato-soup': DEFAULT_IMAGE,
-  'egg-fried-rice': DEFAULT_IMAGE,
-  'veggie-curry': DEFAULT_IMAGE,
-  'pasta-aglio': DEFAULT_IMAGE,
+  'beans-rice': FALLBACK_IMAGE,
+  'ramen-upgrade': FALLBACK_IMAGE,
+  'potato-soup': FALLBACK_IMAGE,
+  'egg-fried-rice': FALLBACK_IMAGE,
+  'veggie-curry': FALLBACK_IMAGE,
+  'pasta-aglio': FALLBACK_IMAGE,
   
   // DRM (Dinner Rescue Mode) meals
-  'cereal': DEFAULT_IMAGE,
-  'toast-pb': DEFAULT_IMAGE,
-  'grilled-cheese': DEFAULT_IMAGE,
-  'instant-noodles': DEFAULT_IMAGE,
-  'crackers-cheese': DEFAULT_IMAGE,
-  'yogurt-granola': DEFAULT_IMAGE,
-  'banana-pb': DEFAULT_IMAGE,
-  'chips-salsa': DEFAULT_IMAGE,
-  'soup-can': DEFAULT_IMAGE,
-  'sandwich': DEFAULT_IMAGE,
-  'frozen-pizza': DEFAULT_IMAGE,
-  'oatmeal': DEFAULT_IMAGE,
+  'cereal': FALLBACK_IMAGE,
+  'toast-pb': FALLBACK_IMAGE,
+  'grilled-cheese': FALLBACK_IMAGE,
+  'instant-noodles': FALLBACK_IMAGE,
+  'crackers-cheese': FALLBACK_IMAGE,
+  'yogurt-granola': FALLBACK_IMAGE,
+  'banana-pb': FALLBACK_IMAGE,
+  'chips-salsa': FALLBACK_IMAGE,
+  'soup-can': FALLBACK_IMAGE,
+  'sandwich': FALLBACK_IMAGE,
+  'frozen-pizza': FALLBACK_IMAGE,
+  'oatmeal': FALLBACK_IMAGE,
 };
 
 /**
  * Get image source for a recipe by key.
- * Returns default placeholder if key is missing or not found.
+ * Returns fallback placeholder if key is missing or not found.
  * 
  * @param imageKey - Key from RecipeSeed or DrmSeed
  * @returns ImageSourcePropType for use with Image component
  */
 export function getImageSource(imageKey?: string): ImageSourcePropType {
   if (!imageKey) {
-    return DEFAULT_IMAGE;
+    return FALLBACK_IMAGE;
   }
-  return RECIPE_IMAGES[imageKey] ?? DEFAULT_IMAGE;
+  return RECIPE_IMAGES[imageKey] ?? FALLBACK_IMAGE;
 }
 
 /**
- * Check if a real image exists for a key (not just default).
+ * Check if a real image exists for a key (not just fallback).
  * Useful for conditional rendering when we have mixed real/placeholder images.
  */
 export function hasRealImage(imageKey?: string): boolean {
   if (!imageKey) return false;
   const source = RECIPE_IMAGES[imageKey];
-  // For now, all are DEFAULT_IMAGE, so return false
+  // For now, all are FALLBACK_IMAGE, so return false
   // When real images are added, this will return true for those
-  return source !== DEFAULT_IMAGE;
+  return source !== FALLBACK_IMAGE;
 }
 
 /**

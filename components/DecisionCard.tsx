@@ -33,7 +33,12 @@ const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
 const HINT_FADE_START = 50; // px before hints start fading in
 const MAX_ROTATION = 3; // degrees - subtle, not "dating app"
-const HERO_HEIGHT = 180; // Hero image height
+
+// Responsive hero sizing
+const CARD_WIDTH = Math.min(SCREEN_WIDTH - spacing.lg * 2, 380);
+const HERO_ASPECT_RATIO = 4 / 3; // Standard photo ratio
+const HERO_HEIGHT_RAW = CARD_WIDTH / HERO_ASPECT_RATIO;
+const HERO_HEIGHT = Math.max(160, Math.min(240, HERO_HEIGHT_RAW)); // Clamp 160-240
 
 export type PassDirection = 'left' | 'right';
 
@@ -261,9 +266,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '70%',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    // Simulate gradient effect with opacity
+    height: '45%',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    // Dark overlay for text legibility on bright images
   },
   heroContent: {
     position: 'absolute',

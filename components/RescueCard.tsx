@@ -28,7 +28,12 @@ const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
 const HINT_FADE_START = 50;
 const MAX_ROTATION = 2; // Even calmer than regular card
-const HERO_HEIGHT = 160; // Slightly smaller hero for rescue
+
+// Responsive hero sizing (slightly smaller than DecisionCard)
+const CARD_WIDTH = Math.min(SCREEN_WIDTH - spacing.lg * 2, 380);
+const HERO_ASPECT_RATIO = 4 / 3;
+const HERO_HEIGHT_RAW = CARD_WIDTH / HERO_ASPECT_RATIO * 0.9; // 90% of standard
+const HERO_HEIGHT = Math.max(160, Math.min(220, HERO_HEIGHT_RAW)); // Clamp 160-220
 
 export type PassDirection = 'left' | 'right';
 
@@ -254,8 +259,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '70%',
-    backgroundColor: 'rgba(146, 64, 14, 0.4)', // Warm amber tint
+    height: '45%',
+    backgroundColor: 'rgba(120, 53, 15, 0.50)', // Warm amber tint, 50% opacity
   },
   rescueBadge: {
     position: 'absolute',
