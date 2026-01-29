@@ -17,7 +17,7 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  Animated,
+  Image,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
@@ -27,6 +27,7 @@ import {
   reorderForPrep, 
   calculateProgress,
 } from '../../lib/seeds';
+import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 
 type OrderMode = 'cook' | 'prep';
@@ -134,7 +135,7 @@ export default function ChecklistScreen() {
         <View style={[styles.progressBar, { width: `${progress}%` }]} />
       </View>
 
-      {/* Header */}
+      {/* Header with thumbnail */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerButton}
@@ -145,10 +146,19 @@ export default function ChecklistScreen() {
           <ArrowLeft size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{meal.name}</Text>
-          <Text style={styles.headerSubtitle}>
-            {completedCount} of {totalSteps} steps
-          </Text>
+          <View style={styles.headerWithThumb}>
+            <Image
+              source={getImageSource(meal.imageKey)}
+              style={styles.headerThumb}
+              resizeMode="cover"
+            />
+            <View style={styles.headerText}>
+              <Text style={styles.headerTitle} numberOfLines={1}>{meal.name}</Text>
+              <Text style={styles.headerSubtitle}>
+                {completedCount} of {totalSteps} steps
+              </Text>
+            </View>
+          </View>
         </View>
         <View style={styles.headerButton} />
       </View>
@@ -297,14 +307,26 @@ const styles = StyleSheet.create({
   },
   headerCenter: {
     flex: 1,
-    alignItems: 'center',
     paddingHorizontal: spacing.sm,
   },
+  headerWithThumb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerThumb: {
+    width: 40,
+    height: 40,
+    borderRadius: radii.sm,
+    backgroundColor: colors.mutedLight,
+    marginRight: spacing.sm,
+  },
+  headerText: {
+    flex: 1,
+  },
   headerTitle: {
-    fontSize: typography.lg,
+    fontSize: typography.base,
     fontWeight: typography.bold,
     color: colors.textPrimary,
-    textAlign: 'center',
   },
   headerSubtitle: {
     fontSize: typography.xs,

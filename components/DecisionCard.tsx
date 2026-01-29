@@ -1,5 +1,5 @@
 /**
- * DecisionCard — Swipeable Recipe Card
+ * DecisionCard — Swipeable Recipe Card with Hero Image
  * 
  * Displays a single recipe with swipe-to-pass gestures.
  * Uses React Native Animated + PanResponder for smooth gestures.
@@ -8,7 +8,7 @@
  * Swipe right: "Doesn't fit"
  * Tap: Toggle ingredients tray
  * 
- * Design: Calm, OS-like. No emojis, minimal rotation, subtle hints.
+ * Design: Calm, OS-like. Hero image with subtle overlay, clean typography.
  */
 
 import React, { useRef } from 'react';
@@ -20,9 +20,11 @@ import {
   PanResponder,
   Dimensions,
   TouchableOpacity,
+  Image,
 } from 'react-native';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
+import { getImageSource } from '../lib/seeds/images';
 import { IngredientsTray } from './IngredientsTray';
 import { WhyWhisper } from './WhyWhisper';
 
@@ -31,6 +33,7 @@ const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
 const HINT_FADE_START = 50; // px before hints start fading in
 const MAX_ROTATION = 3; // degrees - subtle, not "dating app"
+const HERO_HEIGHT = 180; // Hero image height
 
 export type PassDirection = 'left' | 'right';
 
@@ -151,6 +154,9 @@ export function DecisionCard({
 
   // Get estimated cost (only on RecipeSeed, not DrmSeed)
   const estimatedCost = 'estimatedCost' in recipe ? recipe.estimatedCost : null;
+  
+  // Get image source
+  const imageSource = getImageSource(recipe.imageKey);
 
   return (
     <View style={styles.container}>
@@ -167,29 +173,40 @@ export function DecisionCard({
         style={[styles.card, cardStyle]}
         {...panResponder.panHandlers}
       >
-        {/* Tap Area for Expand */}
+        {/* Hero Image Section */}
         <TouchableOpacity
-          style={styles.cardContent}
-          onPress={onToggleExpand}
           activeOpacity={0.95}
+          onPress={onToggleExpand}
           accessibilityRole="button"
           accessibilityLabel={`${recipe.name}. Tap to ${expanded ? 'hide' : 'show'} ingredients`}
         >
-          {/* Recipe Name - prominent, no emoji */}
-          <Text style={styles.recipeName}>{recipe.name}</Text>
+          <View style={styles.heroContainer}>
+            <Image
+              source={imageSource}
+              style={styles.heroImage}
+              resizeMode="cover"
+            />
+            {/* Dark gradient overlay for text legibility */}
+            <View style={styles.heroOverlay} />
+            
+            {/* Text on overlay */}
+            <View style={styles.heroContent}>
+              <Text style={styles.recipeName}>{recipe.name}</Text>
+              <WhyWhisper text={whyText} light />
+            </View>
+          </View>
 
-          {/* Why Whisper */}
-          <WhyWhisper text={whyText} />
-
-          {/* Meta Info */}
-          <View style={styles.metaRow}>
-            <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
-            {estimatedCost && (
-              <>
-                <View style={styles.metaDot} />
-                <Text style={styles.metaText}>{estimatedCost}</Text>
-              </>
-            )}
+          {/* Meta Info below image */}
+          <View style={styles.metaSection}>
+            <View style={styles.metaRow}>
+              <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
+              {estimatedCost && (
+                <>
+                  <View style={styles.metaDot} />
+                  <Text style={styles.metaText}>{estimatedCost}</Text>
+                </>
+              )}
+            </View>
           </View>
         </TouchableOpacity>
 
@@ -228,22 +245,51 @@ const styles = StyleSheet.create({
     ...shadows.lg,
     overflow: 'hidden',
   },
-  cardContent: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
-    alignItems: 'center',
+  // Hero image section
+  heroContainer: {
+    height: HERO_HEIGHT,
+    width: '100%',
+    position: 'relative',
+    backgroundColor: colors.mutedLight, // Fallback bg
+  },
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  heroOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '70%',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    // Simulate gradient effect with opacity
+  },
+  heroContent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: spacing.md,
   },
   recipeName: {
     fontSize: typography['2xl'],
     fontWeight: typography.bold,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
+    color: colors.textInverse,
+    textAlign: 'left',
+    marginBottom: spacing.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  // Meta section below image
+  metaSection: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.md,
   },
   metaText: {
     fontSize: typography.sm,
