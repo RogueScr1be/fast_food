@@ -1,11 +1,13 @@
 /**
  * Fast Food Session State
  * 
- * Simple module singleton for storing session state across Phase 1–4.
- * No external dependencies - just a plain object with getters/setters.
+ * Simple module singleton for storing session state across Phase 1–6.
+ * Persisted prefs: selectedMode, constraints, excludeAllergens
+ * Ephemeral state: passCount, dealHistory, currentDealId, drmInserted, dealStartMs
  */
 
 import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
+import { loadPrefs, savePrefs, clearPrefs } from './persist';
 
 // DRM trigger constants
 export const DRM_PASS_THRESHOLD = 3;
@@ -16,11 +18,11 @@ interface FFSessionState {
   excludeAllergens: AllergenTag[];
   constraints: ConstraintTag[];
   sessionStartTime: number | null;
-  // Phase 2: Deal tracking
+  // Phase 2: Deal tracking (ephemeral)
   passCount: number;
   dealHistory: string[]; // Recipe IDs shown this session
   currentDealId: string | null;
-  // Phase 3: DRM tracking
+  // Phase 3: DRM tracking (ephemeral)
   drmInserted: boolean;
   dealStartMs: number | null; // When dealing started (for 45s timer)
 }
@@ -38,12 +40,48 @@ let state: FFSessionState = {
   dealStartMs: null,
 };
 
-// Subscribers for reactive updates (optional, for future use)
+// Hydration tracking
+let hydrated = false;
+
+// Subscribers for reactive updates
 type Listener = () => void;
 const listeners: Set<Listener> = new Set();
 
 function notifyListeners() {
   listeners.forEach(listener => listener());
+}
+
+// ============================================
+// HYDRATION
+// ============================================
+
+/**
+ * Check if session state has been hydrated from storage
+ */
+export function isHydrated(): boolean {
+  return hydrated;
+}
+
+/**
+ * Load persisted preferences from storage and update state.
+ * Call once on app launch (e.g., in root layout).
+ * Safe to call multiple times - only hydrates once.
+ */
+export async function hydrateFromStorage(): Promise<void> {
+  if (hydrated) return;
+  
+  try {
+    const prefs = await loadPrefs();
+    state.selectedMode = prefs.selectedMode;
+    state.constraints = [...prefs.constraints];
+    state.excludeAllergens = [...prefs.excludeAllergens];
+    hydrated = true;
+    notifyListeners();
+  } catch (error) {
+    // Mark as hydrated even on error to prevent retry loops
+    hydrated = true;
+    console.warn('[ffSession] Hydration failed:', error);
+  }
 }
 
 // ============================================
@@ -99,28 +137,38 @@ export function setSelectedMode(mode: Mode | null): void {
   if (mode && !state.sessionStartTime) {
     state.sessionStartTime = Date.now();
   }
+  // Persist preference
+  savePrefs({ selectedMode: mode });
   notifyListeners();
 }
 
 export function setExcludeAllergens(allergens: AllergenTag[]): void {
   state.excludeAllergens = [...allergens];
+  // Persist preference
+  savePrefs({ excludeAllergens: allergens });
   notifyListeners();
 }
 
 export function addExcludeAllergen(allergen: AllergenTag): void {
   if (!state.excludeAllergens.includes(allergen)) {
     state.excludeAllergens = [...state.excludeAllergens, allergen];
+    // Persist preference
+    savePrefs({ excludeAllergens: state.excludeAllergens });
     notifyListeners();
   }
 }
 
 export function removeExcludeAllergen(allergen: AllergenTag): void {
   state.excludeAllergens = state.excludeAllergens.filter(a => a !== allergen);
+  // Persist preference
+  savePrefs({ excludeAllergens: state.excludeAllergens });
   notifyListeners();
 }
 
 export function setConstraints(constraints: ConstraintTag[]): void {
   state.constraints = [...constraints];
+  // Persist preference
+  savePrefs({ constraints });
   notifyListeners();
 }
 
@@ -130,6 +178,8 @@ export function toggleConstraint(constraint: ConstraintTag): void {
   } else {
     state.constraints = [...state.constraints, constraint];
   }
+  // Persist preference
+  savePrefs({ constraints: state.constraints });
   notifyListeners();
 }
 
@@ -194,7 +244,32 @@ export function getElapsedDealTimeMs(): number {
 // ============================================
 
 /**
- * Full session reset (back to mode selection)
+ * Reset deal state only (keep mode + allergens + constraints, restart dealing).
+ * Use this for "Shuffle again" or after completing a meal.
+ * Persisted prefs remain unchanged.
+ */
+export function resetTonight(): void {
+  state.passCount = 0;
+  state.dealHistory = [];
+  state.currentDealId = null;
+  state.drmInserted = false;
+  state.dealStartMs = null;
+  state.sessionStartTime = Date.now();
+  notifyListeners();
+}
+
+/**
+ * Alias for resetTonight() for backward compatibility
+ * @deprecated Use resetTonight() instead
+ */
+export function resetDealState(): void {
+  resetTonight();
+}
+
+/**
+ * Full session reset (back to mode selection).
+ * Clears persisted prefs AND ephemeral deal state.
+ * Use this for complete "start fresh" behavior.
  */
 export function resetSession(): void {
   state = {
@@ -208,20 +283,17 @@ export function resetSession(): void {
     drmInserted: false,
     dealStartMs: null,
   };
+  // Clear persisted prefs
+  clearPrefs();
   notifyListeners();
 }
 
 /**
- * Reset deal state only (keep mode + allergens, restart dealing)
+ * Full reset including persisted preferences.
+ * Alias for resetSession() with clearer intent.
  */
-export function resetDealState(): void {
-  state.passCount = 0;
-  state.dealHistory = [];
-  state.currentDealId = null;
-  state.drmInserted = false;
-  state.dealStartMs = null;
-  state.sessionStartTime = Date.now();
-  notifyListeners();
+export function resetAll(): void {
+  resetSession();
 }
 
 // ============================================
@@ -231,4 +303,16 @@ export function resetDealState(): void {
 export function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+// ============================================
+// TEST UTILITIES (only for unit tests)
+// ============================================
+
+/**
+ * Reset hydration state for testing.
+ * DO NOT use in production code.
+ */
+export function __resetHydrationForTest(): void {
+  hydrated = false;
 }
