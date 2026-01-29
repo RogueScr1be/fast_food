@@ -10,7 +10,7 @@
  * Follows Design Constitution: calm, OS-like, minimal, elegant.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,12 +20,13 @@ import {
   SafeAreaView,
   Pressable,
   Modal,
-  Animated,
   ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, Utensils, Coins, AlertCircle, X, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { ThinProgressBar } from '../../components/ThinProgressBar';
+import { PrimaryButton } from '../../components/PrimaryButton';
 import {
   setSelectedMode,
   getSelectedMode,
@@ -120,21 +121,9 @@ export default function TonightScreen() {
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
   const [showHelper, setShowHelper] = useState(false);
   
-  // Progress bar animation
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  
   // QA Panel access: Long-press timer
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const LONG_PRESS_DURATION = 2000;
-  
-  // Animate progress bar when mode changes
-  useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: selectedMode ? 1 : 0,
-      duration: 400,
-      useNativeDriver: false,
-    }).start();
-  }, [selectedMode, progressAnim]);
   
   /**
    * Handle title long press for QA panel
@@ -208,12 +197,6 @@ export default function TonightScreen() {
   const cancelAllergyModal = () => {
     setShowAllergyModal(false);
   };
-  
-  // Progress bar width interpolation
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -286,10 +269,11 @@ export default function TonightScreen() {
 
       {/* CTA Section */}
       <View style={styles.ctaSection}>
-        {/* Subtle Progress Bar */}
-        <View style={styles.progressContainer}>
-          <Animated.View
-            style={[styles.progressBar, { width: progressWidth }]}
+        {/* Progress Bar */}
+        <View style={styles.progressWrapper}>
+          <ThinProgressBar
+            value={selectedMode ? 1 : 0}
+            accessibilityLabel="Mode selection progress"
           />
         </View>
 
@@ -299,18 +283,11 @@ export default function TonightScreen() {
         )}
 
         {/* Primary CTA */}
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            !selectedMode && styles.primaryButtonMuted,
-          ]}
+        <PrimaryButton
+          label="Decide for Me"
           onPress={handleDecide}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Decide for me"
-        >
-          <Text style={styles.primaryButtonText}>Decide for Me</Text>
-        </TouchableOpacity>
+          variant={selectedMode ? 'primary' : 'muted'}
+        />
       </View>
 
       {/* Allergy Modal */}
@@ -459,41 +436,14 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.xl,
     paddingTop: spacing.md,
   },
-  progressContainer: {
-    height: 3,
-    backgroundColor: colors.borderSubtle,
-    borderRadius: radii.full,
+  progressWrapper: {
     marginBottom: spacing.md,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: colors.accentGreen,
-    borderRadius: radii.full,
   },
   helperText: {
     fontSize: typography.sm,
     color: colors.textMuted,
     textAlign: 'center',
     marginBottom: spacing.sm,
-  },
-  primaryButton: {
-    backgroundColor: colors.accentBlue,
-    height: MIN_TOUCH_TARGET + 8, // 56px
-    borderRadius: radii.lg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadows.lg,
-  },
-  primaryButtonMuted: {
-    backgroundColor: colors.muted,
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  primaryButtonText: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    color: colors.textInverse,
   },
   
   // Modal

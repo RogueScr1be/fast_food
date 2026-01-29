@@ -29,6 +29,8 @@ import {
 } from '../../lib/seeds';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
+import { ThinProgressBar } from '../../components/ThinProgressBar';
+import { PrimaryButton } from '../../components/PrimaryButton';
 
 type OrderMode = 'cook' | 'prep';
 
@@ -128,12 +130,16 @@ export default function ChecklistScreen() {
   // Get estimated cost (only on RecipeSeed, not DrmSeed)
   const estimatedCost = 'estimatedCost' in meal ? meal.estimatedCost : null;
 
+  // Progress value (0-1)
+  const progressValue = progress / 100;
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Progress Bar - thin, quiet */}
-      <View style={styles.progressContainer}>
-        <View style={[styles.progressBar, { width: `${progress}%` }]} />
-      </View>
+      {/* Progress Bar */}
+      <ThinProgressBar
+        value={progressValue}
+        accessibilityLabel={`Cooking progress: ${completedCount} of ${totalSteps} steps`}
+      />
 
       {/* Header with thumbnail */}
       <View style={styles.header}>
@@ -252,25 +258,13 @@ export default function ChecklistScreen() {
 
       {/* Done Button */}
       <View style={styles.footer}>
-        <TouchableOpacity
-          style={[
-            styles.doneButton,
-            !allComplete && styles.doneButtonDisabled,
-          ]}
+        <PrimaryButton
+          label={allComplete ? "Done" : `${totalSteps - completedCount} steps left`}
           onPress={handleDone}
           disabled={!allComplete}
-          accessibilityRole="button"
+          icon={<Check size={20} color={allComplete ? colors.textInverse : colors.textMuted} />}
           accessibilityLabel={allComplete ? "Done cooking" : "Complete all steps first"}
-          accessibilityState={{ disabled: !allComplete }}
-        >
-          <Check size={20} color={allComplete ? colors.textInverse : colors.textMuted} />
-          <Text style={[
-            styles.doneButtonText,
-            !allComplete && styles.doneButtonTextDisabled,
-          ]}>
-            {allComplete ? "Done" : `${totalSteps - completedCount} steps left`}
-          </Text>
-        </TouchableOpacity>
+        />
       </View>
     </SafeAreaView>
   );
@@ -280,15 +274,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-  },
-  // Progress bar - thin and quiet
-  progressContainer: {
-    height: 3,
-    backgroundColor: colors.mutedLight,
-  },
-  progressBar: {
-    height: 3,
-    backgroundColor: colors.accentGreen,
   },
   // Header
   header: {
@@ -340,14 +325,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     backgroundColor: colors.mutedLight,
     borderRadius: radii.md,
-    padding: 2,
+    padding: 3,
   },
   toggleButton: {
     flex: 1,
-    height: MIN_TOUCH_TARGET - 8,
+    height: MIN_TOUCH_TARGET - 6,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.md - 2,
+    borderRadius: radii.sm,
   },
   toggleButtonActive: {
     backgroundColor: colors.surface,
@@ -445,26 +430,6 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.borderSubtle,
-  },
-  doneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accentGreen,
-    height: MIN_TOUCH_TARGET + 8,
-    borderRadius: radii.md,
-    gap: spacing.sm,
-  },
-  doneButtonDisabled: {
-    backgroundColor: colors.mutedLight,
-  },
-  doneButtonText: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    color: colors.textInverse,
-  },
-  doneButtonTextDisabled: {
-    color: colors.textMuted,
   },
   // Error state
   centered: {

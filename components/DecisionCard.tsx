@@ -311,13 +311,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentGreen,
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
-    height: MIN_TOUCH_TARGET + 4, // 52px
-    borderRadius: radii.md,
+    height: MIN_TOUCH_TARGET + 8, // 56px - consistent with PrimaryButton
+    borderRadius: radii.lg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   acceptButtonText: {
-    fontSize: typography.base,
+    fontSize: typography.lg,
     fontWeight: typography.bold,
     color: colors.textInverse,
   },
