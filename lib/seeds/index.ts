@@ -186,3 +186,53 @@ export function hasConflictingAllergens(
   if (excludeAllergensList.length === 0) return false;
   return recipe.allergens.some(allergen => excludeAllergensList.includes(allergen));
 }
+
+/**
+ * Get any meal (recipe or DRM) by ID.
+ * Unified fetch for checklist screen.
+ */
+export function getAnyMealById(id: string): RecipeSeed | DrmSeed | null {
+  return getRecipeById(id);
+}
+
+/**
+ * Check if a step is a "prep" step based on keywords.
+ * Used for Cook/Prep toggle reordering.
+ */
+const PREP_KEYWORDS = [
+  'chop', 'slice', 'dice', 'prep', 'wash', 'measure', 
+  'mix', 'whisk', 'preheat', 'set aside', 'marinate',
+  'mince', 'grate', 'julienne', 'cut', 'rinse', 'drain'
+];
+
+export function isPrepStep(step: string): boolean {
+  const lowerStep = step.toLowerCase();
+  return PREP_KEYWORDS.some(keyword => lowerStep.includes(keyword));
+}
+
+/**
+ * Reorder steps for prep-first mode.
+ * Stable sort: prep steps first (in original order), then cook steps (in original order).
+ */
+export function reorderForPrep(steps: string[]): string[] {
+  const prepSteps: string[] = [];
+  const cookSteps: string[] = [];
+  
+  steps.forEach(step => {
+    if (isPrepStep(step)) {
+      prepSteps.push(step);
+    } else {
+      cookSteps.push(step);
+    }
+  });
+  
+  return [...prepSteps, ...cookSteps];
+}
+
+/**
+ * Calculate progress percentage from completed count.
+ */
+export function calculateProgress(completed: number, total: number): number {
+  if (total === 0) return 0;
+  return Math.round((completed / total) * 100);
+}

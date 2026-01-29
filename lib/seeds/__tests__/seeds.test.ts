@@ -16,6 +16,10 @@ import {
   getAvailableCount,
   pickDrmMeal,
   hasConflictingAllergens,
+  getAnyMealById,
+  isPrepStep,
+  reorderForPrep,
+  calculateProgress,
 } from '../index';
 import { RECIPES, DRM_MEALS } from '../recipes';
 import type { RecipeSeed, AllergenTag, ConstraintTag } from '../types';
@@ -435,6 +439,137 @@ describe('Seed Helpers', () => {
     it('works with DRM meals', () => {
       const drmMeal = DRM_MEALS[0];
       expect(hasConflictingAllergens(drmMeal, [])).toBe(false);
+    });
+  });
+
+  // Phase 4: Checklist helper tests
+  describe('getAnyMealById', () => {
+    it('returns RecipeSeed for recipe id', () => {
+      const meal = getAnyMealById('fancy-1');
+      expect(meal).not.toBeNull();
+      expect(meal?.id).toBe('fancy-1');
+      expect('mode' in meal!).toBe(true); // RecipeSeed has mode
+    });
+
+    it('returns DrmSeed for drm id', () => {
+      const meal = getAnyMealById('drm-1');
+      expect(meal).not.toBeNull();
+      expect(meal?.id).toBe('drm-1');
+      expect('mode' in meal!).toBe(false); // DrmSeed doesn't have mode
+    });
+
+    it('returns null for unknown id', () => {
+      const meal = getAnyMealById('unknown-999');
+      expect(meal).toBeNull();
+    });
+  });
+
+  describe('isPrepStep', () => {
+    it('identifies prep keywords', () => {
+      expect(isPrepStep('Chop the onions')).toBe(true);
+      expect(isPrepStep('Slice the tomatoes')).toBe(true);
+      expect(isPrepStep('Dice the peppers')).toBe(true);
+      expect(isPrepStep('Preheat oven to 400F')).toBe(true);
+      expect(isPrepStep('Wash and rinse the vegetables')).toBe(true);
+      expect(isPrepStep('Measure out 2 cups flour')).toBe(true);
+      expect(isPrepStep('Mix the dry ingredients')).toBe(true);
+      expect(isPrepStep('Whisk the eggs')).toBe(true);
+    });
+
+    it('identifies cook/non-prep steps', () => {
+      expect(isPrepStep('Cook for 10 minutes')).toBe(false);
+      expect(isPrepStep('Bake until golden')).toBe(false);
+      expect(isPrepStep('Simmer on low heat')).toBe(false);
+      expect(isPrepStep('Serve immediately')).toBe(false);
+      expect(isPrepStep('Let cool for 5 minutes')).toBe(false);
+    });
+
+    it('is case-insensitive', () => {
+      expect(isPrepStep('CHOP the onions')).toBe(true);
+      expect(isPrepStep('Chop the ONIONS')).toBe(true);
+    });
+  });
+
+  describe('reorderForPrep', () => {
+    it('moves prep steps before cook steps', () => {
+      const steps = [
+        'Cook for 10 minutes',
+        'Chop the onions',
+        'Bake until golden',
+        'Slice the tomatoes',
+        'Serve immediately',
+      ];
+      
+      const reordered = reorderForPrep(steps);
+      
+      // First two should be prep steps
+      expect(reordered[0]).toBe('Chop the onions');
+      expect(reordered[1]).toBe('Slice the tomatoes');
+      // Rest should be cook steps in original order
+      expect(reordered[2]).toBe('Cook for 10 minutes');
+      expect(reordered[3]).toBe('Bake until golden');
+      expect(reordered[4]).toBe('Serve immediately');
+    });
+
+    it('maintains original order within prep and cook groups', () => {
+      const steps = [
+        'Cook step 1',
+        'Chop step 1',
+        'Cook step 2',
+        'Dice step 2',
+        'Slice step 3',
+      ];
+      
+      const reordered = reorderForPrep(steps);
+      
+      // Prep steps should maintain their relative order
+      expect(reordered[0]).toBe('Chop step 1');
+      expect(reordered[1]).toBe('Dice step 2');
+      expect(reordered[2]).toBe('Slice step 3');
+      // Cook steps should maintain their relative order
+      expect(reordered[3]).toBe('Cook step 1');
+      expect(reordered[4]).toBe('Cook step 2');
+    });
+
+    it('returns same order when no prep steps', () => {
+      const steps = ['Cook for 10 minutes', 'Bake until golden', 'Serve'];
+      const reordered = reorderForPrep(steps);
+      expect(reordered).toEqual(steps);
+    });
+
+    it('returns same order when all prep steps', () => {
+      const steps = ['Chop onions', 'Slice tomatoes', 'Dice peppers'];
+      const reordered = reorderForPrep(steps);
+      expect(reordered).toEqual(steps);
+    });
+
+    it('handles empty array', () => {
+      expect(reorderForPrep([])).toEqual([]);
+    });
+  });
+
+  describe('calculateProgress', () => {
+    it('returns 0 for no completed steps', () => {
+      expect(calculateProgress(0, 5)).toBe(0);
+    });
+
+    it('returns 100 for all completed steps', () => {
+      expect(calculateProgress(5, 5)).toBe(100);
+    });
+
+    it('returns correct percentage for partial completion', () => {
+      expect(calculateProgress(1, 4)).toBe(25);
+      expect(calculateProgress(2, 4)).toBe(50);
+      expect(calculateProgress(3, 4)).toBe(75);
+    });
+
+    it('rounds to nearest integer', () => {
+      expect(calculateProgress(1, 3)).toBe(33);
+      expect(calculateProgress(2, 3)).toBe(67);
+    });
+
+    it('handles zero total', () => {
+      expect(calculateProgress(0, 0)).toBe(0);
     });
   });
 });

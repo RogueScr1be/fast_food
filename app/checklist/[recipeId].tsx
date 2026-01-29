@@ -1,11 +1,14 @@
 /**
- * Checklist Screen — Placeholder (Phase 2)
+ * Checklist Screen — Step-by-Step Cooking Guide
  * 
- * This screen will show the cooking checklist in Phase 4.
- * For now, displays recipe info and placeholder message.
+ * Phase 4: Real checklist with progress tracking.
+ * - Thin progress bar at top
+ * - Cook/Prep toggle for step ordering
+ * - Checkable step list
+ * - Done button when all complete
  */
 
-import React from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,27 +17,101 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
-import { getRecipeById } from '../../lib/seeds';
+import { 
+  getAnyMealById, 
+  reorderForPrep, 
+  calculateProgress,
+} from '../../lib/seeds';
 import { resetDealState } from '../../lib/state/ffSession';
+
+type OrderMode = 'cook' | 'prep';
+
+interface StepState {
+  text: string;
+  completed: boolean;
+  originalIndex: number;
+}
 
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
-  const recipe = recipeId ? getRecipeById(recipeId) : null;
+  const meal = recipeId ? getAnyMealById(recipeId) : null;
+  
+  // Order mode: cook (original) vs prep (prep-first)
+  const [orderMode, setOrderMode] = useState<OrderMode>('cook');
+  
+  // Track completed steps by original index
+  const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
 
-  const handleDone = () => {
+  // Compute ordered steps based on mode
+  const orderedSteps: StepState[] = useMemo(() => {
+    if (!meal) return [];
+    
+    const originalSteps = meal.steps;
+    
+    if (orderMode === 'cook') {
+      // Original order
+      return originalSteps.map((text, index) => ({
+        text,
+        completed: completedIndices.has(index),
+        originalIndex: index,
+      }));
+    } else {
+      // Prep-first order
+      const reordered = reorderForPrep(originalSteps);
+      return reordered.map((text) => {
+        const originalIndex = originalSteps.indexOf(text);
+        return {
+          text,
+          completed: completedIndices.has(originalIndex),
+          originalIndex,
+        };
+      });
+    }
+  }, [meal, orderMode, completedIndices]);
+
+  // Progress calculation
+  const totalSteps = meal?.steps.length || 0;
+  const completedCount = completedIndices.size;
+  const progress = calculateProgress(completedCount, totalSteps);
+  const allComplete = completedCount === totalSteps && totalSteps > 0;
+
+  /**
+   * Toggle step completion
+   */
+  const toggleStep = useCallback((originalIndex: number) => {
+    setCompletedIndices(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(originalIndex)) {
+        newSet.delete(originalIndex);
+      } else {
+        newSet.add(originalIndex);
+      }
+      return newSet;
+    });
+  }, []);
+
+  /**
+   * Handle Done - reset deal state and return to Tonight
+   */
+  const handleDone = useCallback(() => {
     resetDealState();
     router.replace('/(tabs)/tonight');
-  };
+  }, []);
 
-  const handleBack = () => {
+  /**
+   * Handle Back
+   */
+  const handleBack = useCallback(() => {
     router.back();
-  };
+  }, []);
 
-  if (!recipe) {
+  // Error state
+  if (!meal) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centered}>
@@ -47,8 +124,16 @@ export default function ChecklistScreen() {
     );
   }
 
+  // Get estimated cost (only on RecipeSeed, not DrmSeed)
+  const estimatedCost = 'estimatedCost' in meal ? meal.estimatedCost : null;
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* Progress Bar - thin, quiet */}
+      <View style={styles.progressContainer}>
+        <View style={[styles.progressBar, { width: `${progress}%` }]} />
+      </View>
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -59,51 +144,122 @@ export default function ChecklistScreen() {
         >
           <ArrowLeft size={24} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Checklist</Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle} numberOfLines={1}>{meal.name}</Text>
+          <Text style={styles.headerSubtitle}>
+            {completedCount} of {totalSteps} steps
+          </Text>
+        </View>
         <View style={styles.headerButton} />
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        {/* Recipe Card */}
-        <View style={styles.card}>
-          <Text style={styles.recipeName}>{recipe.name}</Text>
-          <Text style={styles.metaText}>
-            {recipe.estimatedTime} · {'estimatedCost' in recipe ? recipe.estimatedCost : 'Quick'}
+      {/* Cook/Prep Toggle */}
+      <View style={styles.toggleContainer}>
+        <TouchableOpacity
+          style={[
+            styles.toggleButton,
+            orderMode === 'cook' && styles.toggleButtonActive,
+          ]}
+          onPress={() => setOrderMode('cook')}
+          accessibilityRole="button"
+          accessibilityState={{ selected: orderMode === 'cook' }}
+        >
+          <Text style={[
+            styles.toggleText,
+            orderMode === 'cook' && styles.toggleTextActive,
+          ]}>
+            Cook now
           </Text>
-        </View>
-
-        {/* Placeholder Message */}
-        <View style={styles.placeholderCard}>
-          <Text style={styles.placeholderTitle}>Checklist comes in Phase 4</Text>
-          <Text style={styles.placeholderText}>
-            This screen will show step-by-step cooking instructions with checkable items.
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.toggleButton,
+            orderMode === 'prep' && styles.toggleButtonActive,
+          ]}
+          onPress={() => setOrderMode('prep')}
+          accessibilityRole="button"
+          accessibilityState={{ selected: orderMode === 'prep' }}
+        >
+          <Text style={[
+            styles.toggleText,
+            orderMode === 'prep' && styles.toggleTextActive,
+          ]}>
+            Prep first
           </Text>
-        </View>
+        </TouchableOpacity>
+      </View>
 
-        {/* Steps Preview */}
-        <View style={styles.stepsCard}>
-          <Text style={styles.sectionTitle}>Steps Preview</Text>
-          {recipe.steps.map((step, index) => (
-            <View key={index} style={styles.stepRow}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>{index + 1}</Text>
-              </View>
-              <Text style={styles.stepText}>{step}</Text>
+      {/* Steps List */}
+      <ScrollView 
+        style={styles.stepsList}
+        contentContainerStyle={styles.stepsContent}
+      >
+        {orderedSteps.map((step, displayIndex) => (
+          <TouchableOpacity
+            key={`${step.originalIndex}-${orderMode}`}
+            style={styles.stepRow}
+            onPress={() => toggleStep(step.originalIndex)}
+            activeOpacity={0.7}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: step.completed }}
+          >
+            <View style={[
+              styles.stepCheckbox,
+              step.completed && styles.stepCheckboxChecked,
+            ]}>
+              {step.completed && (
+                <Check size={14} color={colors.textInverse} />
+              )}
             </View>
-          ))}
+            <View style={styles.stepContent}>
+              <Text style={[
+                styles.stepNumber,
+                step.completed && styles.stepNumberCompleted,
+              ]}>
+                Step {displayIndex + 1}
+              </Text>
+              <Text style={[
+                styles.stepText,
+                step.completed && styles.stepTextCompleted,
+              ]}>
+                {step.text}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* Meta info at bottom */}
+        <View style={styles.metaSection}>
+          <Text style={styles.metaText}>{meal.estimatedTime}</Text>
+          {estimatedCost && (
+            <>
+              <View style={styles.metaDot} />
+              <Text style={styles.metaText}>{estimatedCost}</Text>
+            </>
+          )}
         </View>
       </ScrollView>
 
       {/* Done Button */}
       <View style={styles.footer}>
         <TouchableOpacity
-          style={styles.doneButton}
+          style={[
+            styles.doneButton,
+            !allComplete && styles.doneButtonDisabled,
+          ]}
           onPress={handleDone}
+          disabled={!allComplete}
           accessibilityRole="button"
-          accessibilityLabel="Done"
+          accessibilityLabel={allComplete ? "Done cooking" : "Complete all steps first"}
+          accessibilityState={{ disabled: !allComplete }}
         >
-          <Check size={20} color={colors.textInverse} />
-          <Text style={styles.doneButtonText}>Done</Text>
+          <Check size={20} color={allComplete ? colors.textInverse : colors.textMuted} />
+          <Text style={[
+            styles.doneButtonText,
+            !allComplete && styles.doneButtonTextDisabled,
+          ]}>
+            {allComplete ? "Done" : `${totalSteps - completedCount} steps left`}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -115,6 +271,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  // Progress bar - thin and quiet
+  progressContainer: {
+    height: 3,
+    backgroundColor: colors.mutedLight,
+  },
+  progressBar: {
+    height: 3,
+    backgroundColor: colors.accentGreen,
+  },
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -129,17 +295,156 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+  },
   headerTitle: {
     fontSize: typography.lg,
     fontWeight: typography.bold,
     color: colors.textPrimary,
+    textAlign: 'center',
   },
-  content: {
+  headerSubtitle: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  // Cook/Prep Toggle
+  toggleContainer: {
+    flexDirection: 'row',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    backgroundColor: colors.mutedLight,
+    borderRadius: radii.md,
+    padding: 2,
+  },
+  toggleButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET - 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: radii.md - 2,
+  },
+  toggleButtonActive: {
+    backgroundColor: colors.surface,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  toggleText: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    color: colors.textMuted,
+  },
+  toggleTextActive: {
+    color: colors.textPrimary,
+  },
+  // Steps list
+  stepsList: {
     flex: 1,
   },
-  contentContainer: {
-    padding: spacing.md,
+  stepsContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.lg,
   },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSubtle,
+    minHeight: MIN_TOUCH_TARGET,
+  },
+  stepCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: radii.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
+    marginRight: spacing.md,
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepCheckboxChecked: {
+    backgroundColor: colors.accentGreen,
+    borderColor: colors.accentGreen,
+  },
+  stepContent: {
+    flex: 1,
+  },
+  stepNumber: {
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+    color: colors.textMuted,
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  stepNumberCompleted: {
+    color: colors.textMuted,
+  },
+  stepText: {
+    fontSize: typography.base,
+    color: colors.textPrimary,
+    lineHeight: 22,
+  },
+  stepTextCompleted: {
+    color: colors.textMuted,
+    textDecorationLine: 'line-through',
+    opacity: 0.7,
+  },
+  // Meta section
+  metaSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  metaText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+  },
+  metaDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.textMuted,
+    marginHorizontal: spacing.sm,
+  },
+  // Footer
+  footer: {
+    padding: spacing.md,
+    paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
+  },
+  doneButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentGreen,
+    height: MIN_TOUCH_TARGET + 8,
+    borderRadius: radii.md,
+    gap: spacing.sm,
+  },
+  doneButtonDisabled: {
+    backgroundColor: colors.mutedLight,
+  },
+  doneButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+    color: colors.textInverse,
+  },
+  doneButtonTextDisabled: {
+    color: colors.textMuted,
+  },
+  // Error state
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -158,101 +463,5 @@ const styles = StyleSheet.create({
     fontSize: typography.base,
     color: colors.accentBlue,
     fontWeight: typography.medium,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    alignItems: 'center',
-    marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  recipeName: {
-    fontSize: typography.xl,
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: spacing.xs,
-  },
-  metaText: {
-    fontSize: typography.sm,
-    color: colors.textSecondary,
-  },
-  placeholderCard: {
-    backgroundColor: colors.accentBlueLight,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  placeholderTitle: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-    color: colors.accentBlueDark,
-    marginBottom: spacing.xs,
-  },
-  placeholderText: {
-    fontSize: typography.sm,
-    color: colors.accentBlueDark,
-  },
-  stepsCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: typography.xs,
-    fontWeight: typography.semibold,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: spacing.md,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: spacing.sm,
-  },
-  stepNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.mutedLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.sm,
-  },
-  stepNumberText: {
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
-    color: colors.textSecondary,
-  },
-  stepText: {
-    flex: 1,
-    fontSize: typography.sm,
-    color: colors.textPrimary,
-    lineHeight: 20,
-  },
-  footer: {
-    padding: spacing.md,
-    paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.md,
-  },
-  doneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accentGreen,
-    height: MIN_TOUCH_TARGET + 8,
-    borderRadius: radii.md,
-    gap: spacing.sm,
-  },
-  doneButtonText: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    color: colors.textInverse,
   },
 });

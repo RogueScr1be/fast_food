@@ -54,6 +54,7 @@ import {
 import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard, PassDirection } from '../components/DecisionCard';
 import { RescueCard } from '../components/RescueCard';
+import { LockedTransition, TOTAL_DURATION as LOCKED_DURATION } from '../components/LockedTransition';
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -85,6 +86,11 @@ export default function DealScreen() {
   // DRM timer ref
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
+  
+  // Locked transition state (Phase 4)
+  const [showLocked, setShowLocked] = useState(false);
+  const lockedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRecipeIdRef = useRef<string | null>(null);
 
   // Get session state
   const mode = getSelectedMode();
@@ -158,6 +164,9 @@ export default function DealScreen() {
       if (drmTimerRef.current) {
         clearTimeout(drmTimerRef.current);
       }
+      if (lockedTimerRef.current) {
+        clearTimeout(lockedTimerRef.current);
+      }
     };
   }, []);
 
@@ -192,15 +201,31 @@ export default function DealScreen() {
 
   /**
    * Handle accept ("Let's do this")
+   * Shows "Locked." transition, then navigates to checklist
    */
   const handleAccept = useCallback(() => {
-    if (currentDeal) {
+    if (currentDeal && !showLocked) {
+      // Store recipe ID for navigation after transition
+      pendingRecipeIdRef.current = currentDeal.data.id;
+      setShowLocked(true);
+    }
+  }, [currentDeal, showLocked]);
+
+  /**
+   * Called when LockedTransition completes
+   */
+  const handleLockedComplete = useCallback(() => {
+    const recipeId = pendingRecipeIdRef.current;
+    setShowLocked(false);
+    pendingRecipeIdRef.current = null;
+    
+    if (recipeId) {
       router.push({
         pathname: '/checklist/[recipeId]',
-        params: { recipeId: currentDeal.data.id },
+        params: { recipeId },
       });
     }
-  }, [currentDeal]);
+  }, []);
 
   /**
    * Toggle ingredients tray
@@ -485,6 +510,12 @@ export default function DealScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Locked Transition Overlay */}
+      <LockedTransition
+        visible={showLocked}
+        onComplete={handleLockedComplete}
+      />
     </SafeAreaView>
   );
 }
