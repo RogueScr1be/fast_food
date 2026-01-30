@@ -1,8 +1,8 @@
 /**
- * RescueCard — DRM (Dinner Rescue Mode) Card
+ * RescueCard — DRM (Dinner Rescue Mode) Card with Hero Image
  * 
  * Visually distinct rescue card for panic meals.
- * Slightly warmer surface, "Rescue" badge, calmer motion.
+ * Warmer surface tones, "Rescue" badge, calmer motion.
  * Same interactions: tap expands, swipe = no, CTA = accept.
  */
 
@@ -15,9 +15,11 @@ import {
   PanResponder,
   Dimensions,
   TouchableOpacity,
+  Image,
 } from 'react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import type { DrmSeed } from '../lib/seeds/types';
+import { getImageSource } from '../lib/seeds/images';
 import { IngredientsTray } from './IngredientsTray';
 import { WhyWhisper } from './WhyWhisper';
 
@@ -26,6 +28,12 @@ const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
 const HINT_FADE_START = 50;
 const MAX_ROTATION = 2; // Even calmer than regular card
+
+// Responsive hero sizing (slightly smaller than DecisionCard)
+const CARD_WIDTH = Math.min(SCREEN_WIDTH - spacing.lg * 2, 380);
+const HERO_ASPECT_RATIO = 4 / 3;
+const HERO_HEIGHT_RAW = CARD_WIDTH / HERO_ASPECT_RATIO * 0.9; // 90% of standard
+const HERO_HEIGHT = Math.max(160, Math.min(220, HERO_HEIGHT_RAW)); // Clamp 160-220
 
 export type PassDirection = 'left' | 'right';
 
@@ -138,6 +146,9 @@ export function RescueCard({
     ],
   };
 
+  // Get image source
+  const imageSource = getImageSource(meal.imageKey);
+
   return (
     <View style={styles.container}>
       {/* Swipe Hint Labels */}
@@ -153,30 +164,43 @@ export function RescueCard({
         style={[styles.card, cardStyle]}
         {...panResponder.panHandlers}
       >
-        {/* Rescue Badge */}
-        <View style={styles.rescueBadge}>
-          <Text style={styles.rescueBadgeText}>Rescue</Text>
-        </View>
-
-        {/* Tap Area for Expand */}
+        {/* Hero Image Section */}
         <TouchableOpacity
-          style={styles.cardContent}
-          onPress={onToggleExpand}
           activeOpacity={0.95}
+          onPress={onToggleExpand}
           accessibilityRole="button"
           accessibilityLabel={`${meal.name}. Tap to ${expanded ? 'hide' : 'show'} ingredients`}
         >
-          {/* Meal Name */}
-          <Text style={styles.mealName}>{meal.name}</Text>
+          <View style={styles.heroContainer}>
+            <Image
+              source={imageSource}
+              style={styles.heroImage}
+              resizeMode="cover"
+            />
+            {/* Warm scrim gradient (3 stacked layers, amber tint) */}
+            <View style={styles.scrimTop} />
+            <View style={styles.scrimMiddle} />
+            <View style={styles.scrimBottom} />
+            
+            {/* Rescue Badge */}
+            <View style={styles.rescueBadge}>
+              <Text style={styles.rescueBadgeText}>Rescue</Text>
+            </View>
+            
+            {/* Text on overlay */}
+            <View style={styles.heroContent}>
+              <Text style={styles.mealName}>{meal.name}</Text>
+              <WhyWhisper text={whyText} light />
+            </View>
+          </View>
 
-          {/* Why Whisper */}
-          <WhyWhisper text={whyText} />
-
-          {/* Meta Info */}
-          <View style={styles.metaRow}>
-            <Text style={styles.metaText}>{meal.estimatedTime}</Text>
-            <View style={styles.metaDot} />
-            <Text style={styles.metaText}>No-stress</Text>
+          {/* Meta Info below image */}
+          <View style={styles.metaSection}>
+            <View style={styles.metaRow}>
+              <Text style={styles.metaText}>{meal.estimatedTime}</Text>
+              <View style={styles.metaDot} />
+              <Text style={styles.metaText}>No-stress</Text>
+            </View>
           </View>
         </TouchableOpacity>
 
@@ -221,6 +245,42 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F5EFE6', // Subtle warm border
   },
+  // Hero image section
+  heroContainer: {
+    height: HERO_HEIGHT,
+    width: '100%',
+    position: 'relative',
+    backgroundColor: '#FEF3C7', // Warm fallback bg
+  },
+  heroImage: {
+    width: '100%',
+    height: '100%',
+  },
+  // Warm scrim gradient: 3 stacked layers with amber tint
+  scrimTop: {
+    position: 'absolute',
+    bottom: '45%',
+    left: 0,
+    right: 0,
+    height: '20%',
+    backgroundColor: 'rgba(120, 53, 15, 0.08)',
+  },
+  scrimMiddle: {
+    position: 'absolute',
+    bottom: '20%',
+    left: 0,
+    right: 0,
+    height: '25%',
+    backgroundColor: 'rgba(120, 53, 15, 0.25)',
+  },
+  scrimBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '35%',
+    backgroundColor: 'rgba(92, 40, 12, 0.55)',
+  },
   rescueBadge: {
     position: 'absolute',
     top: spacing.md,
@@ -229,7 +289,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radii.sm,
-    zIndex: 1,
+    zIndex: 2,
   },
   rescueBadgeText: {
     fontSize: typography.xs,
@@ -238,22 +298,32 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  cardContent: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl + spacing.md, // Extra space for badge
-    alignItems: 'center',
+  heroContent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: spacing.md,
   },
   mealName: {
     fontSize: typography['2xl'],
     fontWeight: typography.bold,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
+    color: colors.textInverse,
+    textAlign: 'left',
+    marginBottom: spacing.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  // Meta section below image
+  metaSection: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: '#FFFBF5',
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.md,
   },
   metaText: {
     fontSize: typography.sm,
@@ -267,16 +337,16 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.sm,
   },
   acceptButton: {
-    backgroundColor: '#F59E0B', // Warm amber CTA
+    backgroundColor: colors.warning, // Warm amber CTA (from theme)
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
-    height: MIN_TOUCH_TARGET + 4,
-    borderRadius: radii.md,
+    height: MIN_TOUCH_TARGET + 8, // 56px - consistent with PrimaryButton
+    borderRadius: radii.lg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   acceptButtonText: {
-    fontSize: typography.base,
+    fontSize: typography.lg,
     fontWeight: typography.bold,
     color: colors.textInverse,
   },
