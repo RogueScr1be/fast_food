@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Fast Food Zero-UI",
-    "slug": "fast-food-zero-ui",
+    "name": "Fast Food",
+    "slug": "fast-food",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -29,7 +29,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FF6B35"
       },
-      "package": "com.fastfood.zeroui",
+      "package": "com.fastfood",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
@@ -53,7 +53,7 @@
       ],
       "expo-notifications"
     ],
-    "scheme": "fast-food-zero-ui",
+    "scheme": "fast-food",
     "platforms": ["ios", "android", "web"]
   }
 }
