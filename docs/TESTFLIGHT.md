@@ -163,6 +163,27 @@ Features:
 - Reset session
 - View last 10 API events
 
+## Phase 6 — Persistence Verification
+
+After Phase 6 changes, verify the following before TestFlight submission:
+
+### Persistence Behavior
+- [ ] **Prefs persist across restart**: Kill app → relaunch → mode/allergens/constraints restored
+- [ ] **Deal state resets**: Kill app → relaunch → passCount/drmInserted reset to 0/false
+- [ ] **Reset Tonight keeps prefs**: Tap "Reset Tonight" → mode/allergens remain, deal history clears
+- [ ] **Offline still works**: Airplane mode → app loads seeds, dealing works
+
+### Routes & Cleanup
+- [ ] **No dead routes**: Run `rg "chat\.tsx|ChatMessage|MagicalParticles|SmartSuggestions" -S` — 0 matches
+- [ ] **No decision-os remnants**: Run `rg "decision-os" -S` — 0 matches
+
+### Gates
+- [ ] `npm test` — all tests pass
+- [ ] `npm run build:sanity` — no errors
+- [ ] `npx expo export -p web` — no errors
+
+---
+
 ## Post-Build Verification
 
 After installing TestFlight build:

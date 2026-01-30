@@ -1,15 +1,18 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { View, Text, StyleSheet } from 'react-native';
 import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AppProvider } from '@/contexts/AppContext';
+import { hydrateFromStorage, isHydrated } from '@/lib/state/ffSession';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const isFrameworkReady = useFrameworkReady();
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   
   const [fontsLoaded, fontError] = useFonts({
     'Inter-Regular': Inter_400Regular,
@@ -17,7 +20,19 @@ export default function RootLayout() {
     'Inter-Bold': Inter_700Bold,
   });
 
-  const isReady = isFrameworkReady && (fontsLoaded || fontError);
+  // Hydrate preferences from storage on mount
+  useEffect(() => {
+    if (isHydrated()) {
+      setPrefsLoaded(true);
+      return;
+    }
+    
+    hydrateFromStorage().then(() => {
+      setPrefsLoaded(true);
+    });
+  }, []);
+
+  const isReady = isFrameworkReady && (fontsLoaded || fontError) && prefsLoaded;
 
   useEffect(() => {
     if (isReady) {
@@ -27,6 +42,7 @@ export default function RootLayout() {
   }, [isReady]);
 
   if (!isReady) {
+    // Show minimal loading state (splash screen still visible)
     return null;
   }
 

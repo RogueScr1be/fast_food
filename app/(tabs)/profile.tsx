@@ -1,341 +1,406 @@
-import React from 'react';
+/**
+ * Settings Screen (Profile Tab)
+ * 
+ * Fast Food MVP Settings - calm, OS-like design.
+ * Shows preferences, about info, and reset options.
+ * 
+ * Phase 5A: Complete rewrite removing legacy chat/AI content.
+ */
+
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Image,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
+  Modal,
+  SafeAreaView,
+  Platform,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Settings, MessageCircle, Star, Clock, LogOut } from 'lucide-react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { RefreshCw, Info, AlertTriangle } from 'lucide-react-native';
+import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import {
+  getExcludeAllergens,
+  getConstraints,
+  resetDealState,
+} from '../../lib/state/ffSession';
+import type { AllergenTag, ConstraintTag } from '../../lib/seeds/types';
 
-export default function ProfileScreen() {
+// App version - placeholder for MVP
+const APP_VERSION = 'MVP';
+
+// Allergen display names
+const ALLERGEN_LABELS: Record<AllergenTag, string> = {
+  dairy: 'Dairy',
+  nuts: 'Nuts',
+  gluten: 'Gluten',
+  eggs: 'Eggs',
+  soy: 'Soy',
+  shellfish: 'Shellfish',
+};
+
+// Constraint display names
+const CONSTRAINT_LABELS: Record<ConstraintTag, string> = {
+  no_oven: 'No Oven',
+  kid_safe: 'Kid Safe',
+  '15_min': '15 min',
+  vegetarian: 'Vegetarian',
+  no_dairy: 'No Dairy',
+};
+
+export default function SettingsScreen() {
+  const [showResetModal, setShowResetModal] = useState(false);
+  
+  // Read current preferences (re-read on each render for simplicity)
+  const excludeAllergens = getExcludeAllergens();
+  const constraints = getConstraints();
+  
+  /**
+   * Format allergens list for display
+   */
+  const formatAllergens = (): string => {
+    if (excludeAllergens.length === 0) {
+      return 'None selected';
+    }
+    return excludeAllergens.map(a => ALLERGEN_LABELS[a]).join(', ');
+  };
+
+  /**
+   * Check if a constraint is active
+   */
+  const isConstraintActive = (constraint: ConstraintTag): boolean => {
+    return constraints.includes(constraint);
+  };
+
+  /**
+   * Handle reset tonight
+   */
+  const handleResetTonight = useCallback(() => {
+    resetDealState();
+    setShowResetModal(false);
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['#4A00E0', '#8E2DE2']}
-        style={styles.header}
+    <SafeAreaView style={styles.container}>
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
       >
-        <View style={styles.profileHeader}>
-          <Image
-            source={{ uri: 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&dpr=1' }}
-            style={styles.profileImage}
-          />
-          <Text style={styles.profileName}>Alex Johnson</Text>
-          <Text style={styles.profileBio}>AI enthusiast & creative thinker</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Settings</Text>
+        </View>
+
+        {/* Preferences Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <View style={styles.card}>
+            {/* Allergens Row */}
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Allergens Avoided</Text>
+                <Text style={styles.rowValue}>{formatAllergens()}</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Dietary Preferences */}
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Vegetarian</Text>
+                <Text style={styles.rowStatus}>
+                  {isConstraintActive('vegetarian') ? 'On' : 'Off'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>No Dairy</Text>
+                <Text style={styles.rowStatus}>
+                  {isConstraintActive('no_dairy') || excludeAllergens.includes('dairy') 
+                    ? 'On' 
+                    : 'Off'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Quick Meals (15 min)</Text>
+                <Text style={styles.rowStatus}>
+                  {isConstraintActive('15_min') ? 'On' : 'Off'}
+                </Text>
+              </View>
+            </View>
+          </View>
           
-          <View style={styles.statsContainer}>
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>128</Text>
-              <Text style={styles.statLabel}>Chats</Text>
+          <Text style={styles.hint}>
+            Adjust preferences on the Tonight screen before dealing.
+          </Text>
+        </View>
+
+        {/* About Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>About</Text>
+          <View style={styles.card}>
+            <View style={styles.row}>
+              <Info size={20} color={colors.textMuted} />
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Build</Text>
+                <Text style={styles.rowValue}>{APP_VERSION}</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>45</Text>
-              <Text style={styles.statLabel}>Saved</Text>
+          </View>
+          
+          <Text style={styles.aboutText}>
+            Fast Food compresses dinner decisions into one calm loop.
+          </Text>
+        </View>
+
+        {/* Reset Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Reset</Text>
+          <TouchableOpacity
+            style={styles.resetButton}
+            onPress={() => setShowResetModal(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Reset tonight's session"
+          >
+            <RefreshCw size={20} color={colors.error} />
+            <Text style={styles.resetButtonText}>Reset Tonight</Text>
+          </TouchableOpacity>
+          
+          <Text style={styles.hint}>
+            Clears deal history and pass count. Keeps allergens and mode.
+          </Text>
+        </View>
+      </ScrollView>
+
+      {/* Reset Confirmation Modal */}
+      <Modal
+        visible={showResetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowResetModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIcon}>
+              <AlertTriangle size={32} color={colors.warning} />
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>Pro</Text>
-              <Text style={styles.statLabel}>Plan</Text>
+            
+            <Text style={styles.modalTitle}>Reset tonight?</Text>
+            <Text style={styles.modalMessage}>
+              This will clear your deal history and pass count for this session.
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setShowResetModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalConfirmButton}
+                onPress={handleResetTonight}
+                accessibilityRole="button"
+                accessibilityLabel="Yes, reset tonight"
+              >
+                <Text style={styles.modalConfirmText}>Yes</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
-      </LinearGradient>
-      
-      <ScrollView style={styles.content}>
-        <Animated.View entering={FadeInDown.delay(100).springify()}>
-          <Text style={styles.sectionTitle}>Activity</Text>
-          <View style={styles.card}>
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <MessageCircle size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Recent Conversations</Text>
-                <Text style={styles.activitySubtitle}>12 new chats this week</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.divider} />
-            
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <Star size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Favorite Responses</Text>
-                <Text style={styles.activitySubtitle}>8 responses saved</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.divider} />
-            
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <Clock size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Usage History</Text>
-                <Text style={styles.activitySubtitle}>3.5 hours this month</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Animated.View>
-        
-        <Animated.View entering={FadeInDown.delay(200).springify()}>
-          <Text style={styles.sectionTitle}>Subscription</Text>
-          <View style={styles.card}>
-            <LinearGradient
-              colors={['#4A00E0', '#8E2DE2']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.subscriptionCard}
-            >
-              <View style={styles.subscriptionContent}>
-                <View>
-                  <Text style={styles.subscriptionTitle}>Pro Plan</Text>
-                  <Text style={styles.subscriptionSubtitle}>Unlimited access to all features</Text>
-                </View>
-                <View style={styles.subscriptionBadge}>
-                  <Text style={styles.subscriptionBadgeText}>ACTIVE</Text>
-                </View>
-              </View>
-              
-              <View style={styles.subscriptionDetails}>
-                <Text style={styles.subscriptionDetail}>• Unlimited conversations</Text>
-                <Text style={styles.subscriptionDetail}>• Priority response time</Text>
-                <Text style={styles.subscriptionDetail}>• Advanced AI capabilities</Text>
-                <Text style={styles.subscriptionDetail}>• No ads</Text>
-              </View>
-              
-              <TouchableOpacity style={styles.subscriptionButton}>
-                <Text style={styles.subscriptionButtonText}>Manage Subscription</Text>
-              </TouchableOpacity>
-            </LinearGradient>
-          </View>
-        </Animated.View>
-        
-        <Animated.View entering={FadeInDown.delay(300).springify()}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <View style={styles.card}>
-            <TouchableOpacity style={styles.accountOption}>
-              <Settings size={20} color="#333" />
-              <Text style={styles.accountOptionText}>Settings</Text>
-            </TouchableOpacity>
-            
-            <View style={styles.divider} />
-            
-            <TouchableOpacity style={styles.accountOption}>
-              <LogOut size={20} color="#333" />
-              <Text style={styles.accountOptionText}>Log Out</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </ScrollView>
-    </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: colors.background,
   },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 30,
-  },
-  profileHeader: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: '#FFF',
-    marginBottom: 16,
-  },
-  profileName: {
-    fontSize: 24,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  profileBio: {
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  statDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  content: {
+  scrollView: {
     flex: 1,
-    padding: 20,
+  },
+  scrollContent: {
+    paddingBottom: spacing.xxl,
+  },
+  // Header
+  header: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: Platform.OS === 'ios' ? spacing.md : spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  headerTitle: {
+    fontSize: typography['3xl'],
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+  },
+  // Sections
+  section: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    color: '#333',
-    marginBottom: 12,
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
   },
+  // Cards
   card: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    ...shadows.sm,
+    overflow: 'hidden',
   },
-  activityItem: {
+  // Rows
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    minHeight: MIN_TOUCH_TARGET + 8, // 56px
   },
-  activityIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(138, 43, 226, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  activityContent: {
+  rowContent: {
     flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginLeft: spacing.sm,
   },
-  activityTitle: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#333',
-    marginBottom: 2,
+  rowLabel: {
+    fontSize: typography.base,
+    fontWeight: typography.medium,
+    color: colors.textPrimary,
   },
-  activitySubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#666',
+  rowValue: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    maxWidth: '50%',
+    textAlign: 'right',
   },
-  activityButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(138, 43, 226, 0.1)',
-  },
-  activityButtonText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#8A2BE2',
+  rowStatus: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    color: colors.textMuted,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E5E5E5',
-    marginVertical: 8,
+    backgroundColor: colors.borderSubtle,
+    marginLeft: spacing.md + spacing.sm + 20, // Align with text after icon
   },
-  subscriptionCard: {
-    borderRadius: 12,
-    padding: 20,
+  // Hints
+  hint: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    marginLeft: spacing.xs,
   },
-  subscriptionContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
+  // About
+  aboutText: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+    marginLeft: spacing.xs,
+    fontStyle: 'italic',
   },
-  subscriptionTitle: {
-    fontSize: 20,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  subscriptionSubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  subscriptionBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  subscriptionBadgeText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-  },
-  subscriptionDetails: {
-    marginBottom: 20,
-  },
-  subscriptionDetail: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 6,
-  },
-  subscriptionButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 12,
-    borderRadius: 25,
-    alignItems: 'center',
-  },
-  subscriptionButtonText: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#FFF',
-  },
-  accountOption: {
+  // Reset button
+  resetButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
+    justifyContent: 'center',
+    backgroundColor: colors.errorLight,
+    borderRadius: radii.lg,
+    height: MIN_TOUCH_TARGET + 4, // 52px
+    paddingHorizontal: spacing.lg,
+    ...shadows.sm,
   },
-  accountOptionText: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#333',
-    marginLeft: 12,
+  resetButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.error,
+    marginLeft: spacing.sm,
+  },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+    ...shadows.lg,
+  },
+  modalIcon: {
+    marginBottom: spacing.md,
+  },
+  modalTitle: {
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: spacing.sm,
+  },
+  modalCancelButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.mutedLight,
+    borderRadius: radii.md,
+  },
+  modalCancelText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textSecondary,
+  },
+  modalConfirmButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.error,
+    borderRadius: radii.md,
+  },
+  modalConfirmText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+    color: colors.textInverse,
   },
 });

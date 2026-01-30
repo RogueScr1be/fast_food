@@ -37,6 +37,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '18 min',
     estimatedCost: '$22',
     emoji: '🐟',
+    imageKey: 'salmon',
   },
   {
     id: 'fancy-2',
@@ -63,6 +64,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '35 min',
     estimatedCost: '$18',
     emoji: '🍄',
+    imageKey: 'risotto',
   },
   {
     id: 'fancy-3',
@@ -87,6 +89,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '35 min',
     estimatedCost: '$16',
     emoji: '🍗',
+    imageKey: 'chicken-marsala',
   },
   {
     id: 'fancy-4',
@@ -112,6 +115,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$24',
     emoji: '🦐',
+    imageKey: 'scampi',
   },
   {
     id: 'fancy-5',
@@ -137,6 +141,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '25 min',
     estimatedCost: '$35',
     emoji: '🥩',
+    imageKey: 'steak',
   },
   {
     id: 'fancy-6',
@@ -161,6 +166,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$14',
     emoji: '🍅',
+    imageKey: 'ratatouille',
   },
 
   // ============================================
@@ -189,6 +195,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '40 min',
     estimatedCost: '$14',
     emoji: '🍖',
+    imageKey: 'sheet-pan-chicken',
   },
   {
     id: 'easy-2',
@@ -213,6 +220,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$8',
     emoji: '🍝',
+    imageKey: 'pasta-marinara',
   },
   {
     id: 'easy-3',
@@ -237,6 +245,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$10',
     emoji: '🫓',
+    imageKey: 'quesadillas',
   },
   {
     id: 'easy-4',
@@ -261,6 +270,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$5',
     emoji: '🍚',
+    imageKey: 'stir-fry',
   },
   {
     id: 'easy-5',
@@ -285,6 +295,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '20 min',
     estimatedCost: '$15',
     emoji: '🌮',
+    imageKey: 'fried-rice',
   },
   {
     id: 'easy-6',
@@ -309,6 +320,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$6',
     emoji: '🧀',
+    imageKey: 'caprese-salad',
   },
 
   // ============================================
@@ -337,6 +349,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '25 min',
     estimatedCost: '$3',
     emoji: '🫘',
+    imageKey: 'beans-rice',
   },
   {
     id: 'cheap-2',
@@ -361,6 +374,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$2',
     emoji: '🥚',
+    imageKey: 'egg-fried-rice',
   },
   {
     id: 'cheap-3',
@@ -385,6 +399,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$4',
     emoji: '🥔',
+    imageKey: 'potato-soup',
   },
   {
     id: 'cheap-4',
@@ -409,6 +424,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$2',
     emoji: '🍜',
+    imageKey: 'ramen-upgrade',
   },
   {
     id: 'cheap-5',
@@ -433,6 +449,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$4',
     emoji: '🌯',
+    imageKey: 'veggie-curry',
   },
   {
     id: 'cheap-6',
@@ -457,6 +474,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$4',
     emoji: '🧄',
+    imageKey: 'pasta-aglio',
   },
 ];
 
@@ -478,6 +496,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Zero cooking', 'Everyone wins', 'Sometimes dinner is cereal'],
     estimatedTime: '2 min',
     emoji: '🥣',
+    imageKey: 'cereal',
   },
   {
     id: 'drm-2',
@@ -494,6 +513,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Childhood classic', 'No judgment here', 'Protein + carbs'],
     estimatedTime: '3 min',
     emoji: '🥪',
+    imageKey: 'toast-pb',
   },
   {
     id: 'drm-3',
@@ -509,6 +529,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Charcuterie lite', 'Pairs with wine', 'Snack dinner energy'],
     estimatedTime: '5 min',
     emoji: '🧀',
+    imageKey: 'crackers-cheese',
   },
   {
     id: 'drm-4',
@@ -524,6 +545,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Pantry rescue', 'Warm and comforting', 'No effort required'],
     estimatedTime: '8 min',
     emoji: '🥫',
+    imageKey: 'soup-can',
   },
   {
     id: 'drm-5',
@@ -540,6 +562,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Breakfast for dinner', 'Quick protein', 'Always satisfying'],
     estimatedTime: '8 min',
     emoji: '🍳',
+    imageKey: 'sandwich',
   },
   {
     id: 'drm-6',
@@ -555,6 +578,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Zero prep', 'Sharing is caring', 'Valid dinner choice'],
     estimatedTime: '1 min',
     emoji: '🫓',
+    imageKey: 'chips-salsa',
   },
   {
     id: 'drm-7',
@@ -570,6 +594,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Dorm room classic', 'Salty comfort', 'Done in 5 minutes'],
     estimatedTime: '5 min',
     emoji: '🍜',
+    imageKey: 'instant-noodles',
   },
   {
     id: 'drm-8',
@@ -586,6 +611,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Protein-packed', 'Feels healthy', 'Sweet but substantial'],
     estimatedTime: '2 min',
     emoji: '🥛',
+    imageKey: 'yogurt-granola',
   },
   {
     id: 'drm-9',
@@ -598,6 +624,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Freezer MVP', 'Everyone agrees', 'Reliable backup'],
     estimatedTime: '20 min',
     emoji: '🍕',
+    imageKey: 'frozen-pizza',
   },
   {
     id: 'drm-10',
@@ -613,6 +640,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Sweet and salty', 'Surprisingly filling', 'Healthy snack dinner'],
     estimatedTime: '3 min',
     emoji: '🍎',
+    imageKey: 'banana-pb',
   },
   {
     id: 'drm-11',
@@ -625,6 +653,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Freezer savior', 'Hot and filling', 'Gas station gourmet'],
     estimatedTime: '4 min',
     emoji: '🌯',
+    imageKey: 'grilled-cheese',
   },
   {
     id: 'drm-12',
@@ -642,5 +671,6 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Millennial approved', 'Good fats', 'Trendy but real'],
     estimatedTime: '5 min',
     emoji: '🥑',
+    imageKey: 'oatmeal',
   },
 ];
