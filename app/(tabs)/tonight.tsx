@@ -1,16 +1,16 @@
 /**
  * Tonight Screen — Mode Selection
  * 
- * Phase 1 UI:
+ * Phase 6.3 UI:
  * - Three mode options: Fancy, Easy, Cheap
+ * - Tap a mode → immediately navigate to /deal with that mode
  * - "I'm allergic" modal for allergen exclusions
- * - Subtle progress bar that fills when mode is selected
- * - Primary CTA: "Decide for Me" → navigates to /deal
+ * - Primary CTA: "Decide for Me" → random mode if none selected, then /deal
  * 
  * Follows Design Constitution: calm, OS-like, minimal, elegant.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   SafeAreaView,
   Modal,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, Utensils, Coins, AlertCircle, X, Check } from 'lucide-react-native';
@@ -33,6 +34,8 @@ import {
   getExcludeAllergens,
 } from '../../lib/state/ffSession';
 import type { Mode, AllergenTag } from '../../lib/seeds/types';
+
+const ALL_MODES: Mode[] = ['fancy', 'easy', 'cheap'];
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -107,31 +110,55 @@ function AllergenCheckbox({ label, checked, onToggle }: AllergenCheckboxProps) {
  * Tonight Screen — Main Component
  */
 export default function TonightScreen() {
-  const [selectedMode, setSelectedModeLocal] = useState<Mode | null>(getSelectedMode());
+  const [selectedModeLocal, setSelectedModeLocal] = useState<Mode | null>(getSelectedMode());
   const [excludeAllergens, setExcludeAllergensLocal] = useState<AllergenTag[]>(getExcludeAllergens());
   const [showAllergyModal, setShowAllergyModal] = useState(false);
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
-  const [showHelper, setShowHelper] = useState(false);
+  
+  // Progress bar animation for "commitment" feel
+  const progressAnim = useRef(new Animated.Value(0)).current;
   
   /**
-   * Handle mode selection
+   * Handle mode selection — immediately navigate to /deal
    */
   const handleModeSelect = (mode: Mode) => {
-    const newMode = selectedMode === mode ? null : mode;
-    setSelectedModeLocal(newMode);
-    setSelectedMode(newMode);
-    setShowHelper(false);
+    // Set the mode and immediately navigate
+    setSelectedModeLocal(mode);
+    setSelectedMode(mode);
+    
+    // Brief progress animation then navigate
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: false,
+    }).start(() => {
+      router.push('/deal');
+    });
   };
   
   /**
    * Handle "Decide for Me" press
+   * If no mode selected, randomly pick one
    */
   const handleDecide = () => {
-    if (!selectedMode) {
-      setShowHelper(true);
-      return;
+    let modeToUse = selectedModeLocal;
+    
+    // If no mode selected, randomly pick one
+    if (!modeToUse) {
+      const randomIndex = Math.floor(Math.random() * ALL_MODES.length);
+      modeToUse = ALL_MODES[randomIndex];
+      setSelectedModeLocal(modeToUse);
+      setSelectedMode(modeToUse);
     }
-    router.push('/deal');
+    
+    // Animate and navigate
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: false,
+    }).start(() => {
+      router.push('/deal');
+    });
   };
   
   /**
@@ -185,10 +212,10 @@ export default function TonightScreen() {
           icon={
             <Sparkles
               size={32}
-              color={selectedMode === 'fancy' ? colors.textInverse : colors.accentBlue}
+              color={selectedModeLocal === 'fancy' ? colors.textInverse : colors.accentBlue}
             />
           }
-          selected={selectedMode === 'fancy'}
+          selected={selectedModeLocal === 'fancy'}
           onPress={() => handleModeSelect('fancy')}
         />
         <ModeButton
@@ -197,10 +224,10 @@ export default function TonightScreen() {
           icon={
             <Utensils
               size={32}
-              color={selectedMode === 'easy' ? colors.textInverse : colors.accentBlue}
+              color={selectedModeLocal === 'easy' ? colors.textInverse : colors.accentBlue}
             />
           }
-          selected={selectedMode === 'easy'}
+          selected={selectedModeLocal === 'easy'}
           onPress={() => handleModeSelect('easy')}
         />
         <ModeButton
@@ -209,10 +236,10 @@ export default function TonightScreen() {
           icon={
             <Coins
               size={32}
-              color={selectedMode === 'cheap' ? colors.textInverse : colors.accentBlue}
+              color={selectedModeLocal === 'cheap' ? colors.textInverse : colors.accentBlue}
             />
           }
-          selected={selectedMode === 'cheap'}
+          selected={selectedModeLocal === 'cheap'}
           onPress={() => handleModeSelect('cheap')}
         />
       </View>
@@ -235,26 +262,27 @@ export default function TonightScreen() {
 
       {/* CTA Section */}
       <View style={styles.ctaSection}>
-        {/* Progress Bar */}
+        {/* Progress Bar - shows commitment animation */}
         <View style={styles.progressWrapper}>
           <ThinProgressBar
-            value={selectedMode ? 1 : 0}
-            accessibilityLabel="Mode selection progress"
+            value={selectedModeLocal ? 1 : 0}
+            accessibilityLabel="Ready to decide"
           />
         </View>
 
-        {/* Helper Text */}
-        {showHelper && (
-          <Text style={styles.helperText}>Pick a mode first</Text>
-        )}
-
-        {/* Primary CTA */}
+        {/* Primary CTA - always enabled, picks random if no mode */}
         <PrimaryButton
           label="Decide for Me"
           onPress={handleDecide}
           tone="primary"
-          variant={selectedMode ? 'solid' : 'muted'}
         />
+        
+        {/* Hint text */}
+        <Text style={styles.hintText}>
+          {selectedModeLocal 
+            ? `Ready for ${selectedModeLocal}` 
+            : 'Tap a mode or let us pick'}
+        </Text>
       </View>
 
       {/* Allergy Modal */}
@@ -406,11 +434,11 @@ const styles = StyleSheet.create({
   progressWrapper: {
     marginBottom: spacing.md,
   },
-  helperText: {
-    fontSize: typography.sm,
+  hintText: {
+    fontSize: typography.xs,
     color: colors.textMuted,
     textAlign: 'center',
-    marginBottom: spacing.sm,
+    marginTop: spacing.sm,
   },
   
   // Modal
