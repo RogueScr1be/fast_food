@@ -5,7 +5,7 @@
  * All require() calls live here to avoid Metro bundler issues.
  * 
  * To add new images:
- * 1. Add image file to assets/recipes/
+ * 1. Add image file to assets/recipes/<key>.jpg
  * 2. Add require() to RECIPE_IMAGES with matching key
  * 3. Set imageKey in recipes.ts to match
  */
@@ -15,7 +15,7 @@ import { ImageSourcePropType } from 'react-native';
 /**
  * Default fallback image - a calm neutral gradient.
  * 800x600 PNG, ~73KB - intentionally minimal for fast loading.
- * Replace individual recipe keys with real food photos as available.
+ * Used when a specific recipe image is not available.
  */
 const FALLBACK_IMAGE = require('../../assets/recipes/_fallback.png');
 
@@ -23,49 +23,49 @@ const FALLBACK_IMAGE = require('../../assets/recipes/_fallback.png');
  * Recipe image registry.
  * Keys match imageKey values in RecipeSeed and DrmSeed.
  * 
- * When adding real images:
- * - Use 800x600 or similar 4:3 aspect ratio
- * - Optimize for mobile (< 200KB per image)
- * - Use jpg for photos, png for graphics
+ * All images:
+ * - ~1024x1024 or similar aspect ratio
+ * - Optimized for mobile (< 200KB per image)
+ * - JPG format for photos
  */
 export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
   // Fancy recipes
-  'salmon': FALLBACK_IMAGE,
-  'risotto': FALLBACK_IMAGE,
-  'steak': FALLBACK_IMAGE,
-  'scampi': FALLBACK_IMAGE,
-  'chicken-marsala': FALLBACK_IMAGE,
-  'ratatouille': FALLBACK_IMAGE,
+  'salmon': require('../../assets/recipes/salmon.jpg'),
+  'risotto': require('../../assets/recipes/risotto.jpg'),
+  'steak': require('../../assets/recipes/steak.jpg'),
+  'scampi': require('../../assets/recipes/scampi.jpg'),
+  'chicken-marsala': require('../../assets/recipes/chicken-marsala.jpg'),
+  'ratatouille': require('../../assets/recipes/ratatouille.jpg'),
   
   // Easy recipes
-  'stir-fry': FALLBACK_IMAGE,
-  'pasta-marinara': FALLBACK_IMAGE,
-  'quesadillas': FALLBACK_IMAGE,
-  'fried-rice': FALLBACK_IMAGE,
-  'caprese-salad': FALLBACK_IMAGE,
-  'sheet-pan-chicken': FALLBACK_IMAGE,
+  'stir-fry': require('../../assets/recipes/stir-fry.jpg'),
+  'pasta-marinara': require('../../assets/recipes/pasta-marinara.jpg'),
+  'quesadillas': require('../../assets/recipes/quesadillas.jpg'),
+  'fried-rice': require('../../assets/recipes/fried-rice.jpg'),
+  'caprese-salad': require('../../assets/recipes/caprese-salad.jpg'),
+  'sheet-pan-chicken': require('../../assets/recipes/sheet-pan-chicken.jpg'),
   
   // Cheap recipes
-  'beans-rice': FALLBACK_IMAGE,
-  'ramen-upgrade': FALLBACK_IMAGE,
-  'potato-soup': FALLBACK_IMAGE,
-  'egg-fried-rice': FALLBACK_IMAGE,
-  'veggie-curry': FALLBACK_IMAGE,
-  'pasta-aglio': FALLBACK_IMAGE,
+  'beans-rice': require('../../assets/recipes/beans-rice.jpg'),
+  'ramen-upgrade': require('../../assets/recipes/ramen-upgrade.jpg'),
+  'potato-soup': require('../../assets/recipes/potato-soup.jpg'),
+  'egg-fried-rice': require('../../assets/recipes/egg-fried-rice.jpg'),
+  'veggie-curry': require('../../assets/recipes/veggie-curry.jpg'),
+  'pasta-aglio': require('../../assets/recipes/pasta-aglio.jpg'),
   
   // DRM (Dinner Rescue Mode) meals
-  'cereal': FALLBACK_IMAGE,
-  'toast-pb': FALLBACK_IMAGE,
-  'grilled-cheese': FALLBACK_IMAGE,
-  'instant-noodles': FALLBACK_IMAGE,
-  'crackers-cheese': FALLBACK_IMAGE,
-  'yogurt-granola': FALLBACK_IMAGE,
-  'banana-pb': FALLBACK_IMAGE,
-  'chips-salsa': FALLBACK_IMAGE,
-  'soup-can': FALLBACK_IMAGE,
-  'sandwich': FALLBACK_IMAGE,
-  'frozen-pizza': FALLBACK_IMAGE,
-  'oatmeal': FALLBACK_IMAGE,
+  'cereal': require('../../assets/recipes/cereal.jpg'),
+  'toast-pb': require('../../assets/recipes/toast-pb.jpg'),
+  'grilled-cheese': require('../../assets/recipes/grilled-cheese.jpg'),
+  'instant-noodles': require('../../assets/recipes/instant-noodles.jpg'),
+  'crackers-cheese': require('../../assets/recipes/crackers-cheese.jpg'),
+  'yogurt-granola': require('../../assets/recipes/yogurt-granola.jpg'),
+  'banana-pb': require('../../assets/recipes/banana-pb.jpg'),
+  'chips-salsa': require('../../assets/recipes/chips-salsa.jpg'),
+  'soup-can': require('../../assets/recipes/soup-can.jpg'),
+  'sandwich': require('../../assets/recipes/sandwich.jpg'),
+  'frozen-pizza': require('../../assets/recipes/frozen-pizza.jpg'),
+  'oatmeal': require('../../assets/recipes/oatmeal.jpg'),
 };
 
 /**
@@ -88,10 +88,9 @@ export function getImageSource(imageKey?: string): ImageSourcePropType {
  */
 export function hasRealImage(imageKey?: string): boolean {
   if (!imageKey) return false;
-  const source = RECIPE_IMAGES[imageKey];
-  // For now, all are FALLBACK_IMAGE, so return false
-  // When real images are added, this will return true for those
-  return source !== FALLBACK_IMAGE;
+  // All keys now have real images wired via require()
+  // Returns true if the key exists in the registry
+  return imageKey in RECIPE_IMAGES;
 }
 
 /**

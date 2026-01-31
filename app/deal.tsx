@@ -28,6 +28,7 @@ import { ArrowLeft, RefreshCw, AlertCircle, X, Check } from 'lucide-react-native
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getSelectedMode,
+  setSelectedMode,
   getExcludeAllergens,
   getConstraints,
   getDealHistory,
@@ -44,6 +45,9 @@ import {
   DRM_PASS_THRESHOLD,
   DRM_TIME_THRESHOLD_MS,
 } from '../lib/state/ffSession';
+
+// All modes for random selection fallback
+const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
 import {
   pickNextRecipe,
   pickDrmMeal,
@@ -92,19 +96,21 @@ export default function DealScreen() {
   const lockedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRecipeIdRef = useRef<string | null>(null);
 
-  // Get session state
-  const mode = getSelectedMode();
+  // Get session state - ensure we have a mode
+  const [mode, setLocalMode] = useState(() => {
+    const savedMode = getSelectedMode();
+    if (savedMode) return savedMode;
+    // Randomly select a mode if none set
+    const randomMode = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
+    setSelectedMode(randomMode);
+    return randomMode;
+  });
   const constraints = getConstraints();
 
   /**
    * Deal a new card (recipe or DRM)
    */
   const dealNextCard = useCallback(() => {
-    if (!mode) {
-      setIsLoading(false);
-      return;
-    }
-
     const dealHistory = getDealHistory();
     const passCount = getPassCount();
     const drmInserted = getDrmInserted();
@@ -322,22 +328,7 @@ export default function DealScreen() {
     }
   }, [tempAllergens, currentDeal, mode, constraints]);
 
-  // No mode selected - redirect back
-  if (!mode) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.centered}>
-          <Text style={styles.errorText}>No mode selected</Text>
-          <TouchableOpacity
-            style={styles.backLink}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.backLinkText}>Go back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  // Mode is always set (randomly if needed) - no null check required
 
   // Loading state
   if (isLoading) {
@@ -350,7 +341,7 @@ export default function DealScreen() {
     );
   }
 
-  // No more recipes - calm empty state
+  // No more recipes - calm empty state with reset option
   if (noMoreRecipes) {
     const passCount = getPassCount();
     return (
@@ -371,16 +362,28 @@ export default function DealScreen() {
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>That's all for {mode}</Text>
           <Text style={styles.emptySubtitle}>
-            You've seen all {passCount + 1} options
+            You've seen {passCount + 1} options
           </Text>
+          
+          {/* Primary reset action */}
           <TouchableOpacity
-            style={styles.shuffleButton}
+            style={styles.resetTonightButton}
             onPress={handleShuffle}
             accessibilityRole="button"
-            accessibilityLabel="Shuffle again"
+            accessibilityLabel="Reset tonight and deal again"
           >
-            <RefreshCw size={18} color={colors.accentBlue} />
-            <Text style={styles.shuffleButtonText}>Shuffle again</Text>
+            <RefreshCw size={18} color={colors.textInverse} />
+            <Text style={styles.resetTonightButtonText}>Reset Tonight</Text>
+          </TouchableOpacity>
+          
+          {/* Secondary action - go back to mode select */}
+          <TouchableOpacity
+            style={styles.backToModeButton}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Try a different mode"
+          >
+            <Text style={styles.backToModeText}>Try a different mode</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -604,6 +607,33 @@ const styles = StyleSheet.create({
     fontSize: typography.base,
     fontWeight: typography.medium,
     color: colors.accentBlue,
+  },
+  resetTonightButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accentBlue,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+    gap: spacing.sm,
+    minHeight: MIN_TOUCH_TARGET,
+  },
+  resetTonightButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textInverse,
+  },
+  backToModeButton: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+  },
+  backToModeText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
   },
   footer: {
     paddingVertical: spacing.md,
