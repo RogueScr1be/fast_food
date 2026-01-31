@@ -13,6 +13,7 @@ describe('MVP routes exist', () => {
     'app/index.tsx',
     'app/deal.tsx',
     'app/checklist/[recipeId].tsx',
+    'app/rescue/[mealId].tsx',
     'app/(tabs)/tonight.tsx',
     'app/(tabs)/profile.tsx',
     'app/_layout.tsx',
@@ -43,5 +44,11 @@ describe('Root layout registers MVP routes', () => {
     const layoutPath = path.resolve(process.cwd(), 'app/_layout.tsx');
     const content = fs.readFileSync(layoutPath, 'utf-8');
     expect(content).toContain('name="index"');
+  });
+
+  it('_layout.tsx contains rescue route registration', () => {
+    const layoutPath = path.resolve(process.cwd(), 'app/_layout.tsx');
+    const content = fs.readFileSync(layoutPath, 'utf-8');
+    expect(content).toContain('name="rescue/[mealId]"');
   });
 });

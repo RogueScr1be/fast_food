@@ -94,7 +94,9 @@ export default function DealScreen() {
   // Locked transition state (Phase 4)
   const [showLocked, setShowLocked] = useState(false);
   const lockedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRecipeIdRef = useRef<string | null>(null);
+  
+  // Pending navigation after Locked transition - stores type and id
+  const pendingNavRef = useRef<{ type: 'recipe' | 'drm'; id: string } | null>(null);
 
   // Get session state - ensure we have a mode
   const [mode, setLocalMode] = useState(() => {
@@ -207,28 +209,41 @@ export default function DealScreen() {
 
   /**
    * Handle accept ("Let's do this")
-   * Shows "Locked." transition, then navigates to checklist
+   * Shows "Locked." transition, then navigates to appropriate screen
+   * - Recipe → /checklist/[recipeId]
+   * - DRM → /rescue/[mealId]
    */
   const handleAccept = useCallback(() => {
-    if (currentDeal && !showLocked) {
-      // Store recipe ID for navigation after transition
-      pendingRecipeIdRef.current = currentDeal.data.id;
-      setShowLocked(true);
-    }
+    if (!currentDeal || showLocked) return;
+    
+    // Store navigation intent for after Locked transition
+    pendingNavRef.current = currentDeal.type === 'recipe'
+      ? { type: 'recipe', id: currentDeal.data.id }
+      : { type: 'drm', id: currentDeal.data.id };
+    
+    setShowLocked(true);
   }, [currentDeal, showLocked]);
 
   /**
    * Called when LockedTransition completes
+   * Routes to checklist or rescue based on deal type
    */
   const handleLockedComplete = useCallback(() => {
-    const recipeId = pendingRecipeIdRef.current;
+    const pending = pendingNavRef.current;
+    pendingNavRef.current = null;
     setShowLocked(false);
-    pendingRecipeIdRef.current = null;
     
-    if (recipeId) {
+    if (!pending) return;
+    
+    if (pending.type === 'recipe') {
       router.push({
         pathname: '/checklist/[recipeId]',
-        params: { recipeId },
+        params: { recipeId: pending.id },
+      });
+    } else {
+      router.push({
+        pathname: '/rescue/[mealId]',
+        params: { mealId: pending.id },
       });
     }
   }, []);
