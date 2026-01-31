@@ -49,8 +49,29 @@ export default function RootLayout() {
   return (
     <AppProvider>
       <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="onboarding" />
+        {/* Root redirect to Tonight */}
+        <Stack.Screen name="index" />
+        
+        {/* Tab navigator (Tonight, Profile) */}
         <Stack.Screen name="(tabs)" />
+        
+        {/* MVP Deal flow routes - must be explicitly registered for reliable navigation */}
+        <Stack.Screen 
+          name="deal" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
+        />
+        <Stack.Screen 
+          name="checklist/[recipeId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
+        />
+        
+        {/* Fallback */}
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />
