@@ -71,6 +71,15 @@ export default function RootLayout() {
           }} 
         />
         
+        {/* DRM rescue checklist - separate from regular checklist */}
+        <Stack.Screen 
+          name="rescue/[mealId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
+        />
+        
         {/* Fallback */}
         <Stack.Screen name="+not-found" />
       </Stack>

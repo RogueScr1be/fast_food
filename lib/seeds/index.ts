@@ -196,6 +196,22 @@ export function getAnyMealById(id: string): RecipeSeed | DrmSeed | null {
 }
 
 /**
+ * Get DRM meal by ID.
+ * Used by rescue checklist screen.
+ */
+export function getDrmById(id: string): DrmSeed | null {
+  return DRM_MEALS.find(m => m.id === id) || null;
+}
+
+/**
+ * Get recipe (non-DRM) by ID.
+ * Used when you need to ensure it's a RecipeSeed.
+ */
+export function getRecipeSeedById(id: string): RecipeSeed | null {
+  return RECIPES.find(r => r.id === id) || null;
+}
+
+/**
  * Check if a step is a "prep" step based on keywords.
  * Used for Cook/Prep toggle reordering.
  */
@@ -213,6 +229,8 @@ export function isPrepStep(step: string): boolean {
 /**
  * Reorder steps for prep-first mode.
  * Stable sort: prep steps first (in original order), then cook steps (in original order).
+ * 
+ * @deprecated Use reorderForPrepWithIndices for stable index mapping
  */
 export function reorderForPrep(steps: string[]): string[] {
   const prepSteps: string[] = [];
@@ -223,6 +241,26 @@ export function reorderForPrep(steps: string[]): string[] {
       prepSteps.push(step);
     } else {
       cookSteps.push(step);
+    }
+  });
+  
+  return [...prepSteps, ...cookSteps];
+}
+
+/**
+ * Reorder steps for prep-first mode WITH stable index tracking.
+ * Returns array of { text, originalIndex } to avoid indexOf bugs with duplicate text.
+ */
+export function reorderForPrepWithIndices(steps: string[]): { text: string; originalIndex: number }[] {
+  const prepSteps: { text: string; originalIndex: number }[] = [];
+  const cookSteps: { text: string; originalIndex: number }[] = [];
+  
+  steps.forEach((step, index) => {
+    const item = { text: step, originalIndex: index };
+    if (isPrepStep(step)) {
+      prepSteps.push(item);
+    } else {
+      cookSteps.push(item);
     }
   });
   

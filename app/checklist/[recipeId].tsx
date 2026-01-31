@@ -24,7 +24,7 @@ import { ArrowLeft, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
 import { 
   getAnyMealById, 
-  reorderForPrep, 
+  reorderForPrepWithIndices, 
   calculateProgress,
 } from '../../lib/seeds';
 import { getImageSource } from '../../lib/seeds/images';
@@ -51,29 +51,27 @@ export default function ChecklistScreen() {
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
 
   // Compute ordered steps based on mode
+  // Uses stable index mapping to handle duplicate step text correctly
   const orderedSteps: StepState[] = useMemo(() => {
     if (!meal) return [];
     
     const originalSteps = meal.steps;
     
     if (orderMode === 'cook') {
-      // Original order
+      // Original order - straightforward mapping
       return originalSteps.map((text, index) => ({
         text,
         completed: completedIndices.has(index),
         originalIndex: index,
       }));
     } else {
-      // Prep-first order
-      const reordered = reorderForPrep(originalSteps);
-      return reordered.map((text) => {
-        const originalIndex = originalSteps.indexOf(text);
-        return {
-          text,
-          completed: completedIndices.has(originalIndex),
-          originalIndex,
-        };
-      });
+      // Prep-first order - use stable index mapping to avoid indexOf bugs
+      const reordered = reorderForPrepWithIndices(originalSteps);
+      return reordered.map(({ text, originalIndex }) => ({
+        text,
+        completed: completedIndices.has(originalIndex),
+        originalIndex,
+      }));
     }
   }, [meal, orderMode, completedIndices]);
 
