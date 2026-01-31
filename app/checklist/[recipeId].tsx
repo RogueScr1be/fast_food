@@ -113,12 +113,30 @@ export default function ChecklistScreen() {
     router.back();
   }, []);
 
-  // Error state
+  // Error state - controlled fallback instead of crash
   if (!meal) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centered}>
-          <Text style={styles.errorText}>Recipe not found</Text>
+          <Text style={styles.errorTitle}>Recipe not found</Text>
+          <Text style={styles.errorSubtitle}>
+            {recipeId ? `ID: ${recipeId}` : 'No recipe ID provided'}
+          </Text>
+          
+          {/* Primary action: Reset and start fresh */}
+          <TouchableOpacity 
+            style={styles.resetButton} 
+            onPress={() => {
+              resetDealState();
+              router.replace('/(tabs)/tonight');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Reset tonight and go back"
+          >
+            <Text style={styles.resetButtonText}>Reset Tonight</Text>
+          </TouchableOpacity>
+          
+          {/* Secondary: Just go back */}
           <TouchableOpacity style={styles.backLink} onPress={handleBack}>
             <Text style={styles.backLinkText}>Go back</Text>
           </TouchableOpacity>
@@ -438,17 +456,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: spacing.lg,
   },
-  errorText: {
-    fontSize: typography.base,
-    color: colors.textSecondary,
+  errorTitle: {
+    fontSize: typography.xl,
+    fontWeight: typography.semibold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  errorSubtitle: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    marginBottom: spacing.xl,
+  },
+  resetButton: {
+    backgroundColor: colors.accentBlue,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: spacing.md,
+  },
+  resetButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textInverse,
   },
   backLink: {
     padding: spacing.sm,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   backLinkText: {
-    fontSize: typography.base,
-    color: colors.accentBlue,
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
     fontWeight: typography.medium,
   },
 });
