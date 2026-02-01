@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `updateReceiptImportStatus` SQL now uses correct parameter order (`$1` = household_key)
+- Harden session hydration to prevent persisted prefs overwriting active session
+- Make hydration concurrency-safe (concurrent calls return same promise)
 
 ### Security
 - Rule 11: CTEs and subqueries banned for tenant SQL (prevents hidden predicates)

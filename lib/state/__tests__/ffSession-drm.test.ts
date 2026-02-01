@@ -288,5 +288,28 @@ describe('DRM Session State', () => {
       expect(getConstraints()).toEqual(['vegetarian']);
       expect(getExcludeAllergens()).toEqual(['gluten']);
     });
+
+    it('is idempotent under concurrent calls (loads only once)', async () => {
+      // Reset mock call count
+      (loadPrefs as jest.Mock).mockClear();
+      
+      // Create a deferred promise to control when loadPrefs resolves
+      let resolvePrefs: (v: any) => void = () => {};
+      (loadPrefs as jest.Mock).mockImplementation(
+        () => new Promise(res => { resolvePrefs = res; })
+      );
+
+      // Fire two concurrent hydration calls
+      const p1 = hydrateFromStorage();
+      const p2 = hydrateFromStorage();
+
+      // Resolve the single loadPrefs call
+      resolvePrefs({ selectedMode: 'easy', constraints: [], excludeAllergens: [] });
+
+      await Promise.all([p1, p2]);
+
+      // Should only have called loadPrefs once despite two concurrent calls
+      expect(loadPrefs).toHaveBeenCalledTimes(1);
+    });
   });
 });
