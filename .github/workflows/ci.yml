@@ -36,6 +36,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Security gate - banned files
+        run: |
+          echo "Checking for banned files..."
+          test ! -f .env || (echo "FAIL: .env must not be committed" && exit 1)
+          test ! -f db.js || (echo "FAIL: db.js must not be committed" && exit 1)
+          echo "PASS: No banned files found"
+
       - name: Run tests
         run: npm test
 

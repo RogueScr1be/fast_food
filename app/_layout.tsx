@@ -21,15 +21,31 @@ export default function RootLayout() {
   });
 
   // Hydrate preferences from storage on mount
+  // Includes timeout fallback to prevent black-screen on corrupted storage
   useEffect(() => {
     if (isHydrated()) {
       setPrefsLoaded(true);
       return;
     }
     
-    hydrateFromStorage().then(() => {
+    // Timeout fallback: don't let hydration block app forever
+    const timeout = setTimeout(() => {
+      console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
       setPrefsLoaded(true);
-    });
+    }, 3000);
+    
+    hydrateFromStorage()
+      .then(() => {
+        clearTimeout(timeout);
+        setPrefsLoaded(true);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        console.warn('[RootLayout] Hydration failed:', error);
+        setPrefsLoaded(true); // Proceed with defaults on failure
+      });
+    
+    return () => clearTimeout(timeout);
   }, []);
 
   const isReady = isFrameworkReady && (fontsLoaded || fontError) && prefsLoaded;
