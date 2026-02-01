@@ -36,7 +36,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Restaurant quality at home', 'Omega-3 rich', 'Under 20 minutes'],
     estimatedTime: '18 min',
     estimatedCost: '$22',
-    emoji: '🐟',
     imageKey: 'salmon',
   },
   {
