@@ -42,6 +42,7 @@ let state: FFSessionState = {
 
 // Hydration tracking
 let hydrated = false;
+let hydratingPromise: Promise<void> | null = null;
 
 // Subscribers for reactive updates
 type Listener = () => void;
@@ -66,36 +67,44 @@ export function isHydrated(): boolean {
  * Load persisted preferences from storage and update state.
  * Call once on app launch (e.g., in root layout).
  * Safe to call multiple times - only hydrates once.
+ * Concurrency-safe: concurrent calls return the same promise.
  * 
  * IMPORTANT: Will NOT overwrite state if user/flow has already set values
  * (e.g., Deal screen's random-mode fallback). This prevents race conditions.
  */
 export async function hydrateFromStorage(): Promise<void> {
   if (hydrated) return;
+  if (hydratingPromise) return hydratingPromise;
 
-  try {
-    const prefs = await loadPrefs();
+  hydratingPromise = (async () => {
+    try {
+      const prefs = await loadPrefs();
 
-    // Guard: only apply persisted prefs if state is still at defaults
-    // This prevents hydration from clobbering live state set by user/flow
-    const stateIsDefault =
-      state.selectedMode === null &&
-      state.constraints.length === 0 &&
-      state.excludeAllergens.length === 0;
+      // Guard: only apply persisted prefs if state is still at defaults
+      // This prevents hydration from clobbering live state set by user/flow
+      const stateIsDefault =
+        state.selectedMode === null &&
+        state.constraints.length === 0 &&
+        state.excludeAllergens.length === 0;
 
-    if (stateIsDefault) {
-      state.selectedMode = prefs.selectedMode;
-      state.constraints = [...prefs.constraints];
-      state.excludeAllergens = [...prefs.excludeAllergens];
-      notifyListeners();
+      if (stateIsDefault) {
+        state.selectedMode = prefs.selectedMode;
+        state.constraints = [...prefs.constraints];
+        state.excludeAllergens = [...prefs.excludeAllergens];
+        notifyListeners();
+      }
+
+      hydrated = true;
+    } catch (error) {
+      // Mark as hydrated even on error to prevent retry loops
+      hydrated = true;
+      console.warn('[ffSession] Hydration failed:', error);
+    } finally {
+      hydratingPromise = null;
     }
+  })();
 
-    hydrated = true;
-  } catch (error) {
-    // Mark as hydrated even on error to prevent retry loops
-    hydrated = true;
-    console.warn('[ffSession] Hydration failed:', error);
-  }
+  return hydratingPromise;
 }
 
 // ============================================
@@ -335,6 +344,7 @@ export function __resetHydrationForTest(): void {
  */
 export function __resetStateForTest(): void {
   hydrated = false;
+  hydratingPromise = null;
   state = {
     selectedMode: null,
     excludeAllergens: [],
