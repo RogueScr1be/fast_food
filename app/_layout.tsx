@@ -20,7 +20,8 @@ export default function RootLayout() {
     'Inter-Bold': Inter_700Bold,
   });
 
-  // Hydrate preferences from storage on mount (never hang splash)
+  // Hydrate preferences from storage on mount
+  // Includes timeout fallback to prevent black-screen on corrupted storage
   useEffect(() => {
     let alive = true;
 
@@ -29,16 +30,26 @@ export default function RootLayout() {
       return;
     }
 
+    // Timeout fallback: don't let hydration block app forever
+    const timeout = setTimeout(() => {
+      if (alive) {
+        console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
+        setPrefsLoaded(true);
+      }
+    }, 3000);
+
     hydrateFromStorage()
-      .catch(() => {
-        // hydration marks hydrated=true internally on error
+      .catch((error) => {
+        console.warn('[RootLayout] Hydration failed:', error);
       })
       .finally(() => {
+        clearTimeout(timeout);
         if (alive) setPrefsLoaded(true);
       });
 
     return () => {
       alive = false;
+      clearTimeout(timeout);
     };
   }, []);
 
