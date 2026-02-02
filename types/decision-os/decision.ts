@@ -73,6 +73,8 @@ export type DrmReason =
 export interface DecisionSuccessResponse {
   decision: SingleAction;
   drmRecommended: false;
+  /** Whether autopilot auto-approved this decision (Earned Autonomy v1) */
+  autopilot?: boolean;
 }
 
 // Response when DRM is recommended (no decision)
@@ -104,7 +106,16 @@ export interface InventoryItemRow {
   id: string;
   household_key: string;
   item_name: string;
+  qty_estimated: number | null;
+  qty_used_estimated: number | null;
+  unit: string | null;
   confidence: number;
+  source: string;
+  last_seen_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  decay_rate_per_day: number | null;
+  created_at: string;
 }
 
 export interface MealIngredientRow {
@@ -123,6 +134,7 @@ export interface DecisionEventRow {
   context_hash: string;
   decision_payload: Record<string, unknown>;
   user_action: 'pending' | 'approved' | 'rejected' | 'drm_triggered' | 'expired';
+  actioned_at?: string; // ISO timestamp when user took action (feedback copy only)
 }
 
 // =============================================================================

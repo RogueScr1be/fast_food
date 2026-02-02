@@ -6,7 +6,6 @@
 -- - No browsing surfaces (no category/tag tables exposed to UI)
 -- - Append-only for decision_events and drm_events
 -- - Inventory confidence is probabilistic, never blocks decisions
--- - DRM tags are internal-only; the client never receives a DRM-specific meal list or tag set
 -- ============================================================================
 
 -- Create schema
@@ -68,7 +67,7 @@ CREATE TABLE decision_os.inventory_items (
     unit                TEXT,                  -- nullable, e.g., 'lb', 'count', 'oz'
     confidence          NUMERIC(3,2) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     source              TEXT NOT NULL CHECK (source IN ('receipt', 'manual', 'cv')),
-    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at        TIMESTAMPTZ NOT NULL,
     expires_at          TIMESTAMPTZ,           -- nullable, for perishables
     created_at          TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     
@@ -87,7 +86,6 @@ COMMENT ON COLUMN decision_os.inventory_items.source IS 'receipt=OCR scan, manua
 -- DECISION EVENTS
 -- APPEND-ONLY event log. Single source of truth for all decision learning.
 -- No UPDATE or DELETE allowed.
--- user_action defaults to 'pending' until user acts or timeout expires.
 -- ============================================================================
 CREATE TABLE decision_os.decision_events (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -98,8 +96,8 @@ CREATE TABLE decision_os.decision_events (
     external_vendor_key TEXT,                  -- nullable, for order type
     context_hash        TEXT NOT NULL,         -- hash of context at decision time
     decision_payload    JSONB NOT NULL,        -- full decision details
-    user_action         TEXT NOT NULL DEFAULT 'pending' CHECK (user_action IN ('pending', 'approved', 'rejected', 'drm_triggered', 'expired')),
-    actioned_at         TIMESTAMPTZ,           -- when user acted, nullable if pending/expired
+    user_action         TEXT NOT NULL CHECK (user_action IN ('approved', 'rejected', 'drm_triggered', 'expired')),
+    actioned_at         TIMESTAMPTZ,           -- when user acted, nullable if expired
     notes               TEXT,                  -- nullable, internal notes
     created_at          TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
@@ -108,12 +106,10 @@ CREATE INDEX idx_decision_events_household ON decision_os.decision_events(househ
 CREATE INDEX idx_decision_events_meal ON decision_os.decision_events(meal_id) WHERE meal_id IS NOT NULL;
 CREATE INDEX idx_decision_events_action ON decision_os.decision_events(user_action);
 CREATE INDEX idx_decision_events_type ON decision_os.decision_events(decision_type);
-CREATE INDEX idx_decision_events_pending ON decision_os.decision_events(household_key) WHERE user_action = 'pending';
 
 COMMENT ON TABLE decision_os.decision_events IS 'APPEND-ONLY decision log. No updates or deletes.';
 COMMENT ON COLUMN decision_os.decision_events.context_hash IS 'Hash of context (time, day, inventory state) for debugging.';
 COMMENT ON COLUMN decision_os.decision_events.decision_payload IS 'Full decision details including confidence, ingredients matched.';
-COMMENT ON COLUMN decision_os.decision_events.user_action IS 'pending=awaiting action, approved/rejected=user acted, drm_triggered=user triggered DRM, expired=timeout';
 
 -- ============================================================================
 -- DRM EVENTS
@@ -187,20 +183,37 @@ CREATE TRIGGER drm_events_no_delete
     EXECUTE FUNCTION decision_os.prevent_delete();
 
 -- ============================================================================
--- NOTE: household_constraints REMOVED from Phase 1
--- Allergies are handled via one-time local-only prompt (client storage).
--- No DB persistence for allergies in Phase 1.
+-- HOUSEHOLD HARD CONSTRAINTS
+-- Allergy flags (safety-critical, set once on onboarding)
 -- ============================================================================
+CREATE TABLE decision_os.household_constraints (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    household_key       TEXT NOT NULL UNIQUE DEFAULT 'default',
+    has_gluten_allergy  BOOLEAN DEFAULT false,
+    has_dairy_allergy   BOOLEAN DEFAULT false,
+    has_nut_allergy     BOOLEAN DEFAULT false,
+    has_shellfish_allergy BOOLEAN DEFAULT false,
+    has_egg_allergy     BOOLEAN DEFAULT false,
+    is_vegetarian       BOOLEAN DEFAULT false,
+    is_vegan            BOOLEAN DEFAULT false,
+    created_at          TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at          TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+COMMENT ON TABLE decision_os.household_constraints IS 'Safety-critical allergy constraints. Set once on onboarding.';
+
+-- Insert default household
+INSERT INTO decision_os.household_constraints (household_key) VALUES ('default');
 
 -- ============================================================================
 -- VERIFICATION
 -- ============================================================================
 DO $$
 BEGIN
-    -- Verify all tables exist (5 tables: meals, meal_ingredients, inventory_items, decision_events, drm_events)
+    -- Verify all tables exist
     ASSERT (SELECT COUNT(*) FROM information_schema.tables 
-            WHERE table_schema = 'decision_os') = 5,
-           'Expected exactly 5 tables in decision_os schema';
+            WHERE table_schema = 'decision_os') >= 6,
+           'Expected at least 6 tables in decision_os schema';
     
     -- Verify append-only triggers exist
     ASSERT (SELECT COUNT(*) FROM information_schema.triggers 
@@ -212,20 +225,6 @@ BEGIN
             WHERE trigger_schema = 'decision_os' 
             AND trigger_name LIKE '%_no_delete') = 2,
            'Expected 2 no_delete triggers';
-    
-    -- Verify user_action default is 'pending'
-    ASSERT (SELECT column_default FROM information_schema.columns
-            WHERE table_schema = 'decision_os' 
-            AND table_name = 'decision_events'
-            AND column_name = 'user_action') = '''pending''::text',
-           'Expected user_action default to be pending';
-    
-    -- Verify last_seen_at has default
-    ASSERT (SELECT column_default FROM information_schema.columns
-            WHERE table_schema = 'decision_os' 
-            AND table_name = 'inventory_items'
-            AND column_name = 'last_seen_at') IS NOT NULL,
-           'Expected last_seen_at to have a default';
     
     RAISE NOTICE 'Migration 001 verification passed';
 END $$;

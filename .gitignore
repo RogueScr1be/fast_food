@@ -1,6 +1,26 @@
 # Dependencies
 node_modules/
 
+# Test coverage
+coverage/
+lcov-report/
+*.lcov
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (keep .env.example and .env.staging.example tracked)
+.env
+.env.local
+.env.*.local
+
 # Build outputs
 dist/
 .expo/
@@ -33,3 +53,7 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+.cache/
+
+# Prevent stray credential files
+db.js

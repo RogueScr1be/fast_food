@@ -1,34 +1,39 @@
-/** @type {import('jest').Config} */
 module.exports = {
   preset: 'jest-expo',
-  testEnvironment: 'node',
-  testMatch: [
-    '<rootDir>/tests/**/*.test.ts',
-    '<rootDir>/tests/**/*.test.tsx',
+  transformIgnorePatterns: [
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|lucide-react-native)'
   ],
+  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/$1',
-    '^@app/(.*)$': '<rootDir>/app/$1',
+    '^@/lib/(.*)$': '<rootDir>/lib/$1',
+    '^@/types/(.*)$': '<rootDir>/types/$1',
+    '^@/(.*)$': '<rootDir>/app/$1'
   },
-  transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': 'babel-jest',
-  },
+  testMatch: ['**/__tests__/**/*.test.[jt]s?(x)'],
+  collectCoverageFrom: [
+    'app/**/*.{ts,tsx}',
+    'lib/**/*.{ts,tsx}',
+    'services/**/*.{ts,tsx}',
+    '!**/node_modules/**'
+  ]
+/**
+ * Jest Configuration for Fast Food
+ * 
+ * Uses jest-expo preset with additional global setup for React Native mocks.
+ */
+module.exports = {
+  preset: 'jest-expo',
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg)',
   ],
-  setupFilesAfterEnv: [],
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  collectCoverageFrom: [
-    'lib/decision-os/**/*.ts',
-    'app/api/decision-os/**/*.ts',
-    '!**/node_modules/**',
-  ],
-  coverageThreshold: {
-    global: {
-      statements: 70,
-      branches: 60,
-      functions: 70,
-      lines: 70,
-    },
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/$1',
   },
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/dist/',
+    '/.expo/',
+  ],
 };

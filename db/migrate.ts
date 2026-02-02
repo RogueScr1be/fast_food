@@ -15,6 +15,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import dns from 'node:dns/promises';
+import { parse as parsePgConnection } from 'pg-connection-string';
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
@@ -633,10 +635,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   
+    const wantsSsl =
+    /sslmode=/i.test(databaseUrl) ||
+    !!process.env.PGSSLMODE ||
+    databaseUrl.includes("supabase.com");
+
+  const ssl = wantsSsl ? { rejectUnauthorized: false } : undefined;
+
   const pool = new pg.Pool({
     connectionString: databaseUrl,
     max: 1,
     connectionTimeoutMillis: 10000,
+    ssl,
   });
   
   try {

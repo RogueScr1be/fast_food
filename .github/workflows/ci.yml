@@ -1,7 +1,7 @@
 # CI Workflow — Tests on PR and main
 #
 # No secrets required. Pure code verification.
-# Runs: tests, build sanity, migration ordering proof
+# Runs: tests, build sanity, SQL contract gate, migration proof on ephemeral Postgres
 
 name: CI
 
@@ -16,6 +16,8 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
+  # Fix: prefer IPv4 resolution in GitHub runners (prevents IPv6 ENETUNREACH surprises)
+  NODE_OPTIONS: --dns-result-order=ipv4first
 
 jobs:
   test:
@@ -62,8 +64,13 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     env:
+      # Local ephemeral DB (CI stays secretless)
       DATABASE_URL: postgresql://test:test@localhost:5432/decision_os_test
+      # Fix also applied here (keeps Node's DNS behavior consistent)
+      NODE_OPTIONS: --dns-result-order=ipv4first
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -99,10 +106,10 @@ jobs:
         run: |
           npx ts-node -e "
           const { Client } = require('pg');
-          async function test() {
+          async function runSmokeTest() {
             const client = new Client({ connectionString: process.env.DATABASE_URL });
             await client.connect();
-            
+
             // Insert test data
             await client.query(\`
               INSERT INTO user_profiles (id, auth_user_id, created_at)
@@ -110,20 +117,20 @@ jobs:
               ON CONFLICT (id) DO NOTHING
             \`);
             console.log('PASS insert_user_profile');
-            
+
             await client.query(\`
               INSERT INTO households (id, household_key, created_at)
               VALUES (gen_random_uuid(), 'ci-household', NOW())
               ON CONFLICT (household_key) DO NOTHING
             \`);
             console.log('PASS insert_household');
-            
+
             // Verify read
             const result = await client.query('SELECT COUNT(*) FROM user_profiles');
             console.log('PASS read_user_profiles count=' + result.rows[0].count);
-            
+
             await client.end();
             console.log('PASS db_smoke_test_complete');
           }
-          test().catch(e => { console.error('FAIL', e.message); process.exit(1); });
+          runSmokeTest().catch(e => { console.error('FAIL', e.message); process.exit(1); });
           "

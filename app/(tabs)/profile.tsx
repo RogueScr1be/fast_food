@@ -1,341 +1,740 @@
-import React from 'react';
+/**
+ * Settings Screen (Profile Tab)
+ * 
+ * Fast Food MVP Settings - calm, OS-like design.
+ * Editable preferences, about info, and reset options.
+ * 
+ * Phase 6.3: Made settings editable with toggles and allergen modal.
+ */
+
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Image,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
+  Modal,
+  SafeAreaView,
+  Platform,
+  Switch,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Settings, MessageCircle, Star, Clock, LogOut } from 'lucide-react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { RefreshCw, Info, AlertTriangle, ChevronRight, X, Check, Trash2 } from 'lucide-react-native';
+import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import {
+  getExcludeAllergens,
+  getConstraints,
+  setExcludeAllergens,
+  toggleConstraint,
+  addExcludeAllergen,
+  removeExcludeAllergen,
+  resetDealState,
+  resetAll,
+} from '../../lib/state/ffSession';
+import type { AllergenTag, ConstraintTag } from '../../lib/seeds/types';
 
-export default function ProfileScreen() {
+// App version - placeholder for MVP
+const APP_VERSION = 'MVP';
+
+// Allergen display names
+const ALLERGEN_LABELS: Record<AllergenTag, string> = {
+  dairy: 'Dairy',
+  nuts: 'Nuts',
+  gluten: 'Gluten',
+  eggs: 'Eggs',
+  soy: 'Soy',
+  shellfish: 'Shellfish',
+};
+
+// Constraint display names
+const CONSTRAINT_LABELS: Record<ConstraintTag, string> = {
+  no_oven: 'No Oven',
+  kid_safe: 'Kid Safe',
+  '15_min': '15 min',
+  vegetarian: 'Vegetarian',
+  no_dairy: 'No Dairy',
+};
+
+// All allergens for the modal
+const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
+  { tag: 'dairy', label: 'Dairy' },
+  { tag: 'nuts', label: 'Nuts' },
+  { tag: 'gluten', label: 'Gluten' },
+  { tag: 'eggs', label: 'Eggs' },
+  { tag: 'soy', label: 'Soy' },
+  { tag: 'shellfish', label: 'Shellfish' },
+];
+
+export default function SettingsScreen() {
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [showResetAllModal, setShowResetAllModal] = useState(false);
+  const [showAllergyModal, setShowAllergyModal] = useState(false);
+  const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
+  
+  // Force re-render counter for reactive updates
+  const [, forceUpdate] = useState(0);
+  
+  // Read current preferences
+  const excludeAllergens = getExcludeAllergens();
+  const constraints = getConstraints();
+  
+  /**
+   * Format allergens list for display
+   */
+  const formatAllergens = (): string => {
+    if (excludeAllergens.length === 0) {
+      return 'None';
+    }
+    return excludeAllergens.map(a => ALLERGEN_LABELS[a]).join(', ');
+  };
+
+  /**
+   * Check if a constraint is active
+   */
+  const isConstraintActive = (constraint: ConstraintTag): boolean => {
+    return constraints.includes(constraint);
+  };
+  
+  /**
+   * Handle constraint toggle
+   */
+  const handleConstraintToggle = useCallback((constraint: ConstraintTag) => {
+    toggleConstraint(constraint);
+    // Special case: No Dairy also adds/removes dairy allergen for consistency
+    if (constraint === 'no_dairy') {
+      if (isConstraintActive('no_dairy')) {
+        // Was on, now off - remove dairy allergen
+        removeExcludeAllergen('dairy');
+      } else {
+        // Was off, now on - add dairy allergen
+        addExcludeAllergen('dairy');
+      }
+    }
+    forceUpdate(n => n + 1);
+  }, [constraints]);
+  
+  /**
+   * Open allergy modal
+   */
+  const openAllergyModal = useCallback(() => {
+    setTempAllergens([...excludeAllergens]);
+    setShowAllergyModal(true);
+  }, [excludeAllergens]);
+  
+  /**
+   * Toggle allergen in temp state
+   */
+  const toggleAllergenTemp = (tag: AllergenTag) => {
+    setTempAllergens(prev =>
+      prev.includes(tag)
+        ? prev.filter(a => a !== tag)
+        : [...prev, tag]
+    );
+  };
+  
+  /**
+   * Save allergens and close modal
+   */
+  const saveAllergens = useCallback(() => {
+    setExcludeAllergens(tempAllergens);
+    setShowAllergyModal(false);
+    forceUpdate(n => n + 1);
+  }, [tempAllergens]);
+
+  /**
+   * Handle reset tonight
+   */
+  const handleResetTonight = useCallback(() => {
+    resetDealState();
+    setShowResetModal(false);
+  }, []);
+  
+  /**
+   * Handle reset all (clears persisted prefs too)
+   */
+  const handleResetAll = useCallback(() => {
+    resetAll();
+    setShowResetAllModal(false);
+    forceUpdate(n => n + 1);
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['#4A00E0', '#8E2DE2']}
-        style={styles.header}
+    <SafeAreaView style={styles.container}>
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
       >
-        <View style={styles.profileHeader}>
-          <Image
-            source={{ uri: 'https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&dpr=1' }}
-            style={styles.profileImage}
-          />
-          <Text style={styles.profileName}>Alex Johnson</Text>
-          <Text style={styles.profileBio}>AI enthusiast & creative thinker</Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Settings</Text>
+        </View>
+
+        {/* Preferences Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <View style={styles.card}>
+            {/* Allergens Row - Tappable */}
+            <TouchableOpacity
+              style={styles.rowTouchable}
+              onPress={openAllergyModal}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Edit allergens"
+            >
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Allergens</Text>
+                <View style={styles.rowValueContainer}>
+                  <Text style={styles.rowValue} numberOfLines={1}>
+                    {formatAllergens()}
+                  </Text>
+                  <ChevronRight size={18} color={colors.textMuted} />
+                </View>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            {/* Vegetarian Toggle */}
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Vegetarian</Text>
+                <Switch
+                  value={isConstraintActive('vegetarian')}
+                  onValueChange={() => handleConstraintToggle('vegetarian')}
+                  trackColor={{ false: colors.borderSubtle, true: colors.accentGreen }}
+                  thumbColor={colors.surface}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Vegetarian mode"
+                />
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* No Dairy Toggle */}
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>No Dairy</Text>
+                <Switch
+                  value={isConstraintActive('no_dairy') || excludeAllergens.includes('dairy')}
+                  onValueChange={() => handleConstraintToggle('no_dairy')}
+                  trackColor={{ false: colors.borderSubtle, true: colors.accentGreen }}
+                  thumbColor={colors.surface}
+                  accessibilityRole="switch"
+                  accessibilityLabel="No dairy mode"
+                />
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Quick Meals Toggle */}
+            <View style={styles.row}>
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Quick Meals</Text>
+                <Switch
+                  value={isConstraintActive('15_min')}
+                  onValueChange={() => handleConstraintToggle('15_min')}
+                  trackColor={{ false: colors.borderSubtle, true: colors.accentGreen }}
+                  thumbColor={colors.surface}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Quick meals only (15 minutes or less)"
+                />
+              </View>
+            </View>
+          </View>
           
-          <View style={styles.statsContainer}>
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>128</Text>
-              <Text style={styles.statLabel}>Chats</Text>
+          <Text style={styles.hint}>
+            Changes apply to future deals. Persisted across app restarts.
+          </Text>
+        </View>
+
+        {/* About Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>About</Text>
+          <View style={styles.card}>
+            <View style={styles.row}>
+              <Info size={20} color={colors.textMuted} />
+              <View style={styles.rowContent}>
+                <Text style={styles.rowLabel}>Build</Text>
+                <Text style={styles.rowValue}>{APP_VERSION}</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>45</Text>
-              <Text style={styles.statLabel}>Saved</Text>
+          </View>
+          
+          <Text style={styles.aboutText}>
+            Fast Food compresses dinner decisions into one calm loop.
+          </Text>
+        </View>
+
+        {/* Reset Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Reset</Text>
+          
+          {/* Reset Tonight */}
+          <TouchableOpacity
+            style={styles.resetButton}
+            onPress={() => setShowResetModal(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Reset tonight's session"
+          >
+            <RefreshCw size={20} color={colors.accentBlue} />
+            <Text style={styles.resetButtonTextBlue}>Reset Tonight</Text>
+          </TouchableOpacity>
+          
+          <Text style={styles.hint}>
+            Clears deal history and pass count. Keeps preferences.
+          </Text>
+          
+          {/* Reset All */}
+          <TouchableOpacity
+            style={[styles.resetButton, styles.resetAllButton]}
+            onPress={() => setShowResetAllModal(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Reset all preferences"
+          >
+            <Trash2 size={20} color={colors.error} />
+            <Text style={styles.resetButtonText}>Reset All</Text>
+          </TouchableOpacity>
+          
+          <Text style={styles.hint}>
+            Clears all preferences including allergens and constraints.
+          </Text>
+        </View>
+      </ScrollView>
+
+      {/* Reset Tonight Modal */}
+      <Modal
+        visible={showResetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowResetModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIcon}>
+              <RefreshCw size={32} color={colors.accentBlue} />
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>Pro</Text>
-              <Text style={styles.statLabel}>Plan</Text>
+            
+            <Text style={styles.modalTitle}>Reset tonight?</Text>
+            <Text style={styles.modalMessage}>
+              Clears deal history and pass count. Preferences are kept.
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setShowResetModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalConfirmButtonBlue}
+                onPress={handleResetTonight}
+                accessibilityRole="button"
+                accessibilityLabel="Yes, reset tonight"
+              >
+                <Text style={styles.modalConfirmText}>Reset</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
-      </LinearGradient>
+      </Modal>
       
-      <ScrollView style={styles.content}>
-        <Animated.View entering={FadeInDown.delay(100).springify()}>
-          <Text style={styles.sectionTitle}>Activity</Text>
-          <View style={styles.card}>
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <MessageCircle size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Recent Conversations</Text>
-                <Text style={styles.activitySubtitle}>12 new chats this week</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
-              </TouchableOpacity>
+      {/* Reset All Modal */}
+      <Modal
+        visible={showResetAllModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowResetAllModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIcon}>
+              <AlertTriangle size={32} color={colors.error} />
             </View>
             
-            <View style={styles.divider} />
-            
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <Star size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Favorite Responses</Text>
-                <Text style={styles.activitySubtitle}>8 responses saved</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
+            <Text style={styles.modalTitle}>Reset all preferences?</Text>
+            <Text style={styles.modalMessage}>
+              This clears allergens, dietary preferences, and deal history. Cannot be undone.
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setShowResetAllModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-            </View>
-            
-            <View style={styles.divider} />
-            
-            <View style={styles.activityItem}>
-              <View style={styles.activityIconContainer}>
-                <Clock size={20} color="#8A2BE2" />
-              </View>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>Usage History</Text>
-                <Text style={styles.activitySubtitle}>3.5 hours this month</Text>
-              </View>
-              <TouchableOpacity style={styles.activityButton}>
-                <Text style={styles.activityButtonText}>View</Text>
+
+              <TouchableOpacity
+                style={styles.modalConfirmButton}
+                onPress={handleResetAll}
+                accessibilityRole="button"
+                accessibilityLabel="Yes, reset all"
+              >
+                <Text style={styles.modalConfirmText}>Reset All</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </Animated.View>
-        
-        <Animated.View entering={FadeInDown.delay(200).springify()}>
-          <Text style={styles.sectionTitle}>Subscription</Text>
-          <View style={styles.card}>
-            <LinearGradient
-              colors={['#4A00E0', '#8E2DE2']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.subscriptionCard}
-            >
-              <View style={styles.subscriptionContent}>
-                <View>
-                  <Text style={styles.subscriptionTitle}>Pro Plan</Text>
-                  <Text style={styles.subscriptionSubtitle}>Unlimited access to all features</Text>
-                </View>
-                <View style={styles.subscriptionBadge}>
-                  <Text style={styles.subscriptionBadgeText}>ACTIVE</Text>
-                </View>
-              </View>
-              
-              <View style={styles.subscriptionDetails}>
-                <Text style={styles.subscriptionDetail}>• Unlimited conversations</Text>
-                <Text style={styles.subscriptionDetail}>• Priority response time</Text>
-                <Text style={styles.subscriptionDetail}>• Advanced AI capabilities</Text>
-                <Text style={styles.subscriptionDetail}>• No ads</Text>
-              </View>
-              
-              <TouchableOpacity style={styles.subscriptionButton}>
-                <Text style={styles.subscriptionButtonText}>Manage Subscription</Text>
+        </View>
+      </Modal>
+      
+      {/* Allergen Edit Modal */}
+      <Modal
+        visible={showAllergyModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAllergyModal(false)}
+      >
+        <View style={styles.allergyModalOverlay}>
+          <View style={styles.allergyModalContent}>
+            {/* Header */}
+            <View style={styles.allergyModalHeader}>
+              <Text style={styles.allergyModalTitle}>Allergens</Text>
+              <TouchableOpacity
+                onPress={() => setShowAllergyModal(false)}
+                style={styles.allergyModalClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <X size={24} color={colors.textSecondary} />
               </TouchableOpacity>
-            </LinearGradient>
-          </View>
-        </Animated.View>
-        
-        <Animated.View entering={FadeInDown.delay(300).springify()}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <View style={styles.card}>
-            <TouchableOpacity style={styles.accountOption}>
-              <Settings size={20} color="#333" />
-              <Text style={styles.accountOptionText}>Settings</Text>
-            </TouchableOpacity>
+            </View>
             
-            <View style={styles.divider} />
+            {/* Allergen List */}
+            <ScrollView style={styles.allergenList}>
+              {ALL_ALLERGENS.map(({ tag, label }) => (
+                <TouchableOpacity
+                  key={tag}
+                  style={styles.allergenRow}
+                  onPress={() => toggleAllergenTemp(tag)}
+                  activeOpacity={0.7}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: tempAllergens.includes(tag) }}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    tempAllergens.includes(tag) && styles.checkboxChecked,
+                  ]}>
+                    {tempAllergens.includes(tag) && (
+                      <Check size={16} color={colors.textInverse} />
+                    )}
+                  </View>
+                  <Text style={styles.allergenLabel}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
             
-            <TouchableOpacity style={styles.accountOption}>
-              <LogOut size={20} color="#333" />
-              <Text style={styles.accountOptionText}>Log Out</Text>
-            </TouchableOpacity>
+            {/* Save Button */}
+            <View style={styles.allergyModalFooter}>
+              <TouchableOpacity
+                style={styles.saveAllergensButton}
+                onPress={saveAllergens}
+                accessibilityRole="button"
+                accessibilityLabel="Save allergens"
+              >
+                <Text style={styles.saveAllergensText}>Save</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </Animated.View>
-      </ScrollView>
-    </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: colors.background,
   },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 30,
-  },
-  profileHeader: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: '#FFF',
-    marginBottom: 16,
-  },
-  profileName: {
-    fontSize: 24,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  profileBio: {
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  statDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  content: {
+  scrollView: {
     flex: 1,
-    padding: 20,
+  },
+  scrollContent: {
+    paddingBottom: spacing.xxl,
+  },
+  // Header
+  header: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: Platform.OS === 'ios' ? spacing.md : spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  headerTitle: {
+    fontSize: typography['3xl'],
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+  },
+  // Sections
+  section: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    color: '#333',
-    marginBottom: 12,
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
   },
+  // Cards
   card: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    ...shadows.sm,
+    overflow: 'hidden',
   },
-  activityItem: {
+  // Rows
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    minHeight: MIN_TOUCH_TARGET + 8, // 56px
   },
-  activityIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(138, 43, 226, 0.1)',
-    justifyContent: 'center',
+  rowTouchable: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 12,
+    paddingHorizontal: spacing.md,
+    minHeight: MIN_TOUCH_TARGET + 8, // 56px
   },
-  activityContent: {
+  rowContent: {
     flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  activityTitle: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#333',
-    marginBottom: 2,
+  rowLabel: {
+    fontSize: typography.base,
+    fontWeight: typography.medium,
+    color: colors.textPrimary,
   },
-  activitySubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#666',
+  rowValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    maxWidth: '60%',
   },
-  activityButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(138, 43, 226, 0.1)',
+  rowValue: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    textAlign: 'right',
   },
-  activityButtonText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#8A2BE2',
+  rowStatus: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    color: colors.textMuted,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E5E5E5',
-    marginVertical: 8,
+    backgroundColor: colors.borderSubtle,
+    marginLeft: spacing.md,
   },
-  subscriptionCard: {
-    borderRadius: 12,
-    padding: 20,
+  // Hints
+  hint: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    marginLeft: spacing.xs,
   },
-  subscriptionContent: {
+  // About
+  aboutText: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+    marginLeft: spacing.xs,
+    fontStyle: 'italic',
+  },
+  // Reset buttons
+  resetButton: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    height: MIN_TOUCH_TARGET + 4, // 52px
+    paddingHorizontal: spacing.lg,
+    ...shadows.sm,
+  },
+  resetAllButton: {
+    marginTop: spacing.md,
+    backgroundColor: colors.errorLight,
+    borderColor: colors.errorLight,
+  },
+  resetButtonText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.error,
+    marginLeft: spacing.sm,
+  },
+  resetButtonTextBlue: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.accentBlue,
+    marginLeft: spacing.sm,
+  },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+    ...shadows.lg,
+  },
+  modalIcon: {
+    marginBottom: spacing.md,
+  },
+  modalTitle: {
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: spacing.sm,
+  },
+  modalCancelButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.mutedLight,
+    borderRadius: radii.md,
+  },
+  modalCancelText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textSecondary,
+  },
+  modalConfirmButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.error,
+    borderRadius: radii.md,
+  },
+  modalConfirmButtonBlue: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.accentBlue,
+    borderRadius: radii.md,
+  },
+  modalConfirmText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+    color: colors.textInverse,
+  },
+  // Allergen Modal
+  allergyModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  allergyModalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    maxHeight: '70%',
+  },
+  allergyModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  subscriptionTitle: {
-    fontSize: 20,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-    marginBottom: 4,
+  allergyModalTitle: {
+    fontSize: typography.lg,
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
   },
-  subscriptionSubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  subscriptionBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  subscriptionBadgeText: {
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-    color: '#FFF',
-  },
-  subscriptionDetails: {
-    marginBottom: 20,
-  },
-  subscriptionDetail: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 6,
-  },
-  subscriptionButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 12,
-    borderRadius: 25,
+  allergyModalClose: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
     alignItems: 'center',
+    marginRight: -spacing.sm,
   },
-  subscriptionButtonText: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#FFF',
+  allergenList: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
-  accountOption: {
+  allergenRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: spacing.md,
+    minHeight: MIN_TOUCH_TARGET,
   },
-  accountOptionText: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#333',
-    marginLeft: 12,
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: radii.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
+    marginRight: spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+  },
+  checkboxChecked: {
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
+  },
+  allergenLabel: {
+    fontSize: typography.base,
+    color: colors.textPrimary,
+  },
+  allergyModalFooter: {
+    padding: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  saveAllergensButton: {
+    backgroundColor: colors.accentBlue,
+    height: MIN_TOUCH_TARGET + 4,
+    borderRadius: radii.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveAllergensText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+    color: colors.textInverse,
   },
 });

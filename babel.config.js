@@ -1,20 +1,31 @@
-module.exports = function(api) {
+module.exports = function (api) {
   api.cache(true);
+
   return {
     presets: ['babel-preset-expo'],
     plugins: [
+      // Keep expo-router plugin (warning is fine; not your blocker)
       'expo-router/babel',
-      'react-native-reanimated/plugin',
+
+      // IMPORTANT:
+      // '@' must point to project root, NOT './app'
       [
         'module-resolver',
         {
+          root: ['./'],
           alias: {
             '@': './',
-            '@app': './app'
           },
-          extensions: ['.js', '.jsx', '.ts', '.tsx', '.json']
-        }
-      ]
-    ]
+          extensions: [
+            '.ios.js',
+            '.android.js',
+            '.js',
+            '.ts',
+            '.tsx',
+            '.json',
+          ],
+        },
+      ],
+    ],
   };
 };
