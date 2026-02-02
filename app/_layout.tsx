@@ -64,29 +64,37 @@ export default function RootLayout() {
   return (
     <AppProvider>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Root redirect */}
+        {/* Root redirect to Tonight */}
         <Stack.Screen name="index" />
-
-        {/* Optional */}
-        <Stack.Screen name="onboarding" />
-
-        {/* Tabs */}
+        
+        {/* Tab navigator (Tonight, Profile) */}
         <Stack.Screen name="(tabs)" />
-
-        {/* MVP flow routes (explicit for reliable navigation + export) */}
-        <Stack.Screen
-          name="deal"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        
+        {/* MVP Deal flow routes - must be explicitly registered for reliable navigation */}
+        <Stack.Screen 
+          name="deal" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-        <Stack.Screen
-          name="checklist/[recipeId]"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        <Stack.Screen 
+          name="checklist/[recipeId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-        <Stack.Screen
-          name="rescue/[mealId]"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        
+        {/* DRM rescue checklist - separate from regular checklist */}
+        <Stack.Screen 
+          name="rescue/[mealId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-
+        
         {/* Fallback */}
         <Stack.Screen name="+not-found" />
       </Stack>
