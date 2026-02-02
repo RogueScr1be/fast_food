@@ -36,7 +36,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Restaurant quality at home', 'Omega-3 rich', 'Under 20 minutes'],
     estimatedTime: '18 min',
     estimatedCost: '$22',
-    emoji: '🐟',
     imageKey: 'salmon',
   },
   {
@@ -63,7 +62,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Comfort food elevated', 'Vegetarian crowd-pleaser', 'Creamy without cream'],
     estimatedTime: '35 min',
     estimatedCost: '$18',
-    emoji: '🍄',
     imageKey: 'risotto',
   },
   {
@@ -88,7 +86,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Impressive but simple', 'Fresh herbs shine', 'Pairs with anything'],
     estimatedTime: '35 min',
     estimatedCost: '$16',
-    emoji: '🍗',
     imageKey: 'chicken-marsala',
   },
   {
@@ -114,7 +111,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Date night ready', 'Garlic butter magic', 'Fast yet fancy'],
     estimatedTime: '15 min',
     estimatedCost: '$24',
-    emoji: '🦐',
     imageKey: 'scampi',
   },
   {
@@ -140,7 +136,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Steakhouse at home', 'Perfect medium-rare', 'Worth the splurge'],
     estimatedTime: '25 min',
     estimatedCost: '$35',
-    emoji: '🥩',
     imageKey: 'steak',
   },
   {
@@ -165,7 +160,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['No cooking required', 'Summer on a plate', 'Instagram-ready'],
     estimatedTime: '10 min',
     estimatedCost: '$14',
-    emoji: '🍅',
     imageKey: 'ratatouille',
   },
 
@@ -194,7 +188,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['One pan, one cleanup', 'Set it and forget it', 'Balanced meal'],
     estimatedTime: '40 min',
     estimatedCost: '$14',
-    emoji: '🍖',
     imageKey: 'sheet-pan-chicken',
   },
   {
@@ -219,7 +212,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Pantry staples', 'Kid-approved', 'Ready in 15'],
     estimatedTime: '15 min',
     estimatedCost: '$8',
-    emoji: '🍝',
     imageKey: 'pasta-marinara',
   },
   {
@@ -244,7 +236,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Kids love it', 'Uses leftover chicken', 'Crispy and melty'],
     estimatedTime: '12 min',
     estimatedCost: '$10',
-    emoji: '🫓',
     imageKey: 'quesadillas',
   },
   {
@@ -269,7 +260,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Uses leftovers', 'Protein-packed', 'Better than takeout'],
     estimatedTime: '12 min',
     estimatedCost: '$5',
-    emoji: '🍚',
     imageKey: 'stir-fry',
   },
   {
@@ -294,7 +284,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Family favorite', 'Everyone customizes', 'Fast crowd-pleaser'],
     estimatedTime: '20 min',
     estimatedCost: '$15',
-    emoji: '🌮',
     imageKey: 'fried-rice',
   },
   {
@@ -319,7 +308,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Comfort classic', 'Kids devour it', 'Rainy day perfect'],
     estimatedTime: '12 min',
     estimatedCost: '$6',
-    emoji: '🧀',
     imageKey: 'caprese-salad',
   },
 
@@ -348,7 +336,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Complete protein', 'Pantry staples', 'Under $3'],
     estimatedTime: '25 min',
     estimatedCost: '$3',
-    emoji: '🫘',
     imageKey: 'beans-rice',
   },
   {
@@ -373,7 +360,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ["Uses yesterday's rice", 'Filling and fast', 'Kid-friendly'],
     estimatedTime: '10 min',
     estimatedCost: '$2',
-    emoji: '🥚',
     imageKey: 'egg-fried-rice',
   },
   {
@@ -398,7 +384,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Filling comfort food', 'Versatile toppings', 'Under $4'],
     estimatedTime: '15 min',
     estimatedCost: '$4',
-    emoji: '🥔',
     imageKey: 'potato-soup',
   },
   {
@@ -423,7 +408,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Dollar store gourmet', 'Protein boost', 'Cozy and fast'],
     estimatedTime: '12 min',
     estimatedCost: '$2',
-    emoji: '🍜',
     imageKey: 'ramen-upgrade',
   },
   {
@@ -448,7 +432,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Pantry hero', 'Portable dinner', 'Customizable heat'],
     estimatedTime: '10 min',
     estimatedCost: '$4',
-    emoji: '🌯',
     imageKey: 'veggie-curry',
   },
   {
@@ -473,7 +456,6 @@ export const RECIPES: RecipeSeed[] = [
     whyReasons: ['Roman classic', 'Five ingredients', 'Michelin on a budget'],
     estimatedTime: '15 min',
     estimatedCost: '$4',
-    emoji: '🧄',
     imageKey: 'pasta-aglio',
   },
 ];
@@ -495,7 +477,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Pour cereal into bowl', 'Add milk'],
     whyReasons: ['Zero cooking', 'Everyone wins', 'Sometimes dinner is cereal'],
     estimatedTime: '2 min',
-    emoji: '🥣',
     imageKey: 'cereal',
   },
   {
@@ -512,7 +493,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Spread peanut butter on one slice', 'Spread jelly on the other', 'Press together'],
     whyReasons: ['Childhood classic', 'No judgment here', 'Protein + carbs'],
     estimatedTime: '3 min',
-    emoji: '🥪',
     imageKey: 'toast-pb',
   },
   {
@@ -528,7 +508,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Slice cheese', 'Arrange with crackers'],
     whyReasons: ['Charcuterie lite', 'Pairs with wine', 'Snack dinner energy'],
     estimatedTime: '5 min',
-    emoji: '🧀',
     imageKey: 'crackers-cheese',
   },
   {
@@ -544,7 +523,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Open can, pour into pot', 'Heat until simmering', 'Serve with crackers'],
     whyReasons: ['Pantry rescue', 'Warm and comforting', 'No effort required'],
     estimatedTime: '8 min',
-    emoji: '🥫',
     imageKey: 'soup-can',
   },
   {
@@ -561,7 +539,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Toast bread', 'Fry or scramble eggs', 'Serve together'],
     whyReasons: ['Breakfast for dinner', 'Quick protein', 'Always satisfying'],
     estimatedTime: '8 min',
-    emoji: '🍳',
     imageKey: 'sandwich',
   },
   {
@@ -577,7 +554,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Open chips', 'Open salsa', 'Dip and enjoy'],
     whyReasons: ['Zero prep', 'Sharing is caring', 'Valid dinner choice'],
     estimatedTime: '1 min',
-    emoji: '🫓',
     imageKey: 'chips-salsa',
   },
   {
@@ -593,7 +569,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Boil water', 'Add noodles and seasoning', 'Wait 3 minutes'],
     whyReasons: ['Dorm room classic', 'Salty comfort', 'Done in 5 minutes'],
     estimatedTime: '5 min',
-    emoji: '🍜',
     imageKey: 'instant-noodles',
   },
   {
@@ -610,7 +585,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Scoop yogurt into bowl', 'Top with granola', 'Drizzle honey'],
     whyReasons: ['Protein-packed', 'Feels healthy', 'Sweet but substantial'],
     estimatedTime: '2 min',
-    emoji: '🥛',
     imageKey: 'yogurt-granola',
   },
   {
@@ -623,7 +597,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Preheat oven', 'Bake according to package', 'Slice and serve'],
     whyReasons: ['Freezer MVP', 'Everyone agrees', 'Reliable backup'],
     estimatedTime: '20 min',
-    emoji: '🍕',
     imageKey: 'frozen-pizza',
   },
   {
@@ -639,7 +612,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Slice apple', 'Dip in almond butter'],
     whyReasons: ['Sweet and salty', 'Surprisingly filling', 'Healthy snack dinner'],
     estimatedTime: '3 min',
-    emoji: '🍎',
     imageKey: 'banana-pb',
   },
   {
@@ -652,7 +624,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Unwrap burrito', 'Microwave 2-3 minutes', 'Add hot sauce if desired'],
     whyReasons: ['Freezer savior', 'Hot and filling', 'Gas station gourmet'],
     estimatedTime: '4 min',
-    emoji: '🌯',
     imageKey: 'grilled-cheese',
   },
   {
@@ -670,7 +641,6 @@ export const DRM_MEALS: DrmSeed[] = [
     steps: ['Toast bread', 'Mash avocado with fork', 'Spread on toast, season'],
     whyReasons: ['Millennial approved', 'Good fats', 'Trendy but real'],
     estimatedTime: '5 min',
-    emoji: '🥑',
     imageKey: 'oatmeal',
   },
 ];

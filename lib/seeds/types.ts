@@ -35,7 +35,6 @@ export interface RecipeSeed {
   whyReasons: string[]; // Rotate one at display time
   estimatedTime: string; // e.g., "25 min"
   estimatedCost: string; // e.g., "$15"
-  emoji: string; // Placeholder for image
   imageKey?: string; // Key for hero image lookup
 }
 
@@ -52,6 +51,5 @@ export interface DrmSeed {
   steps: string[];
   whyReasons: string[];
   estimatedTime: string;
-  emoji: string; // Placeholder for image
   imageKey?: string; // Key for hero image lookup
 }

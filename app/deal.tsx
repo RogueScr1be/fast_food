@@ -111,6 +111,10 @@ export default function DealScreen() {
 
   /**
    * Deal a new card (recipe or DRM)
+   * 
+   * IMPORTANT: Does NOT add to dealHistory here.
+   * History is updated only when user passes or accepts.
+   * This prevents double-mount in React 18 StrictMode from consuming the deck.
    */
   const dealNextCard = useCallback(() => {
     const dealHistory = getDealHistory();
@@ -130,7 +134,7 @@ export default function DealScreen() {
         setCurrentDeal({ type: 'drm', data: drmMeal });
         setWhyText(getRandomWhy(drmMeal));
         setCurrentDealId(drmMeal.id);
-        addToDealHistory(drmMeal.id);
+        // Do NOT add to history here - only on pass/accept
         setDrmInserted(true);
         setExpanded(false);
         setNoMoreRecipes(false);
@@ -148,7 +152,7 @@ export default function DealScreen() {
       setCurrentDeal({ type: 'recipe', data: recipe });
       setWhyText(getRandomWhy(recipe));
       setCurrentDealId(recipe.id);
-      addToDealHistory(recipe.id);
+      // Do NOT add to history here - only on pass/accept
       setExpanded(false);
       setNoMoreRecipes(false);
     } else {
@@ -159,14 +163,21 @@ export default function DealScreen() {
     setIsLoading(false);
   }, [mode, constraints, drmTimerTriggered]);
 
-  // Mark deal start and set up 45s timer on mount
+  // Initialize deal session on mount (guarded for React 18 StrictMode double-invoke)
   useEffect(() => {
+    // Guard against double-mount on web
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+    
     markDealStart();
     
     // Set up 45s timer for DRM trigger
     drmTimerRef.current = setTimeout(() => {
       setDrmTimerTriggered(true);
     }, DRM_TIME_THRESHOLD_MS);
+
+    // Deal first card
+    dealNextCard();
 
     return () => {
       if (drmTimerRef.current) {
@@ -176,19 +187,6 @@ export default function DealScreen() {
         clearTimeout(lockedTimerRef.current);
       }
     };
-  }, []);
-
-  // When drmTimerTriggered changes, check if we need to insert DRM
-  useEffect(() => {
-    if (drmTimerTriggered && !getDrmInserted() && currentDeal) {
-      // Timer triggered - next deal should be DRM
-      // Don't auto-switch mid-viewing, just flag it for next deal
-    }
-  }, [drmTimerTriggered, currentDeal]);
-
-  // Deal first card on mount
-  useEffect(() => {
-    dealNextCard();
   }, [dealNextCard]);
 
   // Update local allergen state when global changes
@@ -198,14 +196,19 @@ export default function DealScreen() {
 
   /**
    * Handle pass (swipe) - increments pass count toward DRM
+   * Adds current card to history before dealing next
    */
   const handlePass = useCallback((direction: PassDirection) => {
+    // Add current card to history (so it's not shown again)
+    if (currentDeal) {
+      addToDealHistory(currentDeal.data.id);
+    }
     incrementPassCount();
     // Small delay for animation to complete
     setTimeout(() => {
       dealNextCard();
     }, 50);
-  }, [dealNextCard]);
+  }, [currentDeal, dealNextCard]);
 
   /**
    * Handle accept ("Let's do this")
@@ -298,6 +301,7 @@ export default function DealScreen() {
   /**
    * Save allergens and close modal
    * Does NOT increment pass count, does NOT trigger DRM
+   * If current card conflicts, add to history and re-deal
    */
   const saveAllergens = useCallback(() => {
     setExcludeAllergens(tempAllergens);
@@ -306,9 +310,11 @@ export default function DealScreen() {
     
     // Check if current card conflicts with new allergens
     if (currentDeal && hasConflictingAllergens(currentDeal.data, tempAllergens)) {
+      // Add conflicting card to history so it's skipped
+      addToDealHistory(currentDeal.data.id);
+      
       // Re-deal without incrementing pass count
       setTimeout(() => {
-        // Deal next card (don't call handlePass, which increments)
         const dealHistory = getDealHistory();
         const excludeAllergens = tempAllergens;
         
@@ -319,7 +325,7 @@ export default function DealScreen() {
             setCurrentDeal({ type: 'drm', data: drmMeal });
             setWhyText(getRandomWhy(drmMeal));
             setCurrentDealId(drmMeal.id);
-            addToDealHistory(drmMeal.id);
+            // Do NOT add to history here - only on pass/accept
             setExpanded(false);
             return;
           }
@@ -332,7 +338,7 @@ export default function DealScreen() {
             setCurrentDeal({ type: 'recipe', data: recipe });
             setWhyText(getRandomWhy(recipe));
             setCurrentDealId(recipe.id);
-            addToDealHistory(recipe.id);
+            // Do NOT add to history here - only on pass/accept
             setExpanded(false);
           } else {
             setCurrentDeal(null);
@@ -358,7 +364,7 @@ export default function DealScreen() {
 
   // No more recipes - calm empty state with reset option
   if (noMoreRecipes) {
-    const passCount = getPassCount();
+    const seenCount = getDealHistory().length;
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
@@ -370,14 +376,14 @@ export default function DealScreen() {
           >
             <ArrowLeft size={24} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Deal</Text>
+          <Text style={styles.headerTitle}>{mode}</Text>
           <View style={styles.headerButton} />
         </View>
 
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>That's all for {mode}</Text>
           <Text style={styles.emptySubtitle}>
-            You've seen {passCount + 1} options
+            You've seen {seenCount} options
           </Text>
           
           {/* Primary reset action */}

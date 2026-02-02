@@ -240,7 +240,6 @@ describe('Seed Helpers', () => {
         expect(recipe.whyReasons.length).toBeGreaterThan(0);
         expect(recipe.estimatedTime).toBeTruthy();
         expect(recipe.estimatedCost).toBeTruthy();
-        expect(recipe.emoji).toBeTruthy();
       });
     });
 
@@ -258,7 +257,6 @@ describe('Seed Helpers', () => {
         expect(Array.isArray(meal.whyReasons)).toBe(true);
         expect(meal.whyReasons.length).toBeGreaterThan(0);
         expect(meal.estimatedTime).toBeTruthy();
-        expect(meal.emoji).toBeTruthy();
       });
     });
 

@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, StyleSheet } from 'react-native';
 import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AppProvider } from '@/contexts/AppContext';
 import { hydrateFromStorage, isHydrated } from '@/lib/state/ffSession';
 
-SplashScreen.preventAutoHideAsync();
+// Never crash on reload / double-call
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const isFrameworkReady = useFrameworkReady();
   const [prefsLoaded, setPrefsLoaded] = useState(false);
-  
+
   const [fontsLoaded, fontError] = useFonts({
     'Inter-Regular': Inter_400Regular,
     'Inter-SemiBold': Inter_600SemiBold,
@@ -23,6 +23,8 @@ export default function RootLayout() {
   // Hydrate preferences from storage on mount
   // Includes timeout fallback to prevent black-screen on corrupted storage
   useEffect(() => {
+    let alive = true;
+
     if (isHydrated()) {
       setPrefsLoaded(true);
       return;
@@ -51,16 +53,10 @@ export default function RootLayout() {
   const isReady = isFrameworkReady && (fontsLoaded || fontError) && prefsLoaded;
 
   useEffect(() => {
-    if (isReady) {
-      // Hide splash screen
-      SplashScreen.hideAsync();
-    }
+    if (isReady) SplashScreen.hideAsync().catch(() => {});
   }, [isReady]);
 
-  if (!isReady) {
-    // Show minimal loading state (splash screen still visible)
-    return null;
-  }
+  if (!isReady) return null;
 
   return (
     <AppProvider>
@@ -99,6 +95,7 @@ export default function RootLayout() {
         {/* Fallback */}
         <Stack.Screen name="+not-found" />
       </Stack>
+
       <StatusBar style="auto" />
     </AppProvider>
   );

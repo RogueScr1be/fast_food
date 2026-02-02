@@ -1,421 +1,223 @@
-# Database Setup Guide
+# Fast Food: Decision OS Database
 
-This document describes the database schema, migrations, and setup steps for the Decision OS system.
+## Overview
 
-## Staging Database: Supabase (Recommended)
+This directory contains migrations and seeds for the `/decision-os` bounded context.
 
-Decision OS uses **Supabase Postgres** for staging and production.
+**Schema**: `decision_os`
 
-### Why Supabase?
+**Tables** (Phase 1):
+- `meals` - Core meal definitions (read-only in v1)
+- `meal_ingredients` - Ingredients per meal
+- `inventory_items` - Probabilistic inventory with confidence scores
+- `decision_events` - Append-only decision log
+- `drm_events` - Append-only DRM event log
 
-- Free tier sufficient for staging
-- Managed Postgres with automatic backups
-- Built-in connection pooling
-- No infrastructure management required
+**Note**: Allergies/constraints are handled via client-side local storage in Phase 1 (no DB persistence).
 
-### How to Provision the Staging DB
+## Invariants Enforced
 
-1. **Create Supabase Account**: Go to [supabase.com](https://supabase.com) and sign up
-2. **Create New Project**: 
-   - Choose a project name (e.g., `decision-os-staging`)
-   - Set a strong database password (save it!)
-   - Select a region close to your deployment target
-3. **Get Connection String**:
-   - Go to Project Settings → Database
-   - Copy the "Connection string" (URI format)
-   - It looks like: `postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres`
+1. **Append-only events**: `decision_events` and `drm_events` have triggers that prevent UPDATE and DELETE
+2. **Confidence range**: `inventory_items.confidence` must be between 0 and 1 (`CHECK (confidence >= 0 AND confidence <= 1)`)
+3. **No browsing data**: No category/tag tables exposed to UI; `tags_internal` is arbiter-only
+4. **DRM tags are internal-only**: The client never receives a DRM-specific meal list or tag set
+5. **Decision defaults to pending**: `user_action` defaults to 'pending' until user acts or timeout
 
-### How to Set Environment Variables
+## Prerequisites
 
-Create a `.env.staging` file (never commit to git):
+- PostgreSQL 14+ (for `gen_random_uuid()`)
+- psql or compatible client
+- Database created (e.g., `fastfood_dev`)
+
+## Running Migrations
+
+### Development (Local)
 
 ```bash
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
-NODE_ENV=production
-OCR_PROVIDER=none
-STAGING_URL=https://your-app.vercel.app
-STAGING_AUTH_TOKEN=<optional-jwt-for-smoke-tests>
+# Set database URL
+export DATABASE_URL="postgresql://user:password@localhost:5432/fastfood_dev"
+
+# Run UP migration
+psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.up.sql
+
+# Run DOWN migration (rollback)
+psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
 ```
 
-### How to Enable Supabase Auth
-
-1. **Enable Auth in Supabase Dashboard**:
-   - Go to Authentication → Providers
-   - Enable Email provider (for testing)
-   - Optionally enable social providers (Google, Apple, etc.)
-
-2. **Get Auth Config**:
-   - Copy your Supabase URL and anon key from Project Settings → API
-   
-3. **For Client Testing** (dev only):
-   - Set `EXPO_PUBLIC_SUPABASE_ACCESS_TOKEN` in your `.env.local`
-   - This token will be attached to all Decision OS API requests
-
-### How to Run Migrations
+### Using Docker Compose
 
 ```bash
-# Set DATABASE_URL first
-export DATABASE_URL="postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres"
+# Start Postgres
+docker compose up -d postgres
 
 # Run migrations
-npm run db:migrate:staging
+docker compose exec postgres psql -U fastfood -d fastfood_dev \
+  -f /app/db/migrations/001_create_decision_os_schema.up.sql
 ```
 
-### How to Verify Tables Exist
-
-After running migrations, verify in Supabase:
-
-1. Go to Database → Tables in Supabase dashboard
-2. You should see these tables:
-   - `user_profiles`
-   - `meals`
-   - `decision_events`
-   - `taste_signals`
-   - `taste_meal_scores`
-   - `receipt_imports`
-   - `inventory_items`
-
-Or run this SQL in Supabase SQL Editor:
-
-```sql
-SELECT table_name FROM information_schema.tables 
-WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-ORDER BY table_name;
-```
-
-## Alternative: Neon Postgres
-
-If you prefer Neon over Supabase:
-
-1. Create account at [neon.tech](https://neon.tech)
-2. Create a project
-3. Copy the connection string
-4. Use the same migration process
-
-## Production Setup Steps
-
-### 1. Create Schema (Optional)
-
-Supabase uses the default `public` schema. No need to create a separate schema:
-
-```sql
--- Not needed for Supabase, but available if you want isolation:
--- CREATE SCHEMA IF NOT EXISTS decision_os;
-```
-
-### 2. Run Migrations
-
-Migrations are numbered sequentially and must be run in order.
-
-| Migration | Description |
-|-----------|-------------|
-| 001 | Create `user_profiles` table |
-| 002 | Create `meals` table |
-| 003 | Create `decision_events` table (append-only event log) |
-| 004 | Create `taste_signals` table |
-| 005 | Create `taste_meal_scores` table |
-| 006 | Create `receipt_imports` + `inventory_items` tables |
-| 007 | Seed initial data (test user + meals) |
-| 008 | Add `auth_user_id` column to `user_profiles` |
-| 009 | Create `households` table |
-| 010 | Create `household_members` join table |
-| 011 | Create `runtime_flags` table (DB-backed kill switches) |
-| 012 | Create `runtime_metrics_daily` table (durable metrics) |
-| 013 | Add `decision_os_readonly` flag (emergency freeze) |
-
-**Run all migrations:**
+### Using a Migration Tool (e.g., golang-migrate)
 
 ```bash
-npm run db:migrate:staging
+# Install migrate
+brew install golang-migrate
+
+# Create migrate-compatible files
+# Rename: 001_create_decision_os_schema.up.sql → 000001_create_decision_os_schema.up.sql
+
+# Run migrations
+migrate -database $DATABASE_URL -path db/migrations up
 ```
 
-This runs `db/migrate.ts` which executes all SQL files in `db/migrations/` in order.
+## Running Seeds
 
-### Migration Verification
-
-The migration runner verifies:
-
-1. **Required Tables**: All core tables exist (user_profiles, meals, decision_events, etc.)
-2. **Required Columns**: Each table has all required columns (prevents schema drift)
-3. **Column Types**: Critical columns have correct types (e.g., `runtime_flags.enabled` is boolean)
-4. **NOT NULL Constraints**: Required columns are NOT NULL (e.g., `decision_events.user_action`)
-
-If verification fails, the migration exits with a non-zero code and clear error message:
-
-```
-ERROR: Missing required tables: households, household_members
-
-Table 'decision_events' missing columns: household_key, notes
-
-Column 'runtime_flags.enabled' type mismatch: expected 'boolean', got 'text'
-
-Column 'decision_events.user_action' should be NOT NULL but is nullable
-```
-
-**Critical column types verified**:
-- `runtime_flags.enabled` → boolean
-- `runtime_flags.key` → text
-- `runtime_metrics_daily.count` → bigint
-- `decision_events.user_action` → text
-- `decision_events.household_key` → text
-
-**NOT NULL columns verified**:
-- `decision_events.user_action`
-- `decision_events.household_key`
-- `runtime_flags.enabled`
-
-### Troubleshooting Migration Failures
-
-#### Missing Tables
-
-If tables are missing, check:
-- Migrations ran in correct order
-- No migration failed silently
-- Database connection is correct
-
-Run migrations again - they are idempotent:
-```bash
-npm run db:migrate:staging
-```
-
-#### Missing Columns
-
-If columns are missing, you may need to:
-1. Check if a migration was skipped or failed
-2. Manually add the missing column(s)
-3. Update the `schema_migrations` table if a migration was partially applied
-
-Example manual fix:
-```sql
-ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS household_key TEXT;
-ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS notes TEXT;
-```
-
-#### Column Verification Reference
-
-The migration runner verifies these critical columns:
-
-| Table | Required Columns |
-|-------|------------------|
-| `user_profiles` | id, auth_user_id, created_at |
-| `households` | id, household_key, created_at |
-| `household_members` | household_id, user_profile_id, created_at |
-| `decision_events` | id, user_profile_id, household_key, user_action, actioned_at, decided_at, notes, decision_payload, decision_type, meal_id, context_hash |
-| `inventory_items` | id, household_key, item_name, remaining_qty, confidence, last_seen_at |
-| `receipt_imports` | id, household_key, status, created_at |
-| `taste_signals` | id, household_key, event_id, weight, created_at |
-| `taste_meal_scores` | id, household_key, meal_id, score, approvals, rejections, updated_at |
-| `schema_migrations` | filename, applied_at |
-
-### 3. Seed Meals
-
-Ensure the `meals` table is populated with your meal catalog before using Decision OS.
-
-```sql
-INSERT INTO meals (id, name, category, prep_time_minutes) VALUES
-  (1, 'Chicken Pasta', 'dinner', 30),
-  (2, 'Grilled Salmon', 'dinner', 25),
-  -- ... more meals
-;
-```
-
-### 4. Required Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | Staging/Prod | - | PostgreSQL connection string |
-| `NODE_ENV` | No | `development` | Environment: `test`, `development`, `production` |
-| `OCR_PROVIDER` | No | `none` | OCR provider: `google_vision` or `none` |
-| `OCR_API_KEY` | If google_vision | - | Google Cloud Vision API key |
-| `OCR_ENDPOINT` | No | Google default | Custom OCR endpoint |
-| `STAGING_URL` | For smoke tests | - | Base URL for staging smoke tests |
-
-### 5. Verify Deployment
-
-Run the staging smoke test:
+Seeds should be run **after** migrations.
 
 ```bash
-STAGING_URL=https://your-app.vercel.app npm run smoke:staging
+# Run seed file
+psql $DATABASE_URL -f db/seeds/001_meals.sql
 ```
 
-## Schema Overview
+**Note**: Seeds are idempotent - running them multiple times will TRUNCATE and re-insert.
 
-### `user_profiles`
+## Verification
 
-User profiles for Decision OS users.
+After running migrations and seeds:
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | SERIAL PK | Auto-incrementing user ID |
-| `external_id` | TEXT | Legacy external identifier |
-| `auth_user_id` | TEXT UNIQUE | Supabase Auth user ID (sub claim) |
-| `created_at` | TIMESTAMP | Profile creation time |
-| `updated_at` | TIMESTAMP | Last update time |
+```bash
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM decision_os.meals;"
+# Expected: 50
 
-### `households`
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM decision_os.meal_ingredients;"
+# Expected: 250+
 
-Household groups for multi-user support.
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = 'decision_os';"
+# Expected: 4 (2 for decision_events, 2 for drm_events)
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID PK | Household UUID |
-| `household_key` | TEXT UNIQUE | Household key (partition key) |
-| `name` | TEXT | Household name (optional) |
-| `created_at` | TIMESTAMP | Creation time |
-| `updated_at` | TIMESTAMP | Last update time |
-
-### `household_members`
-
-Join table linking users to households.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID PK | Membership UUID |
-| `household_id` | UUID FK | Foreign key to households |
-| `user_profile_id` | INTEGER FK | Foreign key to user_profiles |
-| `role` | TEXT | `owner` or `member` |
-| `created_at` | TIMESTAMP | Membership creation time |
-
-**Constraint**: Each user can only belong to one household (MVP).
-
-### `decision_events` (Append-Only Event Log)
-
-The core event table. **NEVER UPDATE or DELETE rows** - this is an append-only log.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT PK | Unique event ID |
-| `user_profile_id` | INTEGER FK | User who made the decision |
-| `decided_at` | TIMESTAMP | When decision was presented |
-| `actioned_at` | TIMESTAMP | When user/autopilot acted |
-| `user_action` | TEXT | `approved`, `rejected`, `drm_triggered` |
-| `notes` | TEXT | Markers: `autopilot`, `undo_autopilot` |
-| `decision_payload` | JSONB | Decision context (meal, recipe, etc.) |
-| `decision_type` | TEXT | Type of decision |
-| `meal_id` | INTEGER FK | Associated meal |
-| `context_hash` | TEXT | Hash for idempotency checks |
-
-### Decision Event Markers
-
-The `notes` column contains semantic markers:
-
-| Marker | Meaning |
-|--------|---------|
-| `autopilot` | Event was auto-approved by autopilot |
-| `undo_autopilot` | User undid an autopilot decision |
-| (empty/null) | Normal user action |
-
-### `taste_signals`
-
-Signals from user actions that influence taste preferences.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT PK | Signal ID |
-| `user_profile_id` | INTEGER FK | User |
-| `meal_id` | INTEGER FK | Meal |
-| `weight` | REAL | Signal weight (-1.0 to +1.0) |
-| `created_at` | TIMESTAMP | Signal timestamp |
-
-### `taste_meal_scores`
-
-Aggregated taste scores per user per meal.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT PK | Score ID |
-| `user_profile_id` | INTEGER FK | User |
-| `meal_id` | INTEGER FK | Meal |
-| `score` | REAL | Current score |
-| `approvals` | INTEGER | Approval count |
-| `rejections` | INTEGER | Rejection count |
-
-### `receipt_imports`
-
-Receipt import records.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT PK | Import ID |
-| `user_profile_id` | INTEGER FK | User |
-| `created_at` | TIMESTAMP | Import timestamp |
-| `status` | TEXT | `received`, `parsed`, `failed` |
-| `raw_ocr_text` | TEXT | Raw OCR output (max 50k chars) |
-| `image_hash` | TEXT | Hash for deduplication |
-
-### `inventory_items`
-
-User's food inventory.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT PK | Item ID |
-| `user_profile_id` | INTEGER FK | User |
-| `name` | TEXT | Item name |
-| `quantity` | INTEGER | Quantity |
-| `confidence` | REAL | OCR confidence (0.0-1.0) |
-| `source` | TEXT | `receipt` or `manual` |
-| `receipt_import_id` | TEXT FK | Source receipt (if applicable) |
-
-## Undo Semantics
-
-When a user undoes an autopilot decision:
-
-1. A **NEW** row is inserted with:
-   - `user_action = 'rejected'`
-   - `notes = 'undo_autopilot'`
-   
-2. A `taste_signal` is created with weight `-0.5` (autonomy penalty)
-
-3. `taste_meal_scores` is **NOT** updated (undo is not a taste rejection)
-
-4. Autopilot is throttled for 72 hours after any undo
-
-## Authentication
-
-Decision OS uses **Supabase Auth** for authentication.
-
-### Production Mode (NODE_ENV=production)
-
-- All Decision OS endpoints require a valid JWT in `Authorization: Bearer <token>`
-- Missing or invalid tokens return `401 { error: 'unauthorized' }`
-- `userProfileId` is derived from the JWT's `sub` claim, NOT from client input
-
-### Dev Mode (NODE_ENV !== production)
-
-- Requests without auth fall back to the default household (`household_key='default'`)
-- Valid tokens are still processed if provided
-- This allows local development without auth setup
-
-### Auth Flow
-
-1. Client sends request with `Authorization: Bearer <jwt>` header
-2. Server decodes JWT, extracts `sub` (user ID)
-3. Server upserts `user_profile` with `auth_user_id = sub`
-4. Server creates household + membership if user is new
-5. Server derives `household_key` from user's household
-6. Endpoint uses derived `household_key` for all queries
-
-### Protected Endpoints
-
-- `POST /api/decision-os/decision`
-- `POST /api/decision-os/feedback`
-- `POST /api/decision-os/drm`
-- `POST /api/decision-os/receipt/import`
-
-### Error Response (401)
-
-```json
-{ "error": "unauthorized" }
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'decision_os';"
+# Expected: 5
 ```
 
-This is a minimal error response - does NOT match success contracts (intentional).
+## Testing Append-Only Triggers
 
-## Invariants
+```sql
+-- Insert a test decision (user_action defaults to 'pending')
+INSERT INTO decision_os.decision_events 
+  (household_key, decided_at, decision_type, context_hash, decision_payload)
+VALUES ('default', NOW(), 'cook', 'test', '{}');
 
-- Decision events are append-only (no UPDATE/DELETE)
-- API responses never contain arrays at root level
-- `modified` action is banned (never used)
-- Receipt import always returns `{ receiptImportId, status }`
-- Decision response may include optional `autopilot: boolean`
-- Error responses use `{ error: string }` format
+-- This should fail with: "UPDATE not allowed on append-only table decision_events"
+UPDATE decision_os.decision_events SET user_action = 'rejected' WHERE household_key = 'default';
+-- ERROR:  UPDATE not allowed on append-only table decision_events
+
+DELETE FROM decision_os.decision_events WHERE household_key = 'default';
+-- ERROR:  DELETE not allowed on append-only table decision_events
+```
+
+## Testing Defaults
+
+```sql
+-- Verify user_action defaults to 'pending'
+INSERT INTO decision_os.decision_events 
+  (household_key, decided_at, decision_type, context_hash, decision_payload)
+VALUES ('test', NOW(), 'cook', 'hash123', '{"test": true}');
+
+SELECT user_action FROM decision_os.decision_events WHERE household_key = 'test';
+-- Expected: 'pending'
+
+-- Verify last_seen_at defaults to NOW()
+INSERT INTO decision_os.inventory_items 
+  (household_key, item_name, confidence, source)
+VALUES ('test', 'chicken', 0.8, 'receipt');
+
+SELECT last_seen_at IS NOT NULL FROM decision_os.inventory_items WHERE item_name = 'chicken';
+-- Expected: true
+```
+
+## Schema Diagram
+
+```
+┌─────────────────────┐       ┌─────────────────────┐
+│       meals         │       │  meal_ingredients   │
+├─────────────────────┤       ├─────────────────────┤
+│ id (PK)             │◄──────│ meal_id (FK)        │
+│ name                │       │ id (PK)             │
+│ canonical_key (UK)  │       │ ingredient_name     │
+│ instructions_short  │       │ qty_text            │
+│ est_minutes         │       │ is_pantry_staple    │
+│ est_cost_band       │       │ created_at          │
+│ tags_internal       │       └─────────────────────┘
+│ is_active           │
+│ created_at          │
+└─────────────────────┘
+
+┌─────────────────────┐
+│  inventory_items    │
+├─────────────────────┤
+│ id (PK)             │
+│ household_key       │
+│ item_name           │
+│ qty_estimated       │
+│ unit                │
+│ confidence (0..1)   │  ← CHECK (confidence >= 0 AND confidence <= 1)
+│ source              │
+│ last_seen_at        │  ← DEFAULT NOW()
+│ expires_at          │
+│ created_at          │
+└─────────────────────┘
+
+┌─────────────────────────┐   ┌─────────────────────┐
+│    decision_events      │   │     drm_events      │
+│    (APPEND-ONLY)        │   │    (APPEND-ONLY)    │
+├─────────────────────────┤   ├─────────────────────┤
+│ id (PK)                 │   │ id (PK)             │
+│ household_key           │   │ household_key       │
+│ decided_at              │   │ triggered_at        │
+│ decision_type           │   │ trigger_type        │
+│ meal_id (FK, nullable)  │   │ trigger_reason      │
+│ external_vendor_key     │   │ rescue_type         │
+│ context_hash            │   │ rescue_payload      │
+│ decision_payload        │   │ exhausted           │
+│ user_action             │   │ created_at          │
+│   ↳ DEFAULT 'pending'   │   └─────────────────────┘
+│ actioned_at             │
+│ notes                   │
+│ created_at              │
+└─────────────────────────┘
+
+NOTE: household_constraints table REMOVED from Phase 1.
+      Allergies handled via client-side local storage.
+```
+
+## user_action Allowed Values
+
+| Value | Description |
+|-------|-------------|
+| `pending` | Decision presented, awaiting user action (DEFAULT) |
+| `approved` | User approved the decision |
+| `rejected` | User rejected the decision |
+| `drm_triggered` | User triggered DRM instead of acting |
+| `expired` | Decision timed out without user action |
+
+## Rollback Strategy
+
+If you need to rollback:
+
+```bash
+# Run DOWN migration (WARNING: destroys all data)
+psql $DATABASE_URL -f db/migrations/001_create_decision_os_schema.down.sql
+```
+
+For partial rollback, manually drop specific tables:
+
+```sql
+-- Drop only events tables
+DROP TABLE IF EXISTS decision_os.drm_events;
+DROP TABLE IF EXISTS decision_os.decision_events;
+```
+
+## Production Considerations
+
+1. **Backups**: Take backup before running migrations
+2. **RLS**: For multi-tenant, enable Row Level Security on all tables
+3. **Connection pooling**: Use PgBouncer for connection management
+4. **Indexes**: Additional indexes may be needed based on query patterns
