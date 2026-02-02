@@ -25,7 +25,7 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
-  NODE_OPTIONS: --dns-result-order=ipv4first
+  # Force Node to prefer IPv4 over IPv6 to avoid Supabase pooler AAAA -> ENETUNREACH on GitHub runners
   NODE_OPTIONS: --dns-result-order=ipv4first
 
 jobs:
@@ -60,42 +60,88 @@ jobs:
       # DB migrate + verify
       - name: Migrate staging DB
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
-          NODE_OPTIONS: '--dns-result-order=ipv4first'
-          PGSSLMODE: require
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}&uselibpqcompat=true
         run: |
           echo "=== Migrating Staging DB ==="
           npm run db:migrate:staging
           echo "PASS migrations_applied"
 
-
       - name: Verify staging DB schema
         env:
-          DATABASE_URL_STAGING: ${{ secrets.DATABASE_URL_STAGING }}
-          NODE_OPTIONS: '--dns-result-order=ipv4first'
-          PGSSLMODE: require
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}&uselibpqcompat=true
         run: |
           echo "=== Verifying Staging Schema ==="
           npm run db:verify:staging
           echo "PASS schema_verified"
 
-      - name: Migrate staging DB
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
-        run: npm run db:migrate:staging
-
-      # Vercel deploy
-      - name: Deploy to Vercel (staging)
-        id: deploy
+      - name: Secrets sanity (no leak)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
+          set -euo pipefail
+          echo "=== Secrets Sanity ==="
+          [ -n "${VERCEL_TOKEN:-}" ] || (echo "MISSING: VERCEL_TOKEN" && exit 1)
+          [ -n "${VERCEL_ORG_ID:-}" ] || (echo "MISSING: VERCEL_ORG_ID" && exit 1)
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || (echo "MISSING: VERCEL_PROJECT_ID" && exit 1)
+          echo "OK: secrets present (token/org/project)"
+          echo "org_len=${#VERCEL_ORG_ID} project_len=${#VERCEL_PROJECT_ID}"
+
+            # Vercel deploy
+      - name: Deploy to Vercel (staging)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }} # Vercel Team SLUG or your username, not necessarily an "ID"
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }} # used only for verification
+        run: |
+          set -euo pipefail
           echo "=== Deploying to Vercel ==="
-          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-          npx vercel build --token="$VERCEL_TOKEN"
-          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          npx vercel --version
+
+          # Hard fail if any required secret is missing
+          [ -n "${VERCEL_TOKEN:-}" ] || (echo "MISSING: VERCEL_TOKEN" && exit 1)
+          [ -n "${VERCEL_ORG_ID:-}" ] || (echo "MISSING: VERCEL_ORG_ID" && exit 1)
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || (echo "MISSING: VERCEL_PROJECT_ID" && exit 1)
+
+          echo "=== Linking repo to Vercel project ==="
+          # This writes .vercel/project.json based on the linked project for this repo under the given scope
+          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
+
+          if [ ! -f ".vercel/project.json" ]; then
+            echo "FAIL: .vercel/project.json not created. Repo not linked."
+            exit 1
+          fi
+
+          echo "=== Verifying linked project ==="
+          cat .vercel/project.json
+          LINKED_PROJECT_ID=$(node -e "console.log(require('./.vercel/project.json').projectId || '')")
+          if [ -z "$LINKED_PROJECT_ID" ]; then
+            echo "FAIL: linked projectId missing in .vercel/project.json"
+            exit 1
+          fi
+
+          # Enforce “no phantom project”: the linked project must equal what you think it is
+          if [ "$LINKED_PROJECT_ID" != "$VERCEL_PROJECT_ID" ]; then
+            echo "FAIL: Repo linked to unexpected Vercel project."
+            echo "Linked projectId: $LINKED_PROJECT_ID"
+            echo "Expected projectId: $VERCEL_PROJECT_ID"
+            echo ""
+            echo "Fix: In Vercel UI, open the project you WANT, and import/link this GitHub repo to that project."
+            echo "Then re-run. (The link is what determines project binding in CI.)"
+            exit 1
+          fi
+          echo "PASS linked to expected projectId=$LINKED_PROJECT_ID"
+
+          echo "=== Building ==="
+          npx vercel build --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
+
+          echo "=== Deploying ==="
+          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID")
+
           echo "deployment_url=$url" >> $GITHUB_OUTPUT
           echo "PASS deployed to $url"
 

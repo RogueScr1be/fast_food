@@ -1,24 +1,13 @@
 /**
- * Tonight Screen — Intent Capture
+ * Tonight Screen — Mode Selection
  * 
- * UI CONTRACT:
- * - Max 1 primary action per screen
- * - 4 quick-tap intent buttons
- * - Primary CTA at bottom, ≥48px height, full-width
+ * Phase 6.3 UI:
+ * - Three mode options: Fancy, Easy, Cheap
+ * - Tap a mode → immediately navigate to /deal with that mode
+ * - "I'm allergic" modal for allergen exclusions
+ * - Primary CTA: "Decide for Me" → random mode if none selected, then /deal
  * 
- * FLOW:
- * User taps intent buttons → "Decide for me" → Call Decision API → Navigate to Decision screen
- * 
- * SESSION LIFECYCLE:
- * - Calls /api/decision-os/decision which creates the session
- * - Passes sessionId from response to decision screen
- * 
- * KILL SWITCH:
- * - If EXPO_PUBLIC_FF_MVP_ENABLED !== 'true', shows disabled message
- * 
- * QA PANEL ACCESS:
- * - Requires BOTH: long-press app title for 2 seconds AND ff_qa_enabled=true
- * - When ff_qa_enabled=false, long-press does nothing
+ * Follows Design Constitution: calm, OS-like, minimal, elegant.
  */
 
 import React, { useState, useRef } from 'react';
@@ -29,57 +18,90 @@ import {
   TouchableOpacity,
   Platform,
   SafeAreaView,
-  Alert,
-  Pressable,
+  Modal,
+  ScrollView,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Zap, DollarSign, Battery, Clock, Camera } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { Sparkles, Utensils, Coins, AlertCircle, X, Check } from 'lucide-react-native';
+import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { ThinProgressBar } from '../../components/ThinProgressBar';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import {
+  setSelectedMode,
+  getSelectedMode,
+  setExcludeAllergens,
+  getExcludeAllergens,
+} from '../../lib/state/ffSession';
+import type { Mode, AllergenTag } from '../../lib/seeds/types';
+
+const ALL_MODES: Mode[] = ['fancy', 'easy', 'cheap'];
+
+// All allergens for the modal
+const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
+  { tag: 'dairy', label: 'Dairy' },
+  { tag: 'nuts', label: 'Nuts' },
+  { tag: 'gluten', label: 'Gluten' },
+  { tag: 'eggs', label: 'Eggs' },
+  { tag: 'soy', label: 'Soy' },
+  { tag: 'shellfish', label: 'Shellfish' },
+];
 
 /**
- * Check if MVP is enabled (client-side kill switch)
+ * Mode Button Component
  */
-function isMvpEnabled(): boolean {
-  return process.env.EXPO_PUBLIC_FF_MVP_ENABLED !== 'false';
-}
-
-/**
- * Check if QA panel is enabled (client-side gate)
- * QA panel requires BOTH long-press AND ff_qa_enabled=true
- */
-function isQaEnabled(): boolean {
-  return process.env.EXPO_PUBLIC_FF_QA_ENABLED === 'true';
-}
-
-/**
- * Intent options per contract
- */
-type IntentOption = 'easy' | 'cheap' | 'no_energy' | 'quick';
-
-interface IntentButtonProps {
-  option: IntentOption;
+interface ModeButtonProps {
+  mode: Mode;
   label: string;
   icon: React.ReactNode;
   selected: boolean;
   onPress: () => void;
 }
 
-/**
- * Intent Button Component
- */
-function IntentButton({ label, icon, selected, onPress }: IntentButtonProps) {
+function ModeButton({ mode, label, icon, selected, onPress }: ModeButtonProps) {
   return (
     <TouchableOpacity
-      style={[styles.intentButton, selected && styles.intentButtonSelected]}
+      style={[styles.modeButton, selected && styles.modeButtonSelected]}
       onPress={onPress}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`${label} mode`}
+      accessibilityState={{ selected }}
     >
-      <View style={[styles.intentIcon, selected && styles.intentIconSelected]}>
+      <View style={[styles.modeIcon, selected && styles.modeIconSelected]}>
         {icon}
       </View>
-      <Text style={[styles.intentLabel, selected && styles.intentLabelSelected]}>
+      <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>
         {label}
       </Text>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * Allergen Checkbox Component
+ */
+interface AllergenCheckboxProps {
+  tag: AllergenTag;
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}
+
+function AllergenCheckbox({ label, checked, onToggle }: AllergenCheckboxProps) {
+  return (
+    <TouchableOpacity
+      style={styles.allergenRow}
+      onPress={onToggle}
+      activeOpacity={0.7}
+      accessibilityRole="checkbox"
+      accessibilityLabel={label}
+      accessibilityState={{ checked }}
+    >
+      <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+        {checked && <Check size={16} color={colors.textInverse} />}
+      </View>
+      <Text style={styles.allergenLabel}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -88,276 +110,240 @@ function IntentButton({ label, icon, selected, onPress }: IntentButtonProps) {
  * Tonight Screen — Main Component
  */
 export default function TonightScreen() {
-  const [selectedIntents, setSelectedIntents] = useState<Set<IntentOption>>(new Set());
-  const [isLoading, setIsLoading] = useState(false);
+  const [selectedModeLocal, setSelectedModeLocal] = useState<Mode | null>(getSelectedMode());
+  const [excludeAllergens, setExcludeAllergensLocal] = useState<AllergenTag[]>(getExcludeAllergens());
+  const [showAllergyModal, setShowAllergyModal] = useState(false);
+  const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
   
-  // QA Panel access: Long-press timer
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
-  const LONG_PRESS_DURATION = 2000; // 2 seconds
+  // Progress bar animation for "commitment" feel
+  const progressAnim = useRef(new Animated.Value(0)).current;
   
   /**
-   * Handle title long press start
-   * QA panel requires ff_qa_enabled=true; otherwise long-press does nothing
+   * Handle mode selection — immediately navigate to /deal
    */
-  const handleTitlePressIn = () => {
-    // Gate: QA panel must be explicitly enabled
-    if (!isQaEnabled()) {
-      return;
-    }
+  const handleModeSelect = (mode: Mode) => {
+    // Set the mode and immediately navigate
+    setSelectedModeLocal(mode);
+    setSelectedMode(mode);
     
-    longPressTimer.current = setTimeout(() => {
-      // Navigate to QA panel
-      router.push('/qa');
-    }, LONG_PRESS_DURATION);
-  };
-  
-  /**
-   * Handle title long press end (cancel if released early)
-   */
-  const handleTitlePressOut = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  /**
-   * Toggle intent selection
-   */
-  const toggleIntent = (intent: IntentOption) => {
-    setSelectedIntents(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(intent)) {
-        newSet.delete(intent);
-      } else {
-        newSet.add(intent);
-      }
-      return newSet;
+    // Brief progress animation then navigate
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: false,
+    }).start(() => {
+      router.push('/deal');
     });
   };
   
-  // Kill switch check
-  if (!isMvpEnabled()) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.disabledContainer}>
-          <Text style={styles.disabledTitle}>Fast Food</Text>
-          <Text style={styles.disabledText}>
-            Fast Food is temporarily unavailable
-          </Text>
-          <Text style={styles.disabledSubtext}>
-            Please try again later
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   /**
-   * Handle "Decide for me" button press
-   * Calls Decision API to start session and get decision
+   * Handle "Decide for Me" press
+   * If no mode selected, randomly pick one
    */
-  const handleDecide = async () => {
-    setIsLoading(true);
+  const handleDecide = () => {
+    let modeToUse = selectedModeLocal;
     
-    try {
-      // Map UI intent options to API intent format
-      const intentArray = Array.from(selectedIntents);
-      
-      // Call Decision API (creates session server-side)
-      const response = await fetch('/api/decision-os/decision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          intent: {
-            selected: intentArray,
-          },
-        }),
-      });
-      
-      const data = await response.json();
-      
-      // Handle unauthorized
-      if (response.status === 401) {
-        Alert.alert('Error', 'Please sign in to continue');
-        setIsLoading(false);
-        return;
-      }
-      
-      // Get sessionId from decision response
-      // The sessionId is embedded in the decision_id or we derive it
-      let sessionId = 'session-' + Date.now();
-      if (data.decision?.decision_id) {
-        // Extract sessionId prefix from decision_id (format: ses-xxx-xxx-dec-xxx)
-        const parts = data.decision.decision_id.split('-');
-        if (parts[0] === 'ses') {
-          sessionId = parts.slice(0, 3).join('-');
-        }
-      }
-      
-      // Check if DRM was recommended (no valid decision)
-      if (data.drmRecommended && !data.decision) {
-        router.push({
-          pathname: '/rescue',
-          params: { 
-            sessionId, 
-            reason: 'no_valid_meal',
-          },
-        });
-        return;
-      }
-      
-      // Navigate to decision screen with decision data
-      router.push({
-        pathname: '/decision/[sessionId]',
-        params: { 
-          sessionId,
-          intents: intentArray.join(',') || 'none',
-          decisionData: data.decision ? JSON.stringify(data.decision) : undefined,
-        },
-      });
-      
-    } catch (error) {
-      console.error('Decision request failed:', error);
-      // Fallback: navigate anyway with client-generated sessionId
-      const sessionId = `session-${Date.now()}`;
-      router.push({
-        pathname: '/decision/[sessionId]',
-        params: { 
-          sessionId,
-          intents: Array.from(selectedIntents).join(',') || 'none',
-        },
-      });
-    } finally {
-      setIsLoading(false);
+    // If no mode selected, randomly pick one
+    if (!modeToUse) {
+      const randomIndex = Math.floor(Math.random() * ALL_MODES.length);
+      modeToUse = ALL_MODES[randomIndex];
+      setSelectedModeLocal(modeToUse);
+      setSelectedMode(modeToUse);
     }
+    
+    // Animate and navigate
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: false,
+    }).start(() => {
+      router.push('/deal');
+    });
   };
-
+  
   /**
-   * Handle receipt scan — Secondary action
-   * 
-   * Per constitution (Article V, VI):
-   * - No new choices added to the flow
-   * - Silent operation with minimal acknowledgment
-   * - Does NOT change the primary decision flow
+   * Open allergy modal
    */
-  const handleScanReceipt = async () => {
-    try {
-      // Request camera permissions
-      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
-      
-      if (!permissionResult.granted) {
-        // Silent fail - no blocking modal
-        return;
-      }
-      
-      // Launch camera
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.7, // Lower quality for faster upload
-        base64: true,
-      });
-      
-      if (result.canceled || !result.assets?.[0]?.base64) {
-        // User cancelled - silent, no acknowledgment needed
-        return;
-      }
-      
-      // Upload receipt silently
-      const imageBase64 = result.assets[0].base64;
-      
-      const response = await fetch('/api/decision-os/receipt/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64 }),
-      });
-      
-      const data = await response.json();
-      
-      // Minimal acknowledgment per constitution (Article III - Closure of Emotional Loops)
-      // "Recognition (I was heard)" - brief feedback, no explanation of how
-      if (data.status === 'parsed') {
-        Alert.alert('Receipt added');
-      } else {
-        // Failed or received - brief acknowledgment
-        Alert.alert('Receipt not added');
-      }
-      
-    } catch {
-      // Silent fail - don't disrupt primary flow
-      Alert.alert('Receipt not added');
-    }
+  const openAllergyModal = () => {
+    setTempAllergens([...excludeAllergens]);
+    setShowAllergyModal(true);
+  };
+  
+  /**
+   * Toggle allergen in temp state
+   */
+  const toggleAllergen = (tag: AllergenTag) => {
+    setTempAllergens(prev =>
+      prev.includes(tag)
+        ? prev.filter(a => a !== tag)
+        : [...prev, tag]
+    );
+  };
+  
+  /**
+   * Save allergens and close modal
+   */
+  const saveAllergens = () => {
+    setExcludeAllergensLocal(tempAllergens);
+    setExcludeAllergens(tempAllergens);
+    setShowAllergyModal(false);
+  };
+  
+  /**
+   * Cancel and close modal
+   */
+  const cancelAllergyModal = () => {
+    setShowAllergyModal(false);
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header — Long-press title for 2 seconds to access QA panel */}
+      {/* Header */}
       <View style={styles.header}>
-        <Pressable
-          onPressIn={handleTitlePressIn}
-          onPressOut={handleTitlePressOut}
-        >
-          <Text style={styles.greeting}>What sounds good tonight?</Text>
-        </Pressable>
-        <Text style={styles.subtitle}>Tap what matters most</Text>
+        <Text style={styles.title}>Tonight</Text>
+        <Text style={styles.subtitle}>What kind of dinner?</Text>
       </View>
 
-      {/* Intent Buttons Grid */}
-      <View style={styles.intentGrid}>
-        <IntentButton
-          option="easy"
+      {/* Mode Selection */}
+      <View style={styles.modeContainer}>
+        <ModeButton
+          mode="fancy"
+          label="Fancy"
+          icon={
+            <Sparkles
+              size={32}
+              color={selectedModeLocal === 'fancy' ? colors.textInverse : colors.accentBlue}
+            />
+          }
+          selected={selectedModeLocal === 'fancy'}
+          onPress={() => handleModeSelect('fancy')}
+        />
+        <ModeButton
+          mode="easy"
           label="Easy"
-          icon={<Zap size={28} color={selectedIntents.has('easy') ? '#FFF' : '#FF6B35'} />}
-          selected={selectedIntents.has('easy')}
-          onPress={() => toggleIntent('easy')}
+          icon={
+            <Utensils
+              size={32}
+              color={selectedModeLocal === 'easy' ? colors.textInverse : colors.accentBlue}
+            />
+          }
+          selected={selectedModeLocal === 'easy'}
+          onPress={() => handleModeSelect('easy')}
         />
-        <IntentButton
-          option="cheap"
+        <ModeButton
+          mode="cheap"
           label="Cheap"
-          icon={<DollarSign size={28} color={selectedIntents.has('cheap') ? '#FFF' : '#FF6B35'} />}
-          selected={selectedIntents.has('cheap')}
-          onPress={() => toggleIntent('cheap')}
-        />
-        <IntentButton
-          option="no_energy"
-          label="No Energy"
-          icon={<Battery size={28} color={selectedIntents.has('no_energy') ? '#FFF' : '#FF6B35'} />}
-          selected={selectedIntents.has('no_energy')}
-          onPress={() => toggleIntent('no_energy')}
-        />
-        <IntentButton
-          option="quick"
-          label="Quick"
-          icon={<Clock size={28} color={selectedIntents.has('quick') ? '#FFF' : '#FF6B35'} />}
-          selected={selectedIntents.has('quick')}
-          onPress={() => toggleIntent('quick')}
+          icon={
+            <Coins
+              size={32}
+              color={selectedModeLocal === 'cheap' ? colors.textInverse : colors.accentBlue}
+            />
+          }
+          selected={selectedModeLocal === 'cheap'}
+          onPress={() => handleModeSelect('cheap')}
         />
       </View>
 
-      {/* Primary CTA — Bottom, Full Width, ≥48px */}
-      <View style={styles.ctaContainer}>
-        <TouchableOpacity
-          style={[styles.primaryButton, isLoading && styles.primaryButtonDisabled]}
+      {/* Allergy Button */}
+      <TouchableOpacity
+        style={styles.allergyButton}
+        onPress={openAllergyModal}
+        activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel="I'm allergic"
+      >
+        <AlertCircle size={16} color={colors.textMuted} />
+        <Text style={styles.allergyButtonText}>
+          {excludeAllergens.length > 0
+            ? `Avoiding ${excludeAllergens.length} allergen${excludeAllergens.length > 1 ? 's' : ''}`
+            : "I'm allergic"}
+        </Text>
+      </TouchableOpacity>
+
+      {/* CTA Section */}
+      <View style={styles.ctaSection}>
+        {/* Progress Bar - shows commitment animation */}
+        <View style={styles.progressWrapper}>
+          <ThinProgressBar
+            value={selectedModeLocal ? 1 : 0}
+            accessibilityLabel="Ready to decide"
+          />
+        </View>
+
+        {/* Primary CTA - always enabled, picks random if no mode */}
+        <PrimaryButton
+          label="Decide for Me"
           onPress={handleDecide}
-          disabled={isLoading}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.primaryButtonText}>
-            {isLoading ? 'Deciding...' : 'Decide for me'}
-          </Text>
-        </TouchableOpacity>
+          tone="primary"
+        />
         
-        {/* Secondary action — Scan receipt (optional, non-branching) */}
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={handleScanReceipt}
-          activeOpacity={0.6}
-        >
-          <Camera size={16} color="#888" style={styles.secondaryIcon} />
-          <Text style={styles.secondaryButtonText}>Scan receipt</Text>
-        </TouchableOpacity>
+        {/* Hint text */}
+        <Text style={styles.hintText}>
+          {selectedModeLocal 
+            ? `Ready for ${selectedModeLocal}` 
+            : 'Tap a mode or let us pick'}
+        </Text>
       </View>
+
+      {/* Allergy Modal */}
+      <Modal
+        visible={showAllergyModal}
+        animationType="slide"
+        transparent
+        onRequestClose={cancelAllergyModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Allergies</Text>
+              <TouchableOpacity
+                onPress={cancelAllergyModal}
+                style={styles.modalCloseButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <X size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Allergen List */}
+            <ScrollView style={styles.allergenList}>
+              {ALL_ALLERGENS.map(({ tag, label }) => (
+                <AllergenCheckbox
+                  key={tag}
+                  tag={tag}
+                  label={label}
+                  checked={tempAllergens.includes(tag)}
+                  onToggle={() => toggleAllergen(tag)}
+                />
+              ))}
+            </ScrollView>
+
+            {/* Modal Actions */}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={cancelAllergyModal}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveButton}
+                onPress={saveAllergens}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Save"
+              >
+                <Text style={styles.modalSaveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -365,130 +351,183 @@ export default function TonightScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: colors.background,
   },
+  
+  // Header
   header: {
-    paddingTop: Platform.OS === 'ios' ? 20 : 40,
-    paddingHorizontal: 24,
-    paddingBottom: 32,
+    paddingTop: Platform.OS === 'ios' ? spacing.lg : spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
   },
-  greeting: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 8,
+  title: {
+    fontSize: typography['3xl'],
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#666',
-    fontWeight: '400',
+    fontSize: typography.base,
+    fontWeight: typography.regular,
+    color: colors.textSecondary,
   },
-  intentGrid: {
-    flex: 1,
+  
+  // Mode Selection
+  modeContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    gap: 12,
     justifyContent: 'center',
-    alignContent: 'flex-start',
+    paddingHorizontal: spacing.md,
+    gap: spacing.md,
+    flex: 1,
+    alignItems: 'flex-start',
+    paddingTop: spacing.lg,
   },
-  intentButton: {
-    width: '45%',
+  modeButton: {
+    flex: 1,
+    maxWidth: 110,
     aspectRatio: 1,
-    backgroundColor: '#FFF',
-    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#F0F0F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderColor: colors.borderSubtle,
+    ...shadows.md,
   },
-  intentButtonSelected: {
-    backgroundColor: '#FF6B35',
-    borderColor: '#FF6B35',
+  modeButtonSelected: {
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
   },
-  intentIcon: {
-    marginBottom: 12,
+  modeIcon: {
+    marginBottom: spacing.sm,
   },
-  intentIconSelected: {
-    // Icon color handled in component
+  modeIconSelected: {},
+  modeLabel: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textPrimary,
   },
-  intentLabel: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1A1A1A',
+  modeLabelSelected: {
+    color: colors.textInverse,
   },
-  intentLabelSelected: {
-    color: '#FFF',
-  },
-  ctaContainer: {
-    paddingHorizontal: 24,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 32,
-    paddingTop: 16,
-  },
-  primaryButton: {
-    backgroundColor: '#FF6B35',
-    height: 56, // ≥48px per contract
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#FF6B35',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.7,
-  },
-  primaryButtonText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFF',
-  },
-  // Kill switch disabled state
-  disabledContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  disabledTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#FF6B35',
-    marginBottom: 24,
-  },
-  disabledText: {
-    fontSize: 18,
-    fontWeight: '500',
-    color: '#1A1A1A',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  disabledSubtext: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  // Secondary action — smaller, lower contrast, not dominant
-  secondaryButton: {
+  
+  // Allergy Button
+  allergyButton: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    gap: spacing.xs,
+  },
+  allergyButtonText: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    color: colors.textMuted,
+  },
+  
+  // CTA Section
+  ctaSection: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.xl,
+    paddingTop: spacing.md,
+  },
+  progressWrapper: {
+    marginBottom: spacing.md,
+  },
+  hintText: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xxl : spacing.xl,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  modalTitle: {
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+  },
+  modalCloseButton: {
+    padding: spacing.xs,
+  },
+  allergenList: {
+    paddingHorizontal: spacing.lg,
+  },
+  allergenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+    minHeight: MIN_TOUCH_TARGET,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: radii.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 12,
-    marginTop: 12,
+    backgroundColor: colors.surface,
   },
-  secondaryIcon: {
-    marginRight: 6,
+  checkboxChecked: {
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
   },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#888',
+  allergenLabel: {
+    fontSize: typography.base,
+    color: colors.textPrimary,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    gap: spacing.md,
+  },
+  modalCancelButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    borderRadius: radii.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.mutedLight,
+  },
+  modalCancelText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textSecondary,
+  },
+  modalSaveButton: {
+    flex: 1,
+    height: MIN_TOUCH_TARGET,
+    borderRadius: radii.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.accentBlue,
+  },
+  modalSaveText: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.textInverse,
   },
 });
