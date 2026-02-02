@@ -21,7 +21,11 @@ import {
   Dimensions,
   TouchableOpacity,
   Image,
+  Platform,
 } from 'react-native';
+
+// Web doesn't support native driver well - use JS driver on web
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
 import { getImageSource } from '../lib/seeds/images';
@@ -117,7 +121,7 @@ export function DecisionCard({
           Animated.timing(position, {
             toValue: { x: SCREEN_WIDTH + 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
-            useNativeDriver: true,
+            useNativeDriver: USE_NATIVE_DRIVER,
           }).start(() => {
             onPass('right');
             resetPosition();
@@ -127,7 +131,7 @@ export function DecisionCard({
           Animated.timing(position, {
             toValue: { x: -SCREEN_WIDTH - 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
-            useNativeDriver: true,
+            useNativeDriver: USE_NATIVE_DRIVER,
           }).start(() => {
             onPass('left');
             resetPosition();
@@ -138,7 +142,7 @@ export function DecisionCard({
             toValue: { x: 0, y: 0 },
             friction: 5,
             tension: 40,
-            useNativeDriver: true,
+            useNativeDriver: USE_NATIVE_DRIVER,
           }).start();
         }
         swipeDirection.current = null;

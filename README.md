@@ -4,81 +4,101 @@ A mobile app that compresses the dinner decision process into a fast, decisive l
 
 ## MVP Success Definition
 
-> A user can open the app at ~5pm, provide minimal intent, receive one dinner decision, execute it immediately, or be rescued automatically when dinner collapses.
+> A user can open the app at ~5pm, pick a mode (Fancy/Easy/Cheap), swipe through decision cards, and land on a checklist to execute dinner—all in under 3 minutes.
 
 **Hard constraint:** Anything not required to satisfy the above is out of scope.
 
 ## Core Architecture
 
-### Decision Flow
+### Decision Flow (Current MVP)
 
 ```
-User opens app at ~5pm
+User opens app
     ↓
-Taps intent button (Easy / Cheap / Quick / No Energy)
+Tonight screen: Tap Fancy / Easy / Cheap
     ↓
-Decision Arbiter returns ONE decision
+Deal screen: ONE bold decision card
     ↓
-User approves → Execute instructions → Session ends
+Swipe left/right = "No" → next card
     OR
-User rejects → Second rejection → DRM triggers → Fallback executes
+Tap card → ingredients tray expands
+    OR
+"Let's do this" → Locked state (1s) → Checklist
+    ↓
+DRM triggers after 3 passes OR 45 seconds → Rescue card inserted
+    ↓
+Checklist: Cook/Prep toggle, step-by-step execution
+    ↓
+Done → Reset → Back to Tonight
 ```
 
 ### Key Components
 
 | Component | Purpose |
 |-----------|---------|
-| **Decision Arbiter** | Collapses context + taste + inventory into single decision |
-| **DRM (Dinner Rescue Mode)** | Override authority when Arbiter fails or user gives up |
-| **Session Management** | Tracks decision lock, rejection count, outcomes |
-| **Receipt Import** | OCR-based inventory estimation (advisory, never blocking) |
+| **Tonight Screen** | Mode selection (Fancy/Easy/Cheap) + allergen exclusions |
+| **Deal Screen** | Swipe-based card dealing from local seeds |
+| **Decision Card** | Hero image + name + why whisper + ingredients tray |
+| **DRM (Dinner Rescue Mode)** | Auto-inserts rescue meal after 3 passes or 45s |
+| **Checklist Screen** | Cook/Prep toggles, step completion, progress bar |
+| **Session State** | Persisted prefs + ephemeral deal state (`ffSession.ts`) |
 
 ### Non-Negotiable Constraints
 
-1. **Exactly ONE decision per session**
-2. **ZERO user questions** unless execution is literally impossible
-3. **ZERO alternative options**
-4. **Execution payload is mandatory**
-5. **DRM can override the Arbiter without appeal**
+1. **ONE card at a time** — no lists, no browsing
+2. **Swipe = "No"** — both directions reject (left = "not feeling it", right = "doesn't fit")
+3. **DRM is inevitable** — 3 passes OR 45 seconds without acceptance triggers rescue
+4. **Allergies are hard constraints** — never show recipes with excluded allergens
+5. **Local-first** — MVP works entirely offline with bundled seed data
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Mobile | React Native + Expo |
-| API | Expo Router API routes |
-| Database | Supabase Postgres |
-| Hosting | Vercel (API) + EAS (mobile builds) |
+| Mobile | React Native + Expo SDK 52 |
+| Routing | Expo Router (file-based) |
+| State | Module singleton (`lib/state/ffSession.ts`) |
+| Persistence | AsyncStorage (prefs only) |
+| Data | Local seed files (`lib/seeds/`) |
+| Hosting | EAS (mobile builds) |
 | CI/CD | GitHub Actions |
 
 ## Project Structure
 
 ```
 /workspace
-├── app/                          # Expo Router pages + API routes
-│   ├── (tabs)/                   # Tab navigation screens
-│   │   ├── tonight.tsx           # Main decision screen
-│   │   ├── chat.tsx              # Chat interface
-│   │   └── profile.tsx           # User profile
-│   ├── api/
-│   │   └── decision-os/          # Decision OS API endpoints
-│   │       ├── decision+api.ts   # Main decision endpoint
-│   │       ├── feedback+api.ts   # Accept/reject feedback
-│   │       ├── drm+api.ts        # Dinner Rescue Mode
-│   │       └── receipt/
-│   │           └── import+api.ts # Receipt scanning
-│   └── qa.tsx                    # QA panel (dev/preview only)
+├── app/                          # Expo Router pages
+│   ├── (tabs)/                   # Tab navigation
+│   │   ├── tonight.tsx           # Mode selection screen
+│   │   └── profile.tsx           # Settings screen
+│   ├── deal.tsx                  # Swipe-based decision cards
+│   ├── checklist/
+│   │   └── [recipeId].tsx        # Recipe checklist
+│   ├── rescue/
+│   │   └── [mealId].tsx          # DRM meal checklist
+│   ├── index.tsx                 # Root redirect
+│   └── _layout.tsx               # Root layout + route registration
 ├── lib/
-│   └── decision-os/              # Core decision logic
-│       ├── arbiter/              # Decision Arbiter
-│       ├── drm/                  # DRM fallback system
-│       ├── inventory/            # Receipt normalization
-│       ├── db/                   # Database adapters
-│       ├── config/               # Feature flags
-│       └── monitoring/           # Metrics
-├── db/
-│   └── migrations/               # SQL migrations (001-028)
-├── scripts/                      # Ops scripts
+│   ├── seeds/                    # Local recipe/DRM data
+│   │   ├── types.ts              # RecipeSeed, DrmSeed, Mode, etc.
+│   │   ├── recipes.ts            # 18 recipes + 12 DRM meals
+│   │   ├── images.ts             # Hero image registry
+│   │   └── index.ts              # Seed helpers (filter, pick, etc.)
+│   ├── state/
+│   │   ├── ffSession.ts          # Session state singleton
+│   │   └── persist.ts            # AsyncStorage persistence
+│   └── ui/
+│       └── theme.ts              # Design tokens (colors, spacing, typography)
+├── components/                   # Shared UI components
+│   ├── DecisionCard.tsx          # Main swipe card
+│   ├── RescueCard.tsx            # DRM rescue card variant
+│   ├── IngredientsTray.tsx       # Expandable ingredients list
+│   ├── PrimaryButton.tsx         # Consistent CTA button
+│   ├── ThinProgressBar.tsx       # Progress indicator
+│   ├── LockedTransition.tsx      # "Locked." micro-state
+│   └── WhyWhisper.tsx            # Recipe reason text
+├── assets/
+│   └── recipes/                  # Hero images for cards
 ├── docs/                         # Documentation
 └── .github/workflows/            # CI/CD workflows
 ```
@@ -106,107 +126,114 @@ npm test
 
 # Run build sanity check
 npm run build:sanity
+
+# Export for web (build verification)
+npx expo export -p web
 ```
 
 ### Environment Variables
 
-For local development, create `.env.local`:
+For local development, create `.env.local` (optional - MVP works without backend):
 
 ```bash
-# Required for API
+# Only needed if using backend features
 EXPO_PUBLIC_SUPABASE_URL=your-supabase-url
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-
-# Optional for local DB testing
-DATABASE_URL=postgresql://...
 ```
 
-## CI/CD Architecture
+## MVP Routes
 
-Three workflows, two protected environments, one release button.
+| Route | Purpose |
+|-------|---------|
+| `/` | Redirect to `/(tabs)/tonight` |
+| `/(tabs)/tonight` | Mode selection + allergens |
+| `/(tabs)/profile` | Settings + preferences |
+| `/deal` | Swipe-based card dealing |
+| `/checklist/[recipeId]` | Recipe execution checklist |
+| `/rescue/[mealId]` | DRM meal checklist |
+
+## Seed Data
+
+The MVP uses bundled seed data (no backend required):
+
+| Category | Count | Source |
+|----------|-------|--------|
+| Fancy recipes | 6 | `lib/seeds/recipes.ts` |
+| Easy recipes | 6 | `lib/seeds/recipes.ts` |
+| Cheap recipes | 6 | `lib/seeds/recipes.ts` |
+| DRM meals | 12 | `lib/seeds/recipes.ts` |
+
+Each recipe includes:
+- `id`, `name`, `mode`
+- `vegetarian`, `allergens`, `constraints`
+- `ingredients` (with quantities)
+- `steps` (for checklist)
+- `whyReasons` (rotated on display)
+- `estimatedTime`, `estimatedCost`
+- `imageKey` (for hero image)
+
+## Session State
+
+State is managed by `lib/state/ffSession.ts`:
+
+**Persisted (survives app restart):**
+- `selectedMode`: fancy | easy | cheap | null
+- `excludeAllergens`: AllergenTag[]
+- `constraints`: ConstraintTag[]
+
+**Ephemeral (reset on restart or "Reset Tonight"):**
+- `passCount`: number of passes this session
+- `dealHistory`: recipe IDs shown
+- `drmInserted`: whether DRM was triggered
+- `dealStartMs`: timestamp for 45s timer
+
+## DRM (Dinner Rescue Mode)
+
+DRM triggers when:
+1. User passes 3 times, OR
+2. 45 seconds elapse without acceptance
+
+When triggered:
+- Next card is a "Rescue" meal (simple panic meals)
+- Distinct visual style (warmer, "RESCUE" badge)
+- Only triggers once per session
+- After DRM pass, normal recipes resume
+
+## CI/CD Architecture
 
 ### Workflows
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | PR + push to main | Tests, build sanity, migration proof |
-| `staging-deploy.yml` | Manual | Migrate DB, deploy, healthcheck |
+| `ci.yml` | PR + push to main | Tests, build sanity, security gates |
+| `staging-deploy.yml` | Manual | DB migration + Vercel deploy (for backend features) |
 | `release-testflight.yml` | Manual (approval required) | EAS build + TestFlight submit |
 
-### Protected Environments
+### Gates
 
-| Environment | Secrets | Rules |
-|-------------|---------|-------|
-| `staging` | DATABASE_URL_STAGING, STAGING_URL, STAGING_AUTH_TOKEN, VERCEL_* | No approval |
-| `production` | EXPO_TOKEN, APPLE_ID, ASC_APP_ID, APPLE_TEAM_ID | **Approval required** |
-
-### Release Flow
-
-```bash
-# 1. Run preflight checks
-npm run release:preflight
-
-# 2. If green, trigger release workflow in GitHub
-# → GitHub prompts for production environment approval
-# → EAS builds and submits to TestFlight
-```
+- `npm test` — All unit tests pass
+- `npm run build:sanity` — TypeScript + EAS config valid
+- `npx expo export -p web` — Static export succeeds
+- Security gate — No `.env` or `db.js` committed
 
 ## Key Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `npm test` | Run all tests (1022 tests) |
-| `npm run build:sanity` | Verify EAS configuration |
-| `npm run release:preflight` | All pre-release checks |
-| `npm run staging:healthcheck` | Smoke + dogfood report |
-| `npm run db:migrate:staging` | Run migrations |
-| `npm run db:verify:staging` | Verify schema |
-
-## Database Migrations
-
-28 migrations from 001 to 028:
-
-- 001-010: Core tables (users, meals, events, households)
-- 011-016: Runtime flags, metrics, deployment ledger
-- 017-020: Household partitioning + constraints
-- 021-024: Uniqueness + indexes
-- 025-027: MVP extensions (meals, households, sessions)
-- 028: Household constraints (moved from 014/015)
-
-```bash
-# Run migrations
-DATABASE_URL=... npm run db:migrate
-
-# Verify schema
-DATABASE_URL_STAGING=... npm run db:verify:staging
-```
-
-## Feature Flags
-
-### Environment Flags
-
-| Flag | Default (prod) | Purpose |
-|------|----------------|---------|
-| `DECISION_OS_ENABLED` | false | Master kill switch |
-| `FF_MVP_ENABLED` | false | MVP kill switch |
-| `FF_QA_ENABLED` | false | QA panel access |
-
-### Runtime Flags (DB-backed)
-
-Flip instantly from Supabase UI without redeploying:
-
-```sql
-UPDATE runtime_flags SET enabled = false WHERE key = 'ff_mvp_enabled';
-```
+| `npm test` | Run all tests |
+| `npm run build:sanity` | Verify TypeScript + EAS config |
+| `npx expo export -p web` | Verify static export |
+| `npm start` | Start Expo dev server |
 
 ## Design Principles
 
-All UI must comply with [docs/design/constitution.md](docs/design/constitution.md).
+All UI follows [docs/design/constitution.md](docs/design/constitution.md):
 
-Key laws:
-- **Hick's Law:** Max 1 primary action per screen
-- **Fitts's Law:** Primary CTA bottom, ≥48px, full-width
-- **Miller's Law:** Max 1 decision, max 7 execution steps
+- **Calm, OS-like** — No "food content vibes", no emojis on cards
+- **Single decision** — ONE card at a time, no lists
+- **Quiet motion** — Subtle animations, 60fps, no jank
+- **Accessible** — Touch targets ≥48px, proper labels
+- **Color scheme** — Blue/green accents from favicon (no orange)
 
 ## Documentation
 
@@ -214,9 +241,7 @@ Key laws:
 |----------|---------|
 | [RELEASE.md](docs/RELEASE.md) | Build, release, CI/CD guide |
 | [TESTFLIGHT.md](docs/TESTFLIGHT.md) | EAS + TestFlight quick reference |
-| [DOGFOOD_FIRST_20_DINNERS.md](docs/DOGFOOD_FIRST_20_DINNERS.md) | Internal testing protocol |
 | [architecture.md](docs/architecture.md) | System architecture |
-| [domain.md](docs/domain.md) | Domain concepts |
 | [design/constitution.md](docs/design/constitution.md) | Design system principles |
 
 ## Testing
@@ -225,19 +250,15 @@ Key laws:
 # Run all tests
 npm test
 
-# Run with coverage
-npm run test:coverage
-
 # Run specific test file
 npx jest path/to/test.ts
 ```
 
-Test coverage:
-- 27 test suites
-- 1022 tests
-- Migration ordering proof
-- API boundary tests
-- Household isolation tests
+Test coverage includes:
+- Seed helpers (filtering, picking, constraints)
+- Session state (DRM triggers, persistence)
+- Route existence verification
+- Image registry validation
 
 ## License
 

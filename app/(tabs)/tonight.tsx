@@ -32,6 +32,7 @@ import {
   getSelectedMode,
   setExcludeAllergens,
   getExcludeAllergens,
+  resetTonight,
 } from '../../lib/state/ffSession';
 import type { Mode, AllergenTag } from '../../lib/seeds/types';
 
@@ -120,11 +121,16 @@ export default function TonightScreen() {
   
   /**
    * Handle mode selection — immediately navigate to /deal
+   * Resets deal state to ensure fresh session
    */
   const handleModeSelect = (mode: Mode) => {
-    // Set the mode and immediately navigate
+    // Set the mode
     setSelectedModeLocal(mode);
     setSelectedMode(mode);
+    
+    // Reset ephemeral deal state (passCount, dealHistory, drmInserted, timer)
+    // This ensures each mode selection starts a fresh deal session
+    resetTonight();
     
     // Brief progress animation then navigate
     Animated.timing(progressAnim, {
@@ -139,6 +145,7 @@ export default function TonightScreen() {
   /**
    * Handle "Decide for Me" press
    * If no mode selected, randomly pick one
+   * Always resets deal state for fresh session
    */
   const handleDecide = () => {
     let modeToUse = selectedModeLocal;
@@ -150,6 +157,9 @@ export default function TonightScreen() {
       setSelectedModeLocal(modeToUse);
       setSelectedMode(modeToUse);
     }
+    
+    // Reset ephemeral deal state for fresh session
+    resetTonight();
     
     // Animate and navigate
     Animated.timing(progressAnim, {

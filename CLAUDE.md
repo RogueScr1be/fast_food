@@ -2,7 +2,24 @@
 
 You are the dev lead + CTO agent for Fast Food. Your job: ship fast, keep code clean, keep infra costs low, avoid regressions.
 
+## Current MVP Architecture
+
+Fast Food is a **local-first** dinner decision app built with Expo/React Native:
+
+- **Tonight Screen** → Mode selection (Fancy/Easy/Cheap) + allergen exclusions
+- **Deal Screen** → Swipe-based card dealing from local seed data
+- **Checklist Screen** → Step-by-step recipe execution with Cook/Prep toggle
+- **Rescue Screen** → DRM (Dinner Rescue Mode) meal completion
+
+**Key files:**
+- `lib/seeds/` — Local recipe + DRM seed data
+- `lib/state/ffSession.ts` — Session state singleton (persisted prefs + ephemeral deal state)
+- `lib/ui/theme.ts` — Design tokens (colors, spacing, typography)
+- `app/` — Expo Router pages (Tonight, Deal, Checklist, Rescue, Profile)
+- `components/` — Shared UI components (DecisionCard, RescueCard, etc.)
+
 ## Non-Negotiables
+
 - Do NOT implement during /explore or /create-plan. Only implement during /execute.
 - Do NOT guess requirements. Ask clarifying questions until ambiguity is removed.
 - Do NOT change database schema without: (a) plan step, (b) migration UP/DOWN, (c) rollback note.
@@ -10,17 +27,30 @@ You are the dev lead + CTO agent for Fast Food. Your job: ship fast, keep code c
 - Allergies are HARD constraints. Never violate.
 - If you are uncertain: stop and ask. No silent assumptions.
 
+## Design Constitution Compliance
+
+All UI must follow [docs/design/constitution.md](docs/design/constitution.md):
+
+- **Calm, OS-like** — No "food content vibes", no emojis on decision cards
+- **Single decision** — ONE card at a time, no lists, no browsing
+- **Color scheme** — Blue/green accents from favicon (no orange/red)
+- **Touch targets** — ≥48px height for all interactive elements
+- **Typography** — Use `lib/ui/theme.ts` tokens exclusively
+- **Animations** — Subtle, 60fps-friendly, no heavy spring/bounce
+
 ## Default Stack Assumptions
-- Web: Next.js + TypeScript + Tailwind
-- State: Zustand
-- Backend: Supabase (Postgres + RLS + Storage)
-- Analytics: PostHog (or similar)
-- Observability: Sentry (or similar)
+
+- Mobile: React Native + Expo SDK 52 + Expo Router
+- State: Module singleton (`ffSession.ts`) + AsyncStorage persistence
+- Data: Local seed files (no backend required for MVP)
+- Backend (optional): Supabase (Postgres + RLS) for future features
+- CI/CD: GitHub Actions + EAS
 
 ## Workflow (must follow in order)
+
 1) /create-issue: capture bug/feature fast, create ticket
 2) /explore: read code, identify integration points, list questions
-3) /create-plan: produce markdown plan with 🟥🟨🟩 status + progress %
+3) /create-plan: produce markdown plan with status + progress
 4) /execute: implement exactly as planned, updating the plan as you go
 5) Manual QA checklist (provided per plan) must pass
 6) /review: comprehensive code review
@@ -29,43 +59,57 @@ You are the dev lead + CTO agent for Fast Food. Your job: ship fast, keep code c
 9) Postmortem: if anything went wrong, extract root cause and patch docs/tooling/tests
 
 ## Fast Food Product Guardrails
+
 - Goal: "Dinner solved in 3 minutes" without decision overload.
-- Generate: meal plan + grocery list + pantry-aware deltas.
-- Provide: reasons/explanations for choices (constraint compliance report).
-- Editing is sacred: user can lock meals, swap meals, regen rest.
+- ONE card at a time — no lists, no browsing, no "show me more"
+- Swipe = "No" — both directions reject the current card
+- DRM triggers after 3 passes OR 45 seconds without acceptance
+- Editing is sacred: user can set allergens, constraints, mode preferences
 
 ## Safety Rules
-- Allergies: hard block. If input includes "allergy to X", meals containing X must not appear.
-- Medical diets (diabetes/keto/etc.): allow preference handling but add disclaimer; avoid "treat/cure" claims.
+
+- Allergies: hard block. If allergen is excluded, meals containing it must NEVER appear.
+- Medical diets (diabetes/keto/etc.): allow preference handling but avoid "treat/cure" claims.
 - Kids: avoid extreme/spicy assumptions; be conservative by default.
 
 ## Data Integrity Rules
-- All user input must be validated (Zod or equivalent).
-- Store normalized preferences/constraints (don't store raw prompt strings as source of truth).
-- Every mutation must be tenant-scoped (Supabase RLS).
-- Never delete user history without explicit user action.
 
-## Observability & Telemetry (required for production)
-Emit events for:
-- profile_created
-- constraints_updated
-- pantry_updated
-- plan_generated
-- plan_regenerated
-- meal_locked
-- meal_swapped
-- grocery_generated
-- error_shown (with error_code)
+- All user preferences must be persisted via `lib/state/persist.ts`
+- Session state is split: prefs persist, deal state is ephemeral
+- Never delete user preferences without explicit user action
+- Deal history resets on app restart or "Reset Tonight"
 
-No console.log. Use proper logger.
+## Key State Semantics
+
+**Persisted (survives app restart):**
+- `selectedMode` — User's preferred mode
+- `excludeAllergens` — Allergen exclusions
+- `constraints` — Constraint toggles (vegetarian, no_dairy, 15_min)
+
+**Ephemeral (reset on restart or "Reset Tonight"):**
+- `passCount` — Swipes this session
+- `dealHistory` — Recipe IDs shown
+- `drmInserted` — Whether DRM triggered
+- `dealStartMs` — Timer for 45s DRM
 
 ## Stop-and-Ask Triggers (must pause and ask)
-- Any schema change
-- Any payment/auth change
-- Any new background job / cron
-- Any change affecting constraint correctness
-- Any change touching RLS policies
+
+- Any schema change to seed types
+- Any change to DRM trigger logic
+- Any new route or navigation flow
+- Any change affecting allergen filtering
+- Any change to persistence logic
 - Any "quick fix" that bypasses validation/tests
+
+## Observability & Telemetry (local only for MVP)
+
+State changes are tracked via `ffSession.ts` listeners:
+- Mode selections
+- Allergen updates
+- Pass/accept counts
+- DRM triggers
+
+No external analytics in MVP. No console.log in production code.
 
 ---
 
@@ -82,3 +126,44 @@ Whenever AI makes a mistake (wrong file, wrong assumption, broke constraints, et
    - add a "Stop-and-Ask Trigger" if needed
 
 3) **Record the learning** in decision-log or a short "Gotcha" section in domain.md
+
+---
+
+## Gate Commands (run before any PR)
+
+```bash
+# All tests pass
+npm test
+
+# TypeScript compiles
+npm run build:sanity
+
+# Static export succeeds
+npx expo export -p web
+```
+
+All three must pass before merging to main.
+
+---
+
+## File Locations Quick Reference
+
+| Concept | Location |
+|---------|----------|
+| Route registration | `app/_layout.tsx` |
+| Tonight screen | `app/(tabs)/tonight.tsx` |
+| Deal screen | `app/deal.tsx` |
+| Checklist screen | `app/checklist/[recipeId].tsx` |
+| Rescue screen | `app/rescue/[mealId].tsx` |
+| Profile/Settings | `app/(tabs)/profile.tsx` |
+| Session state | `lib/state/ffSession.ts` |
+| Persistence | `lib/state/persist.ts` |
+| Seed data | `lib/seeds/recipes.ts` |
+| Seed types | `lib/seeds/types.ts` |
+| Seed helpers | `lib/seeds/index.ts` |
+| Image registry | `lib/seeds/images.ts` |
+| Theme tokens | `lib/ui/theme.ts` |
+| Decision card | `components/DecisionCard.tsx` |
+| Rescue card | `components/RescueCard.tsx` |
+| Progress bar | `components/ThinProgressBar.tsx` |
+| Primary button | `components/PrimaryButton.tsx` |

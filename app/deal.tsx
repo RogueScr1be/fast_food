@@ -97,6 +97,9 @@ export default function DealScreen() {
   
   // Pending navigation after Locked transition - stores type and id
   const pendingNavRef = useRef<{ type: 'recipe' | 'drm'; id: string } | null>(null);
+  
+  // Guard against React 18 StrictMode double-mount on web
+  const didInitRef = useRef(false);
 
   // Get session state - ensure we have a mode
   const [mode, setLocalMode] = useState(() => {
@@ -145,8 +148,20 @@ export default function DealScreen() {
       setDrmInserted(true);
     }
 
-    // Try to get a recipe
-    const recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
+    // Try to get a recipe with progressive fallback
+    // Step 1: Try with all filters (mode + allergens + constraints)
+    let recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
+
+    // Step 2: If no recipe and we have constraints, drop constraints
+    if (!recipe && constraints.length > 0) {
+      recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, []);
+    }
+
+    // Step 3: If still no recipe and we have allergens, drop allergens (last resort)
+    // Better to show something than nothing
+    if (!recipe && excludeAllergens.length > 0) {
+      recipe = pickNextRecipe(mode, [], dealHistory, []);
+    }
 
     if (recipe) {
       setCurrentDeal({ type: 'recipe', data: recipe });
@@ -156,7 +171,7 @@ export default function DealScreen() {
       setExpanded(false);
       setNoMoreRecipes(false);
     } else {
-      // No more recipes available
+      // Truly exhausted - no more recipes even with relaxed filters
       setCurrentDeal(null);
       setNoMoreRecipes(true);
     }
@@ -368,15 +383,15 @@ export default function DealScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() => router.back()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={24} color={colors.textPrimary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>{mode}</Text>
+        <TouchableOpacity
+          style={styles.headerButton}
+          onPress={() => router.replace('/(tabs)/tonight')}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <ArrowLeft size={24} color={colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{mode}</Text>
           <View style={styles.headerButton} />
         </View>
 
@@ -400,7 +415,7 @@ export default function DealScreen() {
           {/* Secondary action - go back to mode select */}
           <TouchableOpacity
             style={styles.backToModeButton}
-            onPress={() => router.back()}
+            onPress={() => router.replace('/(tabs)/tonight')}
             accessibilityRole="button"
             accessibilityLabel="Try a different mode"
           >
@@ -421,7 +436,7 @@ export default function DealScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerButton}
-          onPress={() => router.back()}
+          onPress={() => router.replace('/(tabs)/tonight')}
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >

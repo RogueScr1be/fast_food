@@ -29,25 +29,28 @@ export default function RootLayout() {
       setPrefsLoaded(true);
       return;
     }
-    
+
     // Timeout fallback: don't let hydration block app forever
     const timeout = setTimeout(() => {
-      console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
-      setPrefsLoaded(true);
-    }, 3000);
-    
-    hydrateFromStorage()
-      .then(() => {
-        clearTimeout(timeout);
+      if (alive) {
+        console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
         setPrefsLoaded(true);
-      })
+      }
+    }, 3000);
+
+    hydrateFromStorage()
       .catch((error) => {
-        clearTimeout(timeout);
         console.warn('[RootLayout] Hydration failed:', error);
-        setPrefsLoaded(true); // Proceed with defaults on failure
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        if (alive) setPrefsLoaded(true);
       });
-    
-    return () => clearTimeout(timeout);
+
+    return () => {
+      alive = false;
+      clearTimeout(timeout);
+    };
   }, []);
 
   const isReady = isFrameworkReady && (fontsLoaded || fontError) && prefsLoaded;
