@@ -17,7 +17,7 @@ interface FFSessionState {
   selectedMode: Mode | null;
   excludeAllergens: AllergenTag[];
   constraints: ConstraintTag[];
-  sessionStartTime: number | null;
+  sessionStartTime: number | null; // When the current "Tonight" session began (set by resetTonight)
   // Phase 2: Deal tracking (ephemeral)
   passCount: number;
   dealHistory: string[]; // Recipe IDs shown this session
@@ -42,6 +42,7 @@ let state: FFSessionState = {
 
 // Hydration tracking
 let hydrated = false;
+let hydratingPromise: Promise<void> | null = null;
 
 // Subscribers for reactive updates
 type Listener = () => void;
@@ -66,22 +67,44 @@ export function isHydrated(): boolean {
  * Load persisted preferences from storage and update state.
  * Call once on app launch (e.g., in root layout).
  * Safe to call multiple times - only hydrates once.
+ * Concurrency-safe: concurrent calls return the same promise.
+ * 
+ * IMPORTANT: Will NOT overwrite state if user/flow has already set values
+ * (e.g., Deal screen's random-mode fallback). This prevents race conditions.
  */
 export async function hydrateFromStorage(): Promise<void> {
   if (hydrated) return;
-  
-  try {
-    const prefs = await loadPrefs();
-    state.selectedMode = prefs.selectedMode;
-    state.constraints = [...prefs.constraints];
-    state.excludeAllergens = [...prefs.excludeAllergens];
-    hydrated = true;
-    notifyListeners();
-  } catch (error) {
-    // Mark as hydrated even on error to prevent retry loops
-    hydrated = true;
-    console.warn('[ffSession] Hydration failed:', error);
-  }
+  if (hydratingPromise) return hydratingPromise;
+
+  hydratingPromise = (async () => {
+    try {
+      const prefs = await loadPrefs();
+
+      // Guard: only apply persisted prefs if state is still at defaults
+      // This prevents hydration from clobbering live state set by user/flow
+      const stateIsDefault =
+        state.selectedMode === null &&
+        state.constraints.length === 0 &&
+        state.excludeAllergens.length === 0;
+
+      if (stateIsDefault) {
+        state.selectedMode = prefs.selectedMode;
+        state.constraints = [...prefs.constraints];
+        state.excludeAllergens = [...prefs.excludeAllergens];
+        notifyListeners();
+      }
+
+      hydrated = true;
+    } catch (error) {
+      // Mark as hydrated even on error to prevent retry loops
+      hydrated = true;
+      console.warn('[ffSession] Hydration failed:', error);
+    } finally {
+      hydratingPromise = null;
+    }
+  })();
+
+  return hydratingPromise;
 }
 
 // ============================================
@@ -134,9 +157,6 @@ export function getSessionState(): Readonly<FFSessionState> {
 
 export function setSelectedMode(mode: Mode | null): void {
   state.selectedMode = mode;
-  if (mode && !state.sessionStartTime) {
-    state.sessionStartTime = Date.now();
-  }
   // Persist preference
   savePrefs({ selectedMode: mode });
   notifyListeners();
@@ -315,4 +335,26 @@ export function subscribe(listener: Listener): () => void {
  */
 export function __resetHydrationForTest(): void {
   hydrated = false;
+}
+
+/**
+ * Full state reset for testing - clears everything including hydration flag.
+ * Preferred over __resetHydrationForTest for test isolation.
+ * DO NOT use in production code.
+ */
+export function __resetStateForTest(): void {
+  hydrated = false;
+  hydratingPromise = null;
+  state = {
+    selectedMode: null,
+    excludeAllergens: [],
+    constraints: [],
+    sessionStartTime: null,
+    passCount: 0,
+    dealHistory: [],
+    currentDealId: null,
+    drmInserted: false,
+    dealStartMs: null,
+  };
+  listeners.clear();
 }

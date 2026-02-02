@@ -20,7 +20,8 @@ export default function RootLayout() {
     'Inter-Bold': Inter_700Bold,
   });
 
-  // Hydrate preferences from storage on mount (never hang splash)
+  // Hydrate preferences from storage on mount
+  // Includes timeout fallback to prevent black-screen on corrupted storage
   useEffect(() => {
     let alive = true;
 
@@ -28,18 +29,25 @@ export default function RootLayout() {
       setPrefsLoaded(true);
       return;
     }
-
+    
+    // Timeout fallback: don't let hydration block app forever
+    const timeout = setTimeout(() => {
+      console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
+      setPrefsLoaded(true);
+    }, 3000);
+    
     hydrateFromStorage()
-      .catch(() => {
-        // hydration marks hydrated=true internally on error
+      .then(() => {
+        clearTimeout(timeout);
+        setPrefsLoaded(true);
       })
-      .finally(() => {
-        if (alive) setPrefsLoaded(true);
+      .catch((error) => {
+        clearTimeout(timeout);
+        console.warn('[RootLayout] Hydration failed:', error);
+        setPrefsLoaded(true); // Proceed with defaults on failure
       });
-
-    return () => {
-      alive = false;
-    };
+    
+    return () => clearTimeout(timeout);
   }, []);
 
   const isReady = isFrameworkReady && (fontsLoaded || fontError) && prefsLoaded;
@@ -53,29 +61,37 @@ export default function RootLayout() {
   return (
     <AppProvider>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Root redirect */}
+        {/* Root redirect to Tonight */}
         <Stack.Screen name="index" />
-
-        {/* Optional */}
-        <Stack.Screen name="onboarding" />
-
-        {/* Tabs */}
+        
+        {/* Tab navigator (Tonight, Profile) */}
         <Stack.Screen name="(tabs)" />
-
-        {/* MVP flow routes (explicit for reliable navigation + export) */}
-        <Stack.Screen
-          name="deal"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        
+        {/* MVP Deal flow routes - must be explicitly registered for reliable navigation */}
+        <Stack.Screen 
+          name="deal" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-        <Stack.Screen
-          name="checklist/[recipeId]"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        <Stack.Screen 
+          name="checklist/[recipeId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-        <Stack.Screen
-          name="rescue/[mealId]"
-          options={{ gestureEnabled: true, animation: 'slide_from_right' }}
+        
+        {/* DRM rescue checklist - separate from regular checklist */}
+        <Stack.Screen 
+          name="rescue/[mealId]" 
+          options={{ 
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }} 
         />
-
+        
         {/* Fallback */}
         <Stack.Screen name="+not-found" />
       </Stack>

@@ -2,26 +2,45 @@
  * DRM (Dinner Rescue Mode) Session State Tests
  */
 
+// Mock persist module before importing ffSession
+jest.mock('../persist', () => ({
+  loadPrefs: jest.fn(),
+  savePrefs: jest.fn(),
+  clearPrefs: jest.fn(),
+}));
+
 import {
   resetSession,
   resetDealState,
+  resetTonight,
   setSelectedMode,
   setExcludeAllergens,
+  setConstraints,
   incrementPassCount,
+  addToDealHistory,
+  setCurrentDealId,
+  getSelectedMode,
+  getExcludeAllergens,
+  getConstraints,
   getPassCount,
+  getDealHistory,
+  getCurrentDealId,
   getDrmInserted,
   setDrmInserted,
   markDealStart,
   getDealStartMs,
   getElapsedDealTimeMs,
   shouldTriggerDrm,
+  hydrateFromStorage,
   DRM_PASS_THRESHOLD,
   DRM_TIME_THRESHOLD_MS,
+  __resetStateForTest,
 } from '../ffSession';
+import { loadPrefs } from '../persist';
 
 describe('DRM Session State', () => {
   beforeEach(() => {
-    resetSession();
+    __resetStateForTest();
   });
 
   describe('shouldTriggerDrm', () => {
@@ -194,6 +213,103 @@ describe('DRM Session State', () => {
       expect(getPassCount()).toBe(0);
       expect(getDrmInserted()).toBe(false);
       // Allergens should persist - let's verify via the getter
+    });
+  });
+
+  describe('resetTonight semantics', () => {
+    it('preserves persisted prefs and clears ephemeral deal state', () => {
+      // Set persisted prefs
+      setSelectedMode('easy');
+      setExcludeAllergens(['dairy']);
+      setConstraints(['15_min']);
+
+      // Set ephemeral state
+      incrementPassCount();
+      addToDealHistory('recipe-1');
+      setCurrentDealId('recipe-1');
+      setDrmInserted(true);
+      markDealStart();
+
+      // Sanity before reset
+      expect(getPassCount()).toBe(1);
+      expect(getDealHistory()).toEqual(['recipe-1']);
+      expect(getCurrentDealId()).toBe('recipe-1');
+      expect(getDrmInserted()).toBe(true);
+      expect(getDealStartMs()).not.toBeNull();
+
+      // Act
+      resetTonight();
+
+      // Persisted prefs remain
+      expect(getSelectedMode()).toBe('easy');
+      expect(getExcludeAllergens()).toEqual(['dairy']);
+      expect(getConstraints()).toEqual(['15_min']);
+
+      // Ephemeral cleared
+      expect(getPassCount()).toBe(0);
+      expect(getDealHistory()).toEqual([]);
+      expect(getCurrentDealId()).toBeNull();
+      expect(getDrmInserted()).toBe(false);
+      expect(getDealStartMs()).toBeNull();
+    });
+  });
+
+  describe('hydration race condition guard', () => {
+    it('does not overwrite state after user flow has set mode', async () => {
+      (loadPrefs as jest.Mock).mockResolvedValue({
+        selectedMode: 'cheap',
+        constraints: ['15_min'],
+        excludeAllergens: ['nuts'],
+      });
+
+      // User/flow already set mode (e.g., Deal auto-picked or Tonight selected)
+      setSelectedMode('easy');
+
+      await hydrateFromStorage();
+
+      // Guard should keep the live state, not clobber with persisted 'cheap'
+      expect(getSelectedMode()).toBe('easy');
+    });
+
+    it('applies persisted prefs when state is at defaults', async () => {
+      (loadPrefs as jest.Mock).mockResolvedValue({
+        selectedMode: 'fancy',
+        constraints: ['vegetarian'],
+        excludeAllergens: ['gluten'],
+      });
+
+      // State is at defaults (no user interaction yet)
+      expect(getSelectedMode()).toBeNull();
+
+      await hydrateFromStorage();
+
+      // Should apply persisted prefs
+      expect(getSelectedMode()).toBe('fancy');
+      expect(getConstraints()).toEqual(['vegetarian']);
+      expect(getExcludeAllergens()).toEqual(['gluten']);
+    });
+
+    it('is idempotent under concurrent calls (loads only once)', async () => {
+      // Reset mock call count
+      (loadPrefs as jest.Mock).mockClear();
+      
+      // Create a deferred promise to control when loadPrefs resolves
+      let resolvePrefs: (v: any) => void = () => {};
+      (loadPrefs as jest.Mock).mockImplementation(
+        () => new Promise(res => { resolvePrefs = res; })
+      );
+
+      // Fire two concurrent hydration calls
+      const p1 = hydrateFromStorage();
+      const p2 = hydrateFromStorage();
+
+      // Resolve the single loadPrefs call
+      resolvePrefs({ selectedMode: 'easy', constraints: [], excludeAllergens: [] });
+
+      await Promise.all([p1, p2]);
+
+      // Should only have called loadPrefs once despite two concurrent calls
+      expect(loadPrefs).toHaveBeenCalledTimes(1);
     });
   });
 });

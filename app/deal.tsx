@@ -97,9 +97,6 @@ export default function DealScreen() {
   
   // Pending navigation after Locked transition - stores type and id
   const pendingNavRef = useRef<{ type: 'recipe' | 'drm'; id: string } | null>(null);
-  
-  // Guard for double-mount in React 18 StrictMode / web
-  const didInitRef = useRef(false);
 
   // Get session state - ensure we have a mode
   const [mode, setLocalMode] = useState(() => {
@@ -221,9 +218,6 @@ export default function DealScreen() {
    */
   const handleAccept = useCallback(() => {
     if (!currentDeal || showLocked) return;
-    
-    // Add to history so it's not shown again
-    addToDealHistory(currentDeal.data.id);
     
     // Store navigation intent for after Locked transition
     pendingNavRef.current = currentDeal.type === 'recipe'
