@@ -20,10 +20,7 @@ eas build:configure
 ### EAS Secrets (set once)
 
 ```bash
-# Staging API URL
-eas secret:create --scope project --name EXPO_PUBLIC_DECISION_OS_BASE_URL --value "https://your-app.vercel.app"
-
-# Apple credentials
+# Apple credentials for TestFlight submission
 eas secret:create --scope project --name APPLE_ID --value "your@email.com"
 eas secret:create --scope project --name ASC_APP_ID --value "1234567890"
 eas secret:create --scope project --name APPLE_TEAM_ID --value "ABCD1234"
@@ -31,10 +28,7 @@ eas secret:create --scope project --name APPLE_TEAM_ID --value "ABCD1234"
 
 ### For Preview Builds (Internal Testing)
 
-```bash
-# Optional: Staging auth token (NEVER set for production)
-eas secret:create --scope project --name EXPO_PUBLIC_STAGING_AUTH_TOKEN --value "eyJ..."
-```
+No additional secrets required for MVP. The app works offline with local seed data.
 
 ## Build Commands
 
@@ -42,47 +36,42 @@ eas secret:create --scope project --name EXPO_PUBLIC_STAGING_AUTH_TOKEN --value 
 
 ```bash
 # Run sanity check first
-npm run build:sanity preview
+npm run build:sanity
 
 # Build for preview
-npm run eas:build:preview
-# or: eas build --profile preview --platform ios
+eas build --profile preview --platform ios
 ```
 
 ### Production Build (Public TestFlight)
 
 ```bash
 # Run sanity check first
-npm run build:sanity production
+npm run build:sanity
 
 # Build for production
-npm run eas:build:prod
-# or: eas build --profile production --platform ios
+eas build --profile production --platform ios
 ```
 
 ### Submit to TestFlight
 
 ```bash
 # Submit latest build
-npm run eas:submit:prod
-# or: eas submit --platform ios --latest
+eas submit --platform ios --latest
 ```
 
 ### One Command: Build + Submit
 
 ```bash
-npm run release:testflight
-# or: eas build --profile production --platform ios --auto-submit
+eas build --profile production --platform ios --auto-submit
 ```
 
 ## Pre-Build Checklist
 
 - [ ] Run `npm test` — all tests pass
-- [ ] Run `npm run smoke:mvp` — smoke tests pass
 - [ ] Run `npm run build:sanity` — no errors
-- [ ] Version bumped in `app.json` if needed
+- [ ] Run `npx expo export -p web` — static export succeeds
 - [ ] All changes committed
-- [ ] EAS secrets configured
+- [ ] EAS secrets configured (Apple credentials)
 
 ## TestFlight Cut Sequence
 
@@ -91,24 +80,18 @@ npm run release:testflight
 ```bash
 # Step 1: Run all tests
 npm test
-# Must pass: all 945+ tests
+# Must pass: all tests
 
 # Step 2: Build configuration sanity check
 npm run build:sanity
-# Must pass: no errors (warnings OK)
-# Verifies:
-#   - EXPO_PUBLIC_FF_QA_ENABLED is false in production
-#   - INTERNAL_METRICS_ENABLED is false in production
-#   - No auth token in production profile
-#   - Bundle ID in allowlist (if configured)
+# Must pass: TypeScript compiles
 
-# Step 3: Staging healthcheck (smoke + dogfood report)
-npm run staging:healthcheck
-# Must pass: both smoke tests and metrics report
-# Requires: STAGING_URL and STAGING_AUTH_TOKEN in .env.local or env
+# Step 3: Verify static export
+npx expo export -p web
+# Must pass: export completes without errors
 
 # Step 4: Cut the build
-npm run release:testflight
+eas build --profile production --platform ios --auto-submit
 # Builds + submits to TestFlight in one command
 ```
 
@@ -124,75 +107,54 @@ npm run release:testflight
 
 ## Build Profiles
 
-| Profile | Distribution | API URL | Auth Token | Use Case |
-|---------|--------------|---------|------------|----------|
-| development | Simulator | localhost | None | Local dev |
-| preview | Internal | Staging | Optional via EAS secret | QA testing |
-| production | Store | Staging | **NEVER** | TestFlight release |
+| Profile | Distribution | Use Case |
+|---------|--------------|----------|
+| development | Simulator | Local dev |
+| preview | Internal | QA testing |
+| production | Store | TestFlight release |
 
-## Kill Switch
+## MVP Routes Verification
 
-The MVP has a client-side kill switch:
+Before release, verify these routes work:
 
-| Flag | Default | Effect |
-|------|---------|--------|
-| `EXPO_PUBLIC_FF_MVP_ENABLED` | `true` | If `false`, app shows "temporarily unavailable" |
-
-### To Disable MVP (Emergency)
-
-**Option 1: Server-side (preferred)**
-1. Go to Supabase → Table Editor → `runtime_flags`
-2. Set `ff_mvp_enabled` = `false`
-3. Takes effect within 30 seconds
-
-**Option 2: Client-side (requires rebuild)**
-1. Set `EXPO_PUBLIC_FF_MVP_ENABLED=false` in EAS secrets
-2. Rebuild and redeploy
-
-## QA Panel Access
-
-Hidden QA panel for device testing:
-
-1. On Tonight screen
-2. Long-press "What sounds good tonight?" for 2 seconds
-3. QA Panel opens
-
-Features:
-- Environment info (API URL, build profile)
-- Force DRM trigger
-- Reset session
-- View last 10 API events
-
-## Phase 6 — Persistence Verification
-
-After Phase 6 changes, verify the following before TestFlight submission:
-
-### Persistence Behavior
-- [ ] **Prefs persist across restart**: Kill app → relaunch → mode/allergens/constraints restored
-- [ ] **Deal state resets**: Kill app → relaunch → passCount/drmInserted reset to 0/false
-- [ ] **Reset Tonight keeps prefs**: Tap "Reset Tonight" → mode/allergens remain, deal history clears
-- [ ] **Offline still works**: Airplane mode → app loads seeds, dealing works
-
-### Routes & Cleanup
-- [ ] **No dead routes**: Run `rg "chat\.tsx|ChatMessage|MagicalParticles|SmartSuggestions" -S` — 0 matches
-- [ ] **No decision-os remnants**: Run `rg "decision-os" -S` — 0 matches
-
-### Gates
-- [ ] `npm test` — all tests pass
-- [ ] `npm run build:sanity` — no errors
-- [ ] `npx expo export -p web` — no errors
-
----
+| Route | Test |
+|-------|------|
+| `/` | Redirects to Tonight |
+| `/(tabs)/tonight` | Mode selection visible |
+| `/(tabs)/profile` | Settings visible |
+| `/deal` | Cards appear after mode selection |
+| `/checklist/[id]` | Steps appear after "Let's do this" |
+| `/rescue/[id]` | DRM checklist appears |
 
 ## Post-Build Verification
 
 After installing TestFlight build:
 
-1. **Launch test** — App opens without crash
-2. **Kill switch test** — If enabled, normal flow works
-3. **Decision flow** — Can tap intent, get decision, approve
-4. **Reject flow** — Can reject twice, DRM triggers
-5. **QA panel** — Long-press works, panel opens
+### Core Flow
+- [ ] **Launch test** — App opens without crash
+- [ ] **Tonight screen** — Mode buttons (Fancy/Easy/Cheap) visible
+- [ ] **Mode tap** — Tapping a mode navigates to Deal
+- [ ] **Deal screen** — Card appears with hero image
+- [ ] **Swipe test** — Swipe left/right shows next card
+- [ ] **Accept test** — "Let's do this" shows "Locked." then Checklist
+- [ ] **Checklist** — Steps are tappable, progress bar works
+- [ ] **Done test** — "Done" returns to Tonight
+
+### DRM (Dinner Rescue Mode)
+- [ ] **Pass 3 times** — Rescue card appears (distinct "RESCUE" badge)
+- [ ] **Or wait 45s** — Rescue card appears
+- [ ] **Rescue checklist** — `/rescue/[mealId]` loads correctly
+
+### Settings
+- [ ] **Allergen modal** — "I'm allergic" opens modal
+- [ ] **Save allergens** — Exclusions persist
+- [ ] **Profile screen** — Shows current allergens/constraints
+- [ ] **Reset Tonight** — Clears deal state, keeps preferences
+
+### Persistence
+- [ ] **Kill app** — Force close
+- [ ] **Relaunch** — Mode preference restored
+- [ ] **Allergens** — Exclusions still active
 
 ## Troubleshooting
 
@@ -212,19 +174,76 @@ eas credentials
 ### App Crashes on Launch
 
 1. Check Expo errors in console
-2. Verify API URL is reachable
-3. Check EAS secrets are set correctly
-4. Test with development build first
+2. Verify all routes registered in `_layout.tsx`
+3. Test with development build first
+4. Check for missing assets
 
-### 401 Errors
+### Navigation Not Working
 
-Expected until login UI is implemented. App should handle gracefully (show error, not crash).
+Common causes:
+- Route not registered in `app/_layout.tsx`
+- File doesn't exist at expected path
+- Typo in `router.push()` path
+
+Verify routes:
+```bash
+# Check all route files exist
+ls -la app/
+ls -la app/(tabs)/
+ls -la app/checklist/
+ls -la app/rescue/
+```
 
 ### TestFlight Processing Stuck
 
 Apple processing can take 10-30 minutes. Check App Store Connect for status.
 
+## Required Credentials
+
+| Variable | Description | Where to find |
+|----------|-------------|---------------|
+| `APPLE_ID` | Your Apple ID email | Your Apple Developer account |
+| `ASC_APP_ID` | App Store Connect App ID | App Store Connect → App → General → App Information |
+| `APPLE_TEAM_ID` | Apple Developer Team ID | Apple Developer → Membership → Team ID |
+
+Set in EAS:
+
+```bash
+eas secret:create --scope project --name APPLE_ID --value "your@email.com"
+eas secret:create --scope project --name ASC_APP_ID --value "1234567890"
+eas secret:create --scope project --name APPLE_TEAM_ID --value "ABCD1234"
+```
+
+## Quick Reference
+
+```bash
+# Login
+eas login
+
+# Build for preview (internal testing)
+eas build --profile preview --platform ios
+
+# Build for production (TestFlight)
+eas build --profile production --platform ios
+
+# Submit latest build to TestFlight
+eas submit --platform ios --latest
+
+# Build AND submit to TestFlight
+eas build --profile production --platform ios --auto-submit
+
+# Check build status
+eas build:list
+
+# View secrets
+eas secret:list
+
+# Add a secret
+eas secret:create --scope project --name VAR_NAME --value "value"
+```
+
 ## Related Docs
 
 - [RELEASE.md](./RELEASE.md) — Full CI/CD documentation
-- [DOGFOOD_FIRST_20_DINNERS.md](./DOGFOOD_FIRST_20_DINNERS.md) — Testing protocol
+- [architecture.md](./architecture.md) — System architecture
+- [design/constitution.md](./design/constitution.md) — Design system principles
