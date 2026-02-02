@@ -112,6 +112,12 @@ export default function DealScreen() {
   });
   const constraints = getConstraints();
 
+  // Defensive mode validation
+  const isValidMode = mode === 'fancy' || mode === 'easy' || mode === 'cheap';
+  if (!isValidMode) {
+    console.warn('[Deal] invalid mode detected:', mode);
+  }
+
   /**
    * Deal a new card (recipe or DRM)
    * 
@@ -151,6 +157,16 @@ export default function DealScreen() {
     // Try to get a recipe with progressive fallback
     // Step 1: Try with all filters (mode + allergens + constraints)
     let recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
+
+    // Log why strict matching failed (helps tune seed coverage)
+    if (!recipe) {
+      console.warn('[Deal] strict match empty', {
+        mode,
+        excludeAllergens,
+        constraints,
+        dealHistoryCount: dealHistory.length,
+      });
+    }
 
     // Step 2: If no recipe and we have constraints, drop constraints
     if (!recipe && constraints.length > 0) {
@@ -391,12 +407,14 @@ export default function DealScreen() {
         >
           <ArrowLeft size={24} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{mode}</Text>
+        <Text style={styles.headerTitle}>
+          {isValidMode ? mode : 'Tonight'}
+        </Text>
           <View style={styles.headerButton} />
         </View>
 
         <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>That's all for {mode}</Text>
+          <Text style={styles.emptyTitle}>That's all for {isValidMode ? mode : 'tonight'}</Text>
           <Text style={styles.emptySubtitle}>
             You've seen {seenCount} options
           </Text>
@@ -443,7 +461,9 @@ export default function DealScreen() {
           <ArrowLeft size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>{mode}</Text>
+          <Text style={styles.headerTitle}>
+            {isValidMode ? mode : 'Tonight'}
+          </Text>
           <Text style={styles.headerSubtitle}>
             {availableCount} more · {passCount} passed
           </Text>
