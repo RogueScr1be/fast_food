@@ -36,12 +36,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Security gate - banned files
+      - name: Security gate - banned files + patterns
         run: |
           echo "Checking for banned files..."
           test ! -f .env || (echo "FAIL: .env must not be committed" && exit 1)
           test ! -f db.js || (echo "FAIL: db.js must not be committed" && exit 1)
           echo "PASS: No banned files found"
+          
+          echo "Checking for leaked secret patterns..."
+          # Exclude README, docs, and example files from pattern check
+          if grep -r --include="*.ts" --include="*.tsx" --include="*.js" \
+               -E "(supabase\.co.*(anon|service_role)|eyJ[A-Za-z0-9_-]{20,})" \
+               --exclude-dir=node_modules --exclude-dir=.git . 2>/dev/null | \
+               grep -v "example" | grep -v "placeholder" | grep -v "YOUR_" | head -1; then
+            echo "FAIL: Possible secret pattern found in source files"
+            exit 1
+          fi
+          echo "PASS: No secret patterns found"
 
       - name: Run tests
         run: npm test
