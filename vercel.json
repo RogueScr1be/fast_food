@@ -8,7 +8,7 @@
   },
   "rewrites": [
     {
-      "source": "/((?!_expo/|assets/|favicon\\.ico|robots\\.txt|sitemap\\.xml).*)",
+      "source": "/:path((?!.*\\.).*)",
       "destination": "/"
     }
   ]
