@@ -261,7 +261,7 @@ export function DecisionCard({
 
         {/* ── Scrim gradient ─────────────────────────────────────── */}
         <LinearGradient
-          colors={SCRIM_COLORS[variant] as unknown as string[]}
+          colors={[SCRIM_COLORS[variant][0], SCRIM_COLORS[variant][1]]}
           locations={[0.4, 1]}
           style={styles.scrim}
         />
