@@ -26,7 +26,6 @@ import {
   Modal,
   ScrollView,
   Dimensions,
-  findNodeHandle,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -184,6 +183,7 @@ export default function TonightScreen() {
 
   const [transitionMode, setTransitionMode] = useState<Mode | null>(null);
   const isTransitioning = useRef(false);
+  const mountedRef = useRef(true);
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -216,6 +216,25 @@ export default function TonightScreen() {
   }));
 
   // -----------------------------------------------------------------------
+  // Unmount guard — cancel everything, prevent setState after unmount
+  // -----------------------------------------------------------------------
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (navTimerRef.current) clearTimeout(navTimerRef.current);
+      if (cleanupTimerRef.current) clearTimeout(cleanupTimerRef.current);
+      navTimerRef.current = null;
+      cleanupTimerRef.current = null;
+      // Reset shared values so returning to Tonight never shows ghost clone
+      cloneOpacity.value = 0;
+      scrimOpacity.value = 0;
+      isTransitioning.current = false;
+    };
+  }, []);
+
+  // -----------------------------------------------------------------------
   // Cleanup helper — ensures no ghost overlay
   // -----------------------------------------------------------------------
 
@@ -225,17 +244,28 @@ export default function TonightScreen() {
     navTimerRef.current = null;
     cleanupTimerRef.current = null;
 
+    // Reset all shared values (cancels any in-flight Reanimated animations)
     cloneOpacity.value = 0;
     scrimOpacity.value = 0;
-    setTransitionMode(null);
+    cloneX.value = 0;
+    cloneY.value = 0;
+    cloneW.value = 0;
+    cloneH.value = 0;
+    cloneRadius.value = radii.xl;
+
+    if (mountedRef.current) {
+      setTransitionMode(null);
+    }
     isTransitioning.current = false;
-  }, [cloneOpacity, scrimOpacity]);
+  }, [cloneOpacity, scrimOpacity, cloneX, cloneY, cloneW, cloneH, cloneRadius]);
 
   // -----------------------------------------------------------------------
   // Navigate (called from animation timeline)
   // -----------------------------------------------------------------------
 
   const doNavigate = useCallback(() => {
+    if (!mountedRef.current) return;
+
     router.push('/deal');
 
     // Fade clone out after navigation push
@@ -244,7 +274,7 @@ export default function TonightScreen() {
 
     // Final cleanup after fade
     cleanupTimerRef.current = setTimeout(() => {
-      cleanup();
+      if (mountedRef.current) cleanup();
     }, FADE_OUT_DURATION + 50);
   }, [cloneOpacity, scrimOpacity, cleanup]);
 
@@ -265,6 +295,8 @@ export default function TonightScreen() {
       // measureInWindow gives absolute screen coordinates
       (tileView as any).measureInWindow(
         (x: number, y: number, width: number, height: number) => {
+          if (!mountedRef.current) return;
+
           if (!width || !height || width <= 0 || height <= 0) {
             // Invalid measurement — fallback
             router.push('/deal');
@@ -281,7 +313,7 @@ export default function TonightScreen() {
           cloneOpacity.value = 1;
 
           // Show clone + scrim
-          setTransitionMode(mode);
+          if (mountedRef.current) setTransitionMode(mode);
 
           // Timing config
           const timingConfig = {
@@ -487,28 +519,16 @@ export default function TonightScreen() {
 
           {/* Clone tile expanding to full screen */}
           <Animated.View style={[cloneStyle, styles.cloneBase]} pointerEvents="none">
-            {/* Match the selected-tile visual: blue bg, white text/icon */}
-            <Sparkles
-              size={32}
-              color={colors.textInverse}
-              style={
-                transitionMode !== 'fancy' ? styles.hiddenIcon : undefined
-              }
-            />
-            <Utensils
-              size={32}
-              color={colors.textInverse}
-              style={
-                transitionMode !== 'easy' ? styles.hiddenIcon : undefined
-              }
-            />
-            <Coins
-              size={32}
-              color={colors.textInverse}
-              style={
-                transitionMode !== 'cheap' ? styles.hiddenIcon : undefined
-              }
-            />
+            {/* Render only the selected mode icon — no wasted renders */}
+            {transitionMode === 'fancy' && (
+              <Sparkles size={32} color={colors.textInverse} />
+            )}
+            {transitionMode === 'easy' && (
+              <Utensils size={32} color={colors.textInverse} />
+            )}
+            {transitionMode === 'cheap' && (
+              <Coins size={32} color={colors.textInverse} />
+            )}
             <Text style={styles.cloneLabel}>
               {MODE_CONFIG[transitionMode].label}
             </Text>
@@ -676,10 +696,6 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     marginTop: spacing.sm,
   },
-  hiddenIcon: {
-    display: 'none',
-  },
-
   // -- Modal --
   modalOverlay: {
     flex: 1,
