@@ -224,10 +224,10 @@ export function DecisionCard({
     <View style={styles.container}>
       <GestureDetector gesture={composedGesture}>
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
-          {/* ── Hero image (expo-image, focus bottom) ──────────────── */}
+          {/* ── Hero image (expo-image, focus bottom, pulled back ~3%) ── */}
           <Image
             source={imageSource}
-            style={StyleSheet.absoluteFill}
+            style={styles.heroImage}
             contentFit="cover"
             contentPosition="bottom"
             accessibilityLabel={`Photo of ${recipe.name}`}
@@ -333,8 +333,18 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    backgroundColor: colors.textPrimary,
+    backgroundColor: colors.textPrimary, // clean dark edge behind image
     overflow: 'hidden',
+  },
+  // Pull back ~3% so bowls/plates aren't clipped at the edges.
+  // The dark card background fills the thin border naturally.
+  heroImage: {
+    position: 'absolute',
+    top: '1.5%',
+    left: '1.5%',
+    right: '1.5%',
+    bottom: '1.5%',
+    borderRadius: 4, // very subtle rounding to soften the inset edge
   },
   scrim: {
     position: 'absolute',
