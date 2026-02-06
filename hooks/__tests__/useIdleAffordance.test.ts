@@ -10,10 +10,18 @@
 // Mock react-native-reanimated before any imports
 // ---------------------------------------------------------------------------
 jest.mock('react-native-reanimated', () => {
+  const React = require('react');
+
   // Return the final value immediately for timing/sequence mocks
   const withTiming = (toValue: number, _config?: unknown) => toValue;
   const withSequence = (...values: number[]) => values[values.length - 1];
-  const useSharedValue = (init: number) => ({ value: init });
+
+  // useSharedValue must return a STABLE reference across renders
+  // so that .value mutations are visible to the test.
+  const useSharedValue = (init: number) => {
+    const ref = React.useRef({ value: init });
+    return ref.current;
+  };
 
   return {
     __esModule: true,
@@ -34,20 +42,11 @@ jest.mock('react-native-reanimated', () => {
     runOnJS: (fn: Function) => fn,
     interpolate: () => 0,
     Extrapolation: { CLAMP: 'clamp' },
-    SharedValue: {},
   };
 });
 
-import { renderHook, act } from '@testing-library/react-hooks';
-
-// Check if @testing-library/react-hooks is available; fall back to manual approach
-let useRenderHook: typeof renderHook;
-try {
-  useRenderHook = renderHook;
-} catch {
-  // Will be handled below
-}
-
+import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import {
   useIdleAffordance,
   IDLE_THRESHOLD_MS,
@@ -56,16 +55,13 @@ import {
 } from '../useIdleAffordance';
 
 // ---------------------------------------------------------------------------
-// Fallback hook renderer if @testing-library/react-hooks is not installed
+// Hook renderer helper (using react-test-renderer)
 // ---------------------------------------------------------------------------
-import React from 'react';
-import TestRenderer from 'react-test-renderer';
 
 type HookResult<T> = { current: T };
 
-function renderHookFallback<T>(hookFn: () => T): {
+function renderHook<T>(hookFn: () => T): {
   result: HookResult<T>;
-  rerender: () => void;
   unmount: () => void;
 } {
   const result: HookResult<T> = { current: undefined as unknown as T };
@@ -82,21 +78,13 @@ function renderHookFallback<T>(hookFn: () => T): {
 
   return {
     result,
-    rerender: () => {
-      TestRenderer.act(() => {
-        renderer.update(React.createElement(TestComponent));
-      });
-    },
     unmount: () => {
       TestRenderer.act(() => {
-        renderer.unmount();
+        renderer!.unmount();
       });
     },
   };
 }
-
-// Use the best available hook renderer
-const render = renderHookFallback;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -118,12 +106,12 @@ describe('useIdleAffordance', () => {
   });
 
   it('starts with isIdle = false', () => {
-    const { result } = render(() => useIdleAffordance());
+    const { result } = renderHook(() => useIdleAffordance());
     expect(result.current.isIdle).toBe(false);
   });
 
   it('triggers idle after threshold elapses', () => {
-    const { result } = render(() => useIdleAffordance());
+    const { result } = renderHook(() => useIdleAffordance());
     expect(result.current.isIdle).toBe(false);
 
     // Advance time just short of threshold — should still be non-idle
@@ -140,21 +128,19 @@ describe('useIdleAffordance', () => {
   });
 
   it('sets animated values when idle triggers', () => {
-    const { result } = render(() => useIdleAffordance());
+    const { result } = renderHook(() => useIdleAffordance());
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(IDLE_THRESHOLD_MS + 50);
     });
 
-    // With our mock, withSequence returns the last value (0) and
-    // withTiming returns the toValue directly
-    // nudgeX goes through withSequence(withTiming(12), withTiming(0)) → 0
-    // overlayLiftY goes through withTiming(40) → 40
+    // With our mock, withTiming returns the toValue directly
+    // overlayLiftY goes through withTiming(LIFT_PX) → LIFT_PX
     expect(result.current.overlayLiftY.value).toBe(LIFT_PX);
   });
 
   it('resets isIdle and restarts timer on resetIdle()', () => {
-    const { result } = render(() => useIdleAffordance());
+    const { result } = renderHook(() => useIdleAffordance());
 
     // Trigger idle
     TestRenderer.act(() => {
@@ -176,7 +162,7 @@ describe('useIdleAffordance', () => {
   });
 
   it('resets animated values on resetIdle()', () => {
-    const { result } = render(() => useIdleAffordance());
+    const { result } = renderHook(() => useIdleAffordance());
 
     // Trigger idle
     TestRenderer.act(() => {
@@ -193,7 +179,7 @@ describe('useIdleAffordance', () => {
   });
 
   it('does not trigger when enabled=false', () => {
-    const { result } = render(() =>
+    const { result } = renderHook(() =>
       useIdleAffordance({ enabled: false }),
     );
 
@@ -204,7 +190,7 @@ describe('useIdleAffordance', () => {
   });
 
   it('clears timer on unmount', () => {
-    const { unmount } = render(() => useIdleAffordance());
+    const { unmount } = renderHook(() => useIdleAffordance());
 
     // Unmount before threshold
     TestRenderer.act(() => {
@@ -219,7 +205,7 @@ describe('useIdleAffordance', () => {
 
   it('accepts a custom thresholdMs', () => {
     const customMs = 2000;
-    const { result } = render(() =>
+    const { result } = renderHook(() =>
       useIdleAffordance({ thresholdMs: customMs }),
     );
 
