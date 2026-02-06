@@ -21,7 +21,7 @@
  *   because PanResponder only captures when |dx| > 10 && |dy| < 30.
  *
  * Variant:
- *   "default" — cool scrim, green accept CTA
+ *   "default" — cool scrim, blue accept CTA
  *   "rescue"  — warm amber scrim, amber accept CTA, Rescue badge
  *
  * Backward compatibility:
@@ -120,7 +120,7 @@ const SCRIM_COLORS: Record<CardVariant, readonly [string, string]> = {
 };
 
 const ACCEPT_BG: Record<CardVariant, string> = {
-  default: colors.accentGreen,
+  default: colors.accentBlue,
   rescue: colors.warning,
 };
 

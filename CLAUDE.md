@@ -119,6 +119,24 @@ explicitly advances.
 That is Phase 1.3 scope. Commit your current work, note the dependency, and
 move to the correct phase.
 
+### Idle Affordance Behavior (decided, do not re-debate)
+
+After ~7 s of inactivity on a deal card:
+- **Nudge** the card horizontally (~12 px pulse, returns to 0).
+- **Lift** the glass overlay slightly (~40 px) via `externalLiftY`.
+- **Do NOT change `overlayLevel`** — level stays at 0. The lift is purely
+  visual and teaches the user that the glass can be dragged, without
+  actually opening content.
+- On any user interaction (swipe, tap, overlay drag), call `resetIdle()`.
+- Idle triggers **once per card**; timer resets when a new card is dealt.
+
+### Retired Components (Phase 1.3)
+
+- `components/LockedTransition.tsx` — DELETED. "Locked." overlay is
+  replaced by glass overlay level 2 (future checklist surface).
+- `components/IngredientsTray.tsx` — DELETED. Ingredients are now
+  rendered inline inside the GlassOverlay children.
+
 ## Observability & Telemetry (local only for MVP)
 
 State changes are tracked via `ffSession.ts` listeners:
