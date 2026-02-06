@@ -141,6 +141,32 @@ All gestures in the card stack MUST use `react-native-gesture-handler`
   one gesture owns a given touch. Handle gesture has priority.
 - GlassOverlay exposes its gesture via `ref.getHandleGesture()`.
 
+### Navigation Exit Rule (decided, do not regress)
+
+Every screen that the user can navigate TO must have a deterministic way
+back. Removing chrome is fine; removing the exit path is not.
+
+- Deal screen: glass-style chevron-left at top-left, safe-area inset
+  aware, visible only when `overlayLevel === 0`. Uses
+  `router.replace('/(tabs)/tonight')` — not `router.back()` — for
+  deterministic behavior across web/native.
+- Empty state already has "Try a different mode" link.
+- If you strip UI, always verify the exit path survives.
+
+### Dimension Reactivity Rule (decided, do not regress)
+
+Never compute layout from `Dimensions.get('window')` at module level.
+Use `useWindowDimensions()` inside the component so portrait/landscape
+rotation recalculates correctly.
+
+Applies to:
+- `GlassOverlay`: container height, snap points, all level heights
+- `DecisionCard`: swipe-out target width
+- Any future overlay or full-bleed component
+
+If a value derived from screen dimensions is used inside a Reanimated
+worklet, mirror it into a `useSharedValue` and sync via `useEffect`.
+
 ### Image Focus Rule (decided Phase 1.3.1)
 
 Use `expo-image` (not RN `Image`) for hero images on editorial cards:

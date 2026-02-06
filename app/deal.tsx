@@ -23,9 +23,10 @@ import {
   Modal,
   ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { router } from 'expo-router';
-import { RefreshCw, X, Check } from 'lucide-react-native';
+import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getSelectedMode,
@@ -109,6 +110,9 @@ export default function DealScreen() {
   const constraints = getConstraints();
 
   const isValidMode = mode === 'fancy' || mode === 'easy' || mode === 'cheap';
+
+  // Safe area for back button positioning
+  const insets = useSafeAreaInsets();
 
   // ---------------------------------------------------------------------------
   // Idle affordance — nudge card + lift glass after ~7 s
@@ -403,6 +407,23 @@ export default function DealScreen() {
         )}
       </Animated.View>
 
+      {/* ── Back button (glass, top-left, only at level 0) ────────── */}
+      {overlayLevel === 0 && (
+        <TouchableOpacity
+          style={[
+            styles.backButton,
+            { top: insets.top + spacing.sm },
+          ]}
+          onPress={() => router.replace('/(tabs)/tonight')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <ChevronLeft size={20} color={colors.glassText} />
+        </TouchableOpacity>
+      )}
+
       {/* Allergy Modal (kept; will be triggered from AllergyIndicator in future) */}
       <Modal
         visible={showAllergyModal}
@@ -475,6 +496,17 @@ const styles = StyleSheet.create({
   },
   cardWrapper: {
     flex: 1,
+  },
+  backButton: {
+    position: 'absolute',
+    left: spacing.md,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(25, 25, 25, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 50,
   },
   centered: {
     flex: 1,
