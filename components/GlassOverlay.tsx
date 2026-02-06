@@ -10,14 +10,13 @@
  *   On end      → snap to nearest level with withSpring.
  *   React state (onLevelChange) only fires on end, never during drag.
  *
- * Platform:
- *   iOS    — BlurView (expo-blur), fixed intensity
- *   Android — interpolated opaque tint (light → deep by level)
+ * Dimension reactivity:
+ *   All snap points and container height derive from useWindowDimensions()
+ *   so portrait ↔ landscape rotation recalculates correctly.
  *
  * Gesture:
  *   The handle pan gesture is exported via `getHandleGesture()` so the
- *   parent (DecisionCard) can compose it with the swipe gesture using
- *   Gesture.Exclusive().
+ *   parent (DecisionCard) can compose it with Gesture.Exclusive().
  */
 
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
@@ -25,8 +24,8 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -50,28 +49,11 @@ import {
 } from '../lib/ui/theme';
 
 // ---------------------------------------------------------------------------
-// Layout constants
+// Constants (non-dimension-dependent)
 // ---------------------------------------------------------------------------
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
 const HANDLE_ZONE_HEIGHT = 40;
-
 export const DEFAULT_COLLAPSED_HEIGHT = 72;
-
-export const LEVEL_HEIGHTS = {
-  0: DEFAULT_COLLAPSED_HEIGHT,
-  1: Math.round(SCREEN_HEIGHT * 0.5),
-  2: Math.round(SCREEN_HEIGHT * 0.92),
-} as const;
-
-const CONTAINER_HEIGHT = LEVEL_HEIGHTS[2];
-
-export const SNAP_POINTS: Record<0 | 1 | 2, number> = {
-  0: CONTAINER_HEIGHT - LEVEL_HEIGHTS[0],
-  1: CONTAINER_HEIGHT - LEVEL_HEIGHTS[1],
-  2: 0,
-};
 
 const SPRING_CONFIG = {
   damping: glass.springDamping,
@@ -86,7 +68,6 @@ const SPRING_CONFIG = {
 export type OverlayLevel = 0 | 1 | 2;
 
 export interface GlassOverlayRef {
-  /** Get the handle pan gesture for Gesture.Exclusive composition */
   getHandleGesture: () => PanGesture;
 }
 
@@ -119,20 +100,38 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     },
     ref,
   ) {
+    const { height: windowHeight } = useWindowDimensions();
     const effectiveCollapsed = collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT;
 
-    // Shared values for snap points (worklet-safe)
-    const snap0 = useSharedValue(CONTAINER_HEIGHT - effectiveCollapsed);
-    const snap1 = useSharedValue(SNAP_POINTS[1]);
-    const snap2 = useSharedValue(0);
+    // Compute dimension-dependent values
+    const containerHeight = Math.round(windowHeight * 0.92);
+    const halfHeight = Math.round(windowHeight * 0.5);
 
-    const translateY = useSharedValue(CONTAINER_HEIGHT - effectiveCollapsed);
+    // Shared values for snap points (worklet-safe, updated on dimension change)
+    const snap0 = useSharedValue(containerHeight - effectiveCollapsed);
+    const snap1 = useSharedValue(containerHeight - halfHeight);
+    const snap2 = useSharedValue(0);
+    const containerH = useSharedValue(containerHeight);
+
+    const translateY = useSharedValue(containerHeight - effectiveCollapsed);
     const gestureStartY = useSharedValue(0);
     const isFirstRender = useRef(true);
 
+    // Recompute snap points when dimensions or collapsedHeight change
     useEffect(() => {
-      snap0.value = CONTAINER_HEIGHT - (collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT);
-    }, [collapsedHeight]);
+      const newContainerH = Math.round(windowHeight * 0.92);
+      const newHalfH = Math.round(windowHeight * 0.5);
+
+      containerH.value = newContainerH;
+      snap0.value = newContainerH - effectiveCollapsed;
+      snap1.value = newContainerH - newHalfH;
+      snap2.value = 0;
+
+      // Re-snap to current level immediately (no spring on dimension change)
+      const target =
+        level === 0 ? snap0.value : level === 1 ? snap1.value : snap2.value;
+      translateY.value = target;
+    }, [windowHeight, effectiveCollapsed]);
 
     // Animate to level on prop change
     useEffect(() => {
@@ -148,7 +147,7 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     }, [level]);
 
     // -------------------------------------------------------------------
-    // Handle pan gesture — direct-follow during drag, spring on end
+    // Handle pan gesture
     // -------------------------------------------------------------------
 
     const handleGesture = Gesture.Pan()
@@ -158,12 +157,10 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
         gestureStartY.value = translateY.value;
       })
       .onUpdate((e) => {
-        // Direct-follow: clamp, no spring
         const next = gestureStartY.value + e.translationY;
         translateY.value = Math.max(snap2.value, Math.min(snap0.value, next));
       })
       .onEnd(() => {
-        // Snap to nearest level with spring
         const cur = translateY.value;
         const points = [snap2.value, snap1.value, snap0.value];
         const levels: readonly (0 | 1 | 2)[] = [2, 1, 0];
@@ -180,13 +177,11 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
 
         translateY.value = withSpring(points[nearestIdx], SPRING_CONFIG);
 
-        // Fire level change only on end
         if (onLevelChange) {
           runOnJS(onLevelChange)(levels[nearestIdx]);
         }
       });
 
-    // Expose gesture for parent composition
     useImperativeHandle(ref, () => ({
       getHandleGesture: () => handleGesture,
     }));
@@ -213,7 +208,6 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
       ),
     );
 
-    // Tint progress: 0 = collapsed (light), 1 = fully expanded (deep)
     const tintProgress = useDerivedValue(() =>
       interpolate(
         translateY.value,
@@ -230,6 +224,7 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     const containerStyle = useAnimatedStyle(() => {
       const liftOffset = externalLiftY ? externalLiftY.value : 0;
       return {
+        height: containerH.value,
         transform: [{ translateY: translateY.value - liftOffset }],
       };
     });
@@ -242,7 +237,6 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
       opacity: expandedOpacity.value,
     }));
 
-    // Android tint interpolation: light at L0 → deep at L1+
     const androidBackdropStyle = useAnimatedStyle(() => {
       const bg = interpolateColor(
         tintProgress.value,
@@ -252,7 +246,6 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
       return { backgroundColor: bg };
     });
 
-    // iOS overlay tint (behind blur)
     const iosOverlayStyle = useAnimatedStyle(() => {
       const bg = interpolateColor(
         tintProgress.value,
@@ -279,7 +272,6 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
               tint={glass.blurTint}
               style={StyleSheet.absoluteFill}
             />
-            {/* Tint layer on top of blur — deepens with expansion */}
             <Animated.View
               style={[StyleSheet.absoluteFill, iosOverlayStyle]}
               pointerEvents="none"
@@ -294,7 +286,7 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
         {/* Top border */}
         <View style={styles.topBorder} />
 
-        {/* Handle — drag target */}
+        {/* Handle */}
         <GestureDetector gesture={handleGesture}>
           <Animated.View style={styles.handleZone}>
             <View style={styles.handleBar} />
@@ -310,15 +302,15 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
           </View>
         ) : null}
 
-        {/* Sticky content (always visible) */}
+        {/* Sticky content */}
         {stickyContent}
 
-        {/* Level 1 content — fades in L0→L1 */}
+        {/* Level 1 content */}
         <Animated.View style={[styles.contentSection, childrenStyle]}>
           {children}
         </Animated.View>
 
-        {/* Level 2 content — fades in L1→L2 */}
+        {/* Level 2 content */}
         <Animated.View style={[styles.expandedSection, expandedStyle]}>
           {expandedContent}
         </Animated.View>
@@ -328,7 +320,7 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
 );
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles (height is now dynamic via containerStyle, not static)
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
@@ -337,7 +329,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: CONTAINER_HEIGHT,
+    // height is set dynamically via containerStyle
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     overflow: 'hidden',
@@ -388,5 +380,14 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
 });
+
+// Re-export stale constants for backward compat (tests, docs). Not used at runtime.
+export const LEVEL_HEIGHTS = {
+  0: DEFAULT_COLLAPSED_HEIGHT,
+  1: 0, // dynamic now
+  2: 0, // dynamic now
+} as const;
+
+export const SNAP_POINTS: Record<0 | 1 | 2, number> = { 0: 0, 1: 0, 2: 0 };
 
 export default GlassOverlay;

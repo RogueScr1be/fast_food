@@ -25,9 +25,9 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
   TouchableOpacity,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -57,8 +57,6 @@ import { AllergyIndicator } from './AllergyIndicator';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
@@ -158,12 +156,15 @@ export function DecisionCard({
   // Swipe gesture (RNGH — replaces PanResponder)
   // -----------------------------------------------------------------------
 
+  const { width: screenWidth } = useWindowDimensions();
   const swipeX = useSharedValue(0);
+  // Keep screenWidth in a shared value so the worklet can read it
+  const screenW = useSharedValue(screenWidth);
+  useEffect(() => { screenW.value = screenWidth; }, [screenWidth]);
 
   const firePass = useCallback(
     (dir: PassDirection) => {
       onPass(dir);
-      // Reset position for next card
       swipeX.value = 0;
     },
     [onPass, swipeX],
@@ -176,15 +177,16 @@ export function DecisionCard({
       swipeX.value = e.translationX;
     })
     .onEnd((e) => {
+      const w = screenW.value;
       if (e.translationX > SWIPE_THRESHOLD) {
         swipeX.value = withTiming(
-          SCREEN_WIDTH + 100,
+          w + 100,
           { duration: SWIPE_OUT_DURATION },
           () => runOnJS(firePass)('right'),
         );
       } else if (e.translationX < -SWIPE_THRESHOLD) {
         swipeX.value = withTiming(
-          -SCREEN_WIDTH - 100,
+          -w - 100,
           { duration: SWIPE_OUT_DURATION },
           () => runOnJS(firePass)('left'),
         );
