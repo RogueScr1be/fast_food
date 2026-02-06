@@ -40,6 +40,18 @@ export const colors = {
   errorLight: '#FEE2E2',
   warning: '#F59E0B',
   warningLight: '#FEF3C7',
+  
+  // Allergy indicator — amber treatment (not clinical red)
+  warningAmber: '#D97706',
+  warningAmberBg: '#FEF3C7',
+  
+  // Glass overlay system
+  glass: 'rgba(25, 25, 25, 0.65)',
+  glassFallback: 'rgba(15, 15, 15, 0.82)',
+  glassBorder: 'rgba(255, 255, 255, 0.12)',
+  glassHandle: 'rgba(255, 255, 255, 0.35)',
+  glassText: 'rgba(255, 255, 255, 0.92)',
+  glassTextMuted: 'rgba(255, 255, 255, 0.55)',
 } as const;
 
 export const spacing = {
@@ -104,7 +116,40 @@ export const shadows = {
 // Minimum touch target per accessibility guidelines
 export const MIN_TOUCH_TARGET = 48;
 
+/**
+ * Glass overlay constants.
+ * Blur intensity is FIXED (never animated) for Android perf.
+ */
+export const glass = {
+  /** BlurView intensity on iOS (fixed, not animated) */
+  blurIntensity: 80,
+  /** BlurView tint on iOS */
+  blurTint: 'dark' as const,
+  /** Handle bar dimensions */
+  handleWidth: 36,
+  handleHeight: 4,
+  handleRadius: 2,
+  /** Spring config for level snapping */
+  springDamping: 20,
+  springStiffness: 200,
+  springMass: 0.5,
+} as const;
+
+/**
+ * Idle affordance constants.
+ */
+export const idle = {
+  /** Time before idle affordance triggers (ms) */
+  thresholdMs: 7000,
+  /** Horizontal card nudge distance (px) */
+  nudgePx: 12,
+  /** Vertical overlay lift distance (px) */
+  liftPx: 40,
+} as const;
+
 export type Colors = typeof colors;
 export type Spacing = typeof spacing;
 export type Radii = typeof radii;
 export type Typography = typeof typography;
+export type Glass = typeof glass;
+export type Idle = typeof idle;
