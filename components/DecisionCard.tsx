@@ -1,17 +1,36 @@
 /**
- * DecisionCard — Swipeable Recipe Card with Hero Image
- * 
- * Displays a single recipe with swipe-to-pass gestures.
- * Uses React Native Animated + PanResponder for smooth gestures.
- * 
- * Swipe left: "Not feeling it"
- * Swipe right: "Doesn't fit"
- * Tap: Toggle ingredients tray
- * 
- * Design: Calm, OS-like. Hero image with subtle overlay, clean typography.
+ * DecisionCard — Full-Screen Editorial Meal Card
+ *
+ * Phase 1.2 rewrite: edge-to-edge hero image with GlassOverlay system.
+ *
+ * Layout (top → bottom):
+ *   Hero image          — fills entire card, resizeMode="cover"
+ *   LinearGradient scrim — bottom 55 %, transparent → dark
+ *   Info overlay        — recipe name + WhyWhisper + time/cost on scrim
+ *   Rescue badge        — top-left (variant="rescue" only)
+ *   AllergyIndicator    — bottom-right hexagon, above glass
+ *   GlassOverlay        — anchored to bottom
+ *     Level 0: handle + mode label + accept CTA (stickyContent)
+ *     Level 1: + ingredients list
+ *     Level 2: + expanded content (future checklist)
+ *
+ * Swipe gesture:
+ *   Horizontal PanResponder slides the card off-screen to pass.
+ *   No rotation on full-screen card (pure horizontal translation).
+ *   GlassOverlay handle drag (vertical, RNGH) does not conflict
+ *   because PanResponder only captures when |dx| > 10 && |dy| < 30.
+ *
+ * Variant:
+ *   "default" — cool scrim, green accept CTA
+ *   "rescue"  — warm amber scrim, amber accept CTA, Rescue badge
+ *
+ * Backward compatibility:
+ *   `expanded` / `onToggleExpand` still work (map to overlay level 0↔1).
+ *   New optional props (`overlayLevel`, `onOverlayLevelChange`, etc.)
+ *   take precedence when provided.
  */
 
-import React, { useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,37 +42,91 @@ import {
   Image,
   Platform,
 } from 'react-native';
-
-// Web doesn't support native driver well - use JS driver on web
-const USE_NATIVE_DRIVER = Platform.OS !== 'web';
-import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import type { SharedValue } from 'react-native-reanimated';
+import {
+  colors,
+  spacing,
+  radii,
+  typography,
+  MIN_TOUCH_TARGET,
+} from '../lib/ui/theme';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
 import { getImageSource } from '../lib/seeds/images';
-import { IngredientsTray } from './IngredientsTray';
 import { WhyWhisper } from './WhyWhisper';
+import { GlassOverlay, OverlayLevel } from './GlassOverlay';
+import { AllergyIndicator } from './AllergyIndicator';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Web doesn't support native driver well — use JS driver on web
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+
 const SWIPE_THRESHOLD = 120;
 const SWIPE_OUT_DURATION = 250;
-const HINT_FADE_START = 50; // px before hints start fading in
-const MAX_ROTATION = 3; // degrees - subtle, not "dating app"
 
-// Responsive hero sizing
-const CARD_WIDTH = Math.min(SCREEN_WIDTH - spacing.lg * 2, 380);
-const HERO_ASPECT_RATIO = 4 / 3; // Standard photo ratio
-const HERO_HEIGHT_RAW = CARD_WIDTH / HERO_ASPECT_RATIO;
-const HERO_HEIGHT = Math.max(160, Math.min(240, HERO_HEIGHT_RAW)); // Clamp 160-240
+/**
+ * Collapsed glass height: handle (40) + mode label row (28) + accept CTA (56)
+ * + vertical padding (~16). Gives the overlay enough room for sticky content.
+ */
+const COLLAPSED_GLASS_HEIGHT = 140;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export type PassDirection = 'left' | 'right';
+export type CardVariant = 'default' | 'rescue';
 
-interface DecisionCardProps {
+export interface DecisionCardProps {
+  /** Recipe or DRM meal to display */
   recipe: RecipeSeed | DrmSeed;
+  /** "Why this?" whisper text */
   whyText: string;
+  /** @deprecated Use overlayLevel instead. Drives overlay 0↔1 for compat. */
   expanded: boolean;
+  /** @deprecated Use onOverlayLevelChange instead. Toggles expanded. */
   onToggleExpand: () => void;
+  /** Called when user accepts (CTA press) */
   onAccept: () => void;
+  /** Called when user swipes to pass */
   onPass: (direction: PassDirection) => void;
+
+  // --- New optional props (Phase 1.3+) ---
+
+  /** Visual variant. Default: 'default'. */
+  variant?: CardVariant;
+  /** Explicit overlay level (overrides expanded) */
+  overlayLevel?: OverlayLevel;
+  /** Called when glass overlay level changes (gesture or programmatic) */
+  onOverlayLevelChange?: (level: OverlayLevel) => void;
+  /** Idle affordance lift value (pass-through to GlassOverlay) */
+  externalLiftY?: SharedValue<number>;
+  /** Mode label inside glass overlay (e.g. "Fancy") */
+  modeLabel?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Variant color maps
+// ---------------------------------------------------------------------------
+
+const SCRIM_COLORS: Record<CardVariant, readonly [string, string]> = {
+  default: ['transparent', 'rgba(0, 0, 0, 0.7)'],
+  rescue: ['transparent', 'rgba(92, 40, 12, 0.7)'],
+};
+
+const ACCEPT_BG: Record<CardVariant, string> = {
+  default: colors.accentGreen,
+  rescue: colors.warning,
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function DecisionCard({
   recipe,
@@ -62,82 +135,87 @@ export function DecisionCard({
   onToggleExpand,
   onAccept,
   onPass,
+  variant = 'default',
+  overlayLevel,
+  onOverlayLevelChange,
+  externalLiftY,
+  modeLabel,
 }: DecisionCardProps) {
+  // -----------------------------------------------------------------------
+  // Overlay level management (backward compat + new API)
+  // -----------------------------------------------------------------------
+
+  const [internalLevel, setInternalLevel] = useState<OverlayLevel>(
+    overlayLevel ?? (expanded ? 1 : 0),
+  );
+
+  // Sync with external props
+  useEffect(() => {
+    if (overlayLevel !== undefined) {
+      setInternalLevel(overlayLevel);
+    } else {
+      setInternalLevel(expanded ? 1 : 0);
+    }
+  }, [overlayLevel, expanded]);
+
+  const handleOverlayLevelChange = useCallback(
+    (newLevel: OverlayLevel) => {
+      setInternalLevel(newLevel);
+      onOverlayLevelChange?.(newLevel);
+
+      // Backward compat: toggle expanded when crossing the 0↔1 boundary
+      const wasExpanded = internalLevel > 0;
+      const isNowExpanded = newLevel > 0;
+      if (wasExpanded !== isNowExpanded) {
+        onToggleExpand();
+      }
+    },
+    [internalLevel, onOverlayLevelChange, onToggleExpand],
+  );
+
+  // -----------------------------------------------------------------------
+  // Swipe gesture (horizontal only, PanResponder)
+  // -----------------------------------------------------------------------
+
   const position = useRef(new Animated.ValueXY()).current;
-  const swipeDirection = useRef<PassDirection | null>(null);
-
-  // Subtle hint labels - fade in late (after 50px), stay low-contrast
-  const leftHintOpacity = position.x.interpolate({
-    inputRange: [-SWIPE_THRESHOLD, -HINT_FADE_START, 0],
-    outputRange: [0.6, 0, 0], // max 60% opacity for subtlety
-    extrapolate: 'clamp',
-  });
-
-  const rightHintOpacity = position.x.interpolate({
-    inputRange: [0, HINT_FADE_START, SWIPE_THRESHOLD],
-    outputRange: [0, 0, 0.6],
-    extrapolate: 'clamp',
-  });
-
-  // Card rotation during swipe - subtle ±3° max
-  const rotation = position.x.interpolate({
-    inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
-    outputRange: [`-${MAX_ROTATION}deg`, '0deg', `${MAX_ROTATION}deg`],
-    extrapolate: 'clamp',
-  });
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only capture horizontal gestures
-        return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 30;
-      },
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Math.abs(gs.dx) > 10 && Math.abs(gs.dy) < 30,
       onPanResponderGrant: () => {
-        // Reset position offset
         position.setOffset({
           x: (position.x as any)._value,
           y: 0,
         });
         position.setValue({ x: 0, y: 0 });
       },
-      onPanResponderMove: (_, gestureState) => {
-        position.setValue({ x: gestureState.dx, y: 0 });
-        
-        // Track direction for hint
-        if (gestureState.dx < -HINT_FADE_START) {
-          swipeDirection.current = 'left';
-        } else if (gestureState.dx > HINT_FADE_START) {
-          swipeDirection.current = 'right';
-        } else {
-          swipeDirection.current = null;
-        }
+      onPanResponderMove: (_, gs) => {
+        position.setValue({ x: gs.dx, y: 0 });
       },
-      onPanResponderRelease: (_, gestureState) => {
+      onPanResponderRelease: (_, gs) => {
         position.flattenOffset();
 
-        if (gestureState.dx > SWIPE_THRESHOLD) {
-          // Swipe right - animate out
+        if (gs.dx > SWIPE_THRESHOLD) {
           Animated.timing(position, {
             toValue: { x: SCREEN_WIDTH + 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
             useNativeDriver: USE_NATIVE_DRIVER,
           }).start(() => {
             onPass('right');
-            resetPosition();
+            position.setValue({ x: 0, y: 0 });
           });
-        } else if (gestureState.dx < -SWIPE_THRESHOLD) {
-          // Swipe left - animate out
+        } else if (gs.dx < -SWIPE_THRESHOLD) {
           Animated.timing(position, {
             toValue: { x: -SCREEN_WIDTH - 100, y: 0 },
             duration: SWIPE_OUT_DURATION,
             useNativeDriver: USE_NATIVE_DRIVER,
           }).start(() => {
             onPass('left');
-            resetPosition();
+            position.setValue({ x: 0, y: 0 });
           });
         } else {
-          // Spring back to center
           Animated.spring(position, {
             toValue: { x: 0, y: 0 },
             friction: 5,
@@ -145,159 +223,177 @@ export function DecisionCard({
             useNativeDriver: USE_NATIVE_DRIVER,
           }).start();
         }
-        swipeDirection.current = null;
       },
-    })
+    }),
   ).current;
 
-  const resetPosition = () => {
-    position.setValue({ x: 0, y: 0 });
+  const cardTransform = {
+    transform: [{ translateX: position.x }],
   };
 
-  const cardStyle = {
-    transform: [
-      { translateX: position.x },
-      { rotate: rotation },
-    ],
-  };
+  // -----------------------------------------------------------------------
+  // Derived data
+  // -----------------------------------------------------------------------
 
-  // Get estimated cost (only on RecipeSeed, not DrmSeed)
-  const estimatedCost = 'estimatedCost' in recipe ? recipe.estimatedCost : null;
-  
-  // Get image source
+  const estimatedCost =
+    'estimatedCost' in recipe ? recipe.estimatedCost : null;
   const imageSource = getImageSource(recipe.imageKey);
+  const allergenCount = recipe.allergens.length;
+  const isRescue = variant === 'rescue';
+
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
 
   return (
     <View style={styles.container}>
-      {/* Swipe Hint Labels - subtle, late fade-in */}
-      <Animated.View style={[styles.hintLeft, { opacity: leftHintOpacity }]}>
-        <Text style={styles.hintText}>Not feeling it</Text>
-      </Animated.View>
-      <Animated.View style={[styles.hintRight, { opacity: rightHintOpacity }]}>
-        <Text style={styles.hintText}>Doesn't fit</Text>
-      </Animated.View>
-
-      {/* Main Card */}
       <Animated.View
-        style={[styles.card, cardStyle]}
+        style={[styles.card, cardTransform]}
         {...panResponder.panHandlers}
       >
-        {/* Hero Image Section */}
-        <TouchableOpacity
-          activeOpacity={0.95}
-          onPress={onToggleExpand}
-          accessibilityRole="button"
-          accessibilityLabel={`${recipe.name}. Tap to ${expanded ? 'hide' : 'show'} ingredients`}
-        >
-          <View style={styles.heroContainer}>
-            <Image
-              source={imageSource}
-              style={styles.heroImage}
-              resizeMode="cover"
-            />
-            {/* Scrim gradient overlay (3 stacked views for pseudo-gradient) */}
-            <View style={styles.scrimTop} />
-            <View style={styles.scrimMiddle} />
-            <View style={styles.scrimBottom} />
-            
-            {/* Text on overlay */}
-            <View style={styles.heroContent}>
-              <Text style={styles.recipeName}>{recipe.name}</Text>
-              <WhyWhisper text={whyText} light />
-            </View>
-          </View>
-
-          {/* Meta Info below image */}
-          <View style={styles.metaSection}>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
-              {estimatedCost && (
-                <>
-                  <View style={styles.metaDot} />
-                  <Text style={styles.metaText}>{estimatedCost}</Text>
-                </>
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Ingredients Tray */}
-        <IngredientsTray
-          ingredients={recipe.ingredients}
-          visible={expanded}
+        {/* ── Hero image ─────────────────────────────────────────── */}
+        <Image
+          source={imageSource}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          accessibilityLabel={`Photo of ${recipe.name}`}
         />
 
-        {/* Accept CTA */}
-        <TouchableOpacity
-          style={styles.acceptButton}
-          onPress={onAccept}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Let's do this"
+        {/* ── Scrim gradient ─────────────────────────────────────── */}
+        <LinearGradient
+          colors={SCRIM_COLORS[variant] as unknown as string[]}
+          locations={[0.4, 1]}
+          style={styles.scrim}
+        />
+
+        {/* ── Rescue badge (variant only) ────────────────────────── */}
+        {isRescue && (
+          <View style={styles.rescueBadge}>
+            <Text style={styles.rescueBadgeText}>Rescue</Text>
+          </View>
+        )}
+
+        {/* ── Info overlay on image ──────────────────────────────── */}
+        <View
+          style={[
+            styles.infoOverlay,
+            { bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm },
+          ]}
         >
-          <Text style={styles.acceptButtonText}>Let's do this</Text>
-        </TouchableOpacity>
+          <Text style={styles.recipeName}>{recipe.name}</Text>
+          <WhyWhisper text={whyText} light />
+          <View style={styles.metaRow}>
+            <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
+            {estimatedCost && (
+              <>
+                <View style={styles.metaDot} />
+                <Text style={styles.metaText}>{estimatedCost}</Text>
+              </>
+            )}
+            {isRescue && !estimatedCost && (
+              <>
+                <View style={styles.metaDot} />
+                <Text style={styles.metaText}>No-stress</Text>
+              </>
+            )}
+          </View>
+        </View>
+
+        {/* ── Allergy indicator ──────────────────────────────────── */}
+        <AllergyIndicator
+          count={allergenCount}
+          style={{ bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm }}
+        />
+
+        {/* ── Glass overlay ──────────────────────────────────────── */}
+        <GlassOverlay
+          level={internalLevel}
+          onLevelChange={handleOverlayLevelChange}
+          modeLabel={modeLabel}
+          externalLiftY={externalLiftY}
+          collapsedHeight={COLLAPSED_GLASS_HEIGHT}
+          stickyContent={
+            <View style={styles.stickyWrapper}>
+              <TouchableOpacity
+                style={[
+                  styles.acceptButton,
+                  { backgroundColor: ACCEPT_BG[variant] },
+                ]}
+                onPress={onAccept}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Let's do this"
+              >
+                <Text style={styles.acceptButtonText}>Let's do this</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        >
+          {/* Ingredients (visible at level 1+) */}
+          <View style={styles.ingredientsList}>
+            <Text style={styles.ingredientsTitle}>Ingredients</Text>
+            {recipe.ingredients.map((ingredient, i) => (
+              <View key={i} style={styles.ingredientRow}>
+                <Text style={styles.ingredientName}>{ingredient.name}</Text>
+                <Text style={styles.ingredientQty}>
+                  {ingredient.quantity}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </GlassOverlay>
       </Animated.View>
     </View>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   card: {
-    width: SCREEN_WIDTH - spacing.lg * 2,
-    maxWidth: 380,
-    backgroundColor: colors.surface,
-    borderRadius: radii.xl,
-    ...shadows.lg,
+    flex: 1,
+    backgroundColor: colors.textPrimary, // Dark fallback behind image
     overflow: 'hidden',
   },
-  // Hero image section
-  heroContainer: {
-    height: HERO_HEIGHT,
-    width: '100%',
-    position: 'relative',
-    backgroundColor: colors.mutedLight, // Fallback bg
-  },
-  heroImage: {
-    width: '100%',
-    height: '100%',
-  },
-  // Scrim gradient: 3 stacked layers for smooth transition (no dependency)
-  scrimTop: {
+
+  // Scrim: covers bottom 60% of card, fades from transparent → dark
+  scrim: {
     position: 'absolute',
-    bottom: '45%',
     left: 0,
     right: 0,
-    height: '20%',
-    backgroundColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  scrimMiddle: {
-    position: 'absolute',
-    bottom: '20%',
-    left: 0,
-    right: 0,
-    height: '25%',
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-  },
-  scrimBottom: {
-    position: 'absolute',
     bottom: 0,
-    left: 0,
-    right: 0,
-    height: '35%',
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    height: '60%',
   },
-  heroContent: {
+
+  // Rescue badge
+  rescueBadge: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: spacing.md,
+    top: spacing.lg,
+    left: spacing.md,
+    backgroundColor: colors.warningAmberBg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.sm,
+    zIndex: 2,
+  },
+  rescueBadgeText: {
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+    color: colors.warningAmber,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // Info overlay — positioned above the collapsed glass
+  infoOverlay: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md + 48, // leave room for AllergyIndicator
   },
   recipeName: {
     fontSize: typography['2xl'],
@@ -305,35 +401,37 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     textAlign: 'left',
     marginBottom: spacing.xs,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowColor: 'rgba(0, 0, 0, 0.4)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  // Meta section below image
-  metaSection: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    textShadowRadius: 3,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: spacing.xs,
   },
   metaText: {
     fontSize: typography.sm,
-    color: colors.textSecondary,
+    color: 'rgba(255, 255, 255, 0.8)',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   metaDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.textMuted,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
     marginHorizontal: spacing.sm,
   },
+
+  // Accept CTA inside glass overlay (stickyContent)
+  stickyWrapper: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
   acceptButton: {
-    backgroundColor: colors.accentGreen,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    height: MIN_TOUCH_TARGET + 8, // 56px - consistent with PrimaryButton
+    height: MIN_TOUCH_TARGET + 8,
     borderRadius: radii.lg,
     justifyContent: 'center',
     alignItems: 'center',
@@ -343,23 +441,34 @@ const styles = StyleSheet.create({
     fontWeight: typography.bold,
     color: colors.textInverse,
   },
-  // Hint labels - subtle styling
-  hintLeft: {
-    position: 'absolute',
-    left: spacing.md,
-    top: '45%',
-    zIndex: 10,
+
+  // Ingredients list rendered inside GlassOverlay children
+  ingredientsList: {
+    paddingTop: spacing.sm,
   },
-  hintRight: {
-    position: 'absolute',
-    right: spacing.md,
-    top: '45%',
-    zIndex: 10,
-  },
-  hintText: {
+  ingredientsTitle: {
     fontSize: typography.xs,
-    fontWeight: typography.regular,
-    color: colors.textMuted,
-    backgroundColor: 'transparent',
+    fontWeight: typography.semibold,
+    color: colors.glassTextMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  ingredientRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+  },
+  ingredientName: {
+    fontSize: typography.sm,
+    color: colors.glassText,
+    flex: 1,
+  },
+  ingredientQty: {
+    fontSize: typography.sm,
+    color: colors.glassTextMuted,
+    marginLeft: spacing.sm,
   },
 });
+
+export default DecisionCard;

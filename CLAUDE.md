@@ -101,6 +101,24 @@ All UI must follow [docs/design/constitution.md](docs/design/constitution.md):
 - Any change to persistence logic
 - Any "quick fix" that bypasses validation/tests
 
+## Phase Ordering Guardrail (1.0.1 Editorial-First)
+
+Phases must be executed in order. Do NOT modify files belonging to a later
+phase unless the current phase's acceptance criteria are met and the user
+explicitly advances.
+
+| Phase | Scope | Files you MAY touch | Files you MUST NOT touch |
+|-------|-------|---------------------|--------------------------|
+| 1.1 | Primitives | `lib/ui/theme.ts`, new `components/GlassOverlay.tsx`, new `components/AllergyIndicator.tsx`, new `hooks/useIdleAffordance.ts` | `app/deal.tsx`, `app/(tabs)/tonight.tsx`, nav/settings |
+| 1.2 | Card rewrite | `components/DecisionCard.tsx`, `components/RescueCard.tsx`, `components/GlassOverlay.tsx` (extend API) | `app/deal.tsx`, `app/(tabs)/tonight.tsx`, nav/settings |
+| 1.3 | Deal integration | `app/deal.tsx` (strip chrome, wire idle hook) | `app/(tabs)/tonight.tsx`, nav/settings, tabs layout |
+| 1.4 | Shared-element spike | `app/(tabs)/tonight.tsx`, `app/_layout.tsx` (transition config) | Profile, settings, DRM logic, checklist |
+| 2.x | Nav + settings | `app/(tabs)/_layout.tsx`, `app/(tabs)/profile.tsx` | Only when Phase 1 is fully shipped |
+
+**If you are tempted to "just quickly fix" deal.tsx during Phase 1.2, STOP.**
+That is Phase 1.3 scope. Commit your current work, note the dependency, and
+move to the correct phase.
+
 ## Observability & Telemetry (local only for MVP)
 
 State changes are tracked via `ffSession.ts` listeners:
@@ -164,6 +182,9 @@ All three must pass before merging to main.
 | Image registry | `lib/seeds/images.ts` |
 | Theme tokens | `lib/ui/theme.ts` |
 | Decision card | `components/DecisionCard.tsx` |
-| Rescue card | `components/RescueCard.tsx` |
+| Rescue card | `components/RescueCard.tsx` (thin wrapper → DecisionCard variant="rescue") |
+| Glass overlay | `components/GlassOverlay.tsx` |
+| Allergy indicator | `components/AllergyIndicator.tsx` |
+| Idle affordance | `hooks/useIdleAffordance.ts` |
 | Progress bar | `components/ThinProgressBar.tsx` |
 | Primary button | `components/PrimaryButton.tsx` |

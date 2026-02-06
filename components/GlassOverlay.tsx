@@ -4,9 +4,9 @@
  * Renders a frosted-glass panel anchored to the bottom of the screen.
  * Driven by a `level` prop (0 / 1 / 2) and optionally by handle-only drag.
  *
- * Level 0 — Collapsed: mode label pill + handle bar (~72 px visible)
- * Level 1 — Half:      ingredients / children (~50 % of screen)
- * Level 2 — Full:      checklist / expanded content (~92 % of screen)
+ * Level 0 — Collapsed: handle + mode label + stickyContent
+ * Level 1 — Half:      + children (~50 % of screen)
+ * Level 2 — Full:      + expandedContent (~92 % of screen)
  *
  * Platform behavior:
  *   iOS  — BlurView (expo-blur) with fixed intensity (never animated)
@@ -22,7 +22,7 @@
  * If `onLevelChange` is omitted, gestures spring back to the current level.
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -58,9 +58,12 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 /** Minimum touch area for the drag handle (accessibility) */
 const HANDLE_ZONE_HEIGHT = 40;
 
-/** Height visible at each level */
+/** Default collapsed height when no collapsedHeight prop is given */
+export const DEFAULT_COLLAPSED_HEIGHT = 72;
+
+/** Height visible at each level (defaults — level 0 can be overridden) */
 export const LEVEL_HEIGHTS = {
-  0: 72,
+  0: DEFAULT_COLLAPSED_HEIGHT,
   1: Math.round(SCREEN_HEIGHT * 0.5),
   2: Math.round(SCREEN_HEIGHT * 0.92),
 } as const;
@@ -69,20 +72,14 @@ export const LEVEL_HEIGHTS = {
 const CONTAINER_HEIGHT = LEVEL_HEIGHTS[2];
 
 /**
- * translateY values that position the overlay for each level.
+ * Default translateY snap points.
  * Higher value = more hidden (pushed below screen edge).
- *   Level 0: almost fully hidden
- *   Level 2: fully visible (translateY = 0)
  */
 export const SNAP_POINTS: Record<0 | 1 | 2, number> = {
   0: CONTAINER_HEIGHT - LEVEL_HEIGHTS[0],
   1: CONTAINER_HEIGHT - LEVEL_HEIGHTS[1],
   2: 0,
 };
-
-/** Ordered snap targets for nearest-snap calculation (ascending translateY) */
-const SNAP_VALUES = [SNAP_POINTS[2], SNAP_POINTS[1], SNAP_POINTS[0]];
-const SNAP_LEVELS: readonly (0 | 1 | 2)[] = [2, 1, 0];
 
 const SPRING_CONFIG = {
   damping: glass.springDamping,
@@ -103,12 +100,16 @@ export interface GlassOverlayProps {
   onLevelChange?: (level: OverlayLevel) => void;
   /** Mode label text shown at all levels (e.g. "Fancy") */
   modeLabel?: string;
+  /** Always-visible content below mode label (e.g. accept CTA) */
+  stickyContent?: React.ReactNode;
   /** Content rendered at level 1+ (ingredients) */
   children?: React.ReactNode;
   /** Content rendered at level 2 (checklist / confirm) */
   expandedContent?: React.ReactNode;
   /** External translateY offset (e.g. from idle affordance lift) */
   externalLiftY?: SharedValue<number>;
+  /** Override collapsed (level 0) visible height. Default: 72 */
+  collapsedHeight?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,22 +120,39 @@ export function GlassOverlay({
   level,
   onLevelChange,
   modeLabel,
+  stickyContent,
   children,
   expandedContent,
   externalLiftY,
+  collapsedHeight,
 }: GlassOverlayProps) {
-  const translateY = useSharedValue(SNAP_POINTS[level]);
+  const effectiveCollapsed = collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT;
+
+  // Shared values for snap points — accessible inside gesture worklets
+  const snap0 = useSharedValue(CONTAINER_HEIGHT - effectiveCollapsed);
+  const snap1 = useSharedValue(SNAP_POINTS[1]);
+  const snap2 = useSharedValue(0);
+
+  const translateY = useSharedValue(CONTAINER_HEIGHT - effectiveCollapsed);
   const gestureStartY = useSharedValue(0);
   const isFirstRender = useRef(true);
 
+  // Keep snap0 in sync if collapsedHeight changes
+  useEffect(() => {
+    snap0.value = CONTAINER_HEIGHT - (collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT);
+  }, [collapsedHeight]);
+
   // React to programmatic level changes
   useEffect(() => {
+    const target =
+      level === 0 ? snap0.value : level === 1 ? snap1.value : snap2.value;
+
     if (isFirstRender.current) {
       isFirstRender.current = false;
-      translateY.value = SNAP_POINTS[level];
+      translateY.value = target;
       return;
     }
-    translateY.value = withSpring(SNAP_POINTS[level], SPRING_CONFIG);
+    translateY.value = withSpring(target, SPRING_CONFIG);
   }, [level]);
 
   // -----------------------------------------------------------------------
@@ -147,24 +165,25 @@ export function GlassOverlay({
     })
     .onUpdate((e) => {
       const next = gestureStartY.value + e.translationY;
-      // Clamp between fully open (0) and fully collapsed
-      translateY.value = Math.max(SNAP_POINTS[2], Math.min(SNAP_POINTS[0], next));
+      translateY.value = Math.max(snap2.value, Math.min(snap0.value, next));
     })
     .onEnd(() => {
-      // Snap to nearest level
       const cur = translateY.value;
+      const points = [snap2.value, snap1.value, snap0.value];
+      const levels: readonly (0 | 1 | 2)[] = [2, 1, 0];
+
       let nearestIdx = 0;
-      let minDist = Math.abs(cur - SNAP_VALUES[0]);
-      for (let i = 1; i < SNAP_VALUES.length; i++) {
-        const dist = Math.abs(cur - SNAP_VALUES[i]);
+      let minDist = Math.abs(cur - points[0]);
+      for (let i = 1; i < points.length; i++) {
+        const dist = Math.abs(cur - points[i]);
         if (dist < minDist) {
           minDist = dist;
           nearestIdx = i;
         }
       }
 
-      const targetLevel = SNAP_LEVELS[nearestIdx];
-      translateY.value = withSpring(SNAP_POINTS[targetLevel], SPRING_CONFIG);
+      const targetLevel = levels[nearestIdx];
+      translateY.value = withSpring(points[nearestIdx], SPRING_CONFIG);
 
       if (onLevelChange) {
         runOnJS(onLevelChange)(targetLevel);
@@ -178,7 +197,7 @@ export function GlassOverlay({
   const childrenOpacity = useDerivedValue(() =>
     interpolate(
       translateY.value,
-      [SNAP_POINTS[0], SNAP_POINTS[1]],
+      [snap0.value, snap1.value],
       [0, 1],
       Extrapolation.CLAMP,
     ),
@@ -187,7 +206,7 @@ export function GlassOverlay({
   const expandedOpacity = useDerivedValue(() =>
     interpolate(
       translateY.value,
-      [SNAP_POINTS[1], SNAP_POINTS[2]],
+      [snap1.value, snap2.value],
       [0, 1],
       Extrapolation.CLAMP,
     ),
@@ -250,6 +269,9 @@ export function GlassOverlay({
           </View>
         </View>
       ) : null}
+
+      {/* Sticky content — always visible (e.g. accept CTA) */}
+      {stickyContent}
 
       {/* Level 1 content (ingredients) — fades in between level 0→1 */}
       <Animated.View style={[styles.contentSection, childrenStyle]}>
