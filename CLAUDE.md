@@ -130,6 +130,35 @@ After ~7 s of inactivity on a deal card:
 - On any user interaction (swipe, tap, overlay drag), call `resetIdle()`.
 - Idle triggers **once per card**; timer resets when a new card is dealt.
 
+### Gesture Composition Rule (decided Phase 1.3.1, do not regress)
+
+All gestures in the card stack MUST use `react-native-gesture-handler`
+(RNGH) — **never** mix PanResponder with RNGH on the same view tree.
+
+- Horizontal swipe: `Gesture.Pan().activeOffsetX([-10,10]).failOffsetY([-30,30])`
+- Overlay handle:   `Gesture.Pan().activeOffsetY([-8,8]).failOffsetX([-15,15])`
+- Composed via `Gesture.Exclusive(handleGesture, swipeGesture)` so only
+  one gesture owns a given touch. Handle gesture has priority.
+- GlassOverlay exposes its gesture via `ref.getHandleGesture()`.
+
+### Image Focus Rule (decided Phase 1.3.1)
+
+Use `expo-image` (not RN `Image`) for hero images on editorial cards:
+- `contentFit="cover"` + `contentPosition="bottom"` — food sits lower in
+  frame; headline and glass overlay sit on top.
+- If a specific recipe needs a different crop, add an `imagePosition`
+  field to the seed type (future).
+
+### Glass Tint Rule (decided Phase 1.3.1)
+
+Glass overlay tint interpolates by expansion level:
+- **Level 0 (collapsed):** very light tint (`glass` / `glassFallback`)
+- **Level 1+ (expanded):** deeper tint (`glassDeep` / `glassFallbackDeep`)
+  for text legibility over the hero image.
+- On iOS: blur + animated tint overlay.
+- On Android: single interpolated opaque background (no blur).
+- Tint tokens live in `lib/ui/theme.ts` under `colors.glass*`.
+
 ### Retired Components (Phase 1.3)
 
 - `components/LockedTransition.tsx` — DELETED. "Locked." overlay is

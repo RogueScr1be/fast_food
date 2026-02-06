@@ -46,9 +46,13 @@ export const colors = {
   warningAmberBg: '#FEF3C7',
   
   // Glass overlay system
-  glass: 'rgba(25, 25, 25, 0.65)',
-  glassFallback: 'rgba(15, 15, 15, 0.82)',
-  glassBorder: 'rgba(255, 255, 255, 0.12)',
+  // Tint values are for Level 0 (collapsed). GlassOverlay interpolates
+  // to deeper tints at Level 1/2 for legibility.
+  glass: 'rgba(25, 25, 25, 0.20)',
+  glassFallback: 'rgba(15, 15, 15, 0.40)',
+  glassDeep: 'rgba(25, 25, 25, 0.65)',
+  glassFallbackDeep: 'rgba(15, 15, 15, 0.82)',
+  glassBorder: 'rgba(255, 255, 255, 0.10)',
   glassHandle: 'rgba(255, 255, 255, 0.35)',
   glassText: 'rgba(255, 255, 255, 0.92)',
   glassTextMuted: 'rgba(255, 255, 255, 0.55)',
