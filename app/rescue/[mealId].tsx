@@ -84,10 +84,11 @@ export default function RescueChecklistScreen() {
   }, []);
   
   /**
-   * Handle back navigation
+   * Handle back navigation — return to deal (resume swiping)
+   * Uses replace so rescue is removed from the back stack.
    */
   const handleBack = useCallback(() => {
-    router.back();
+    router.replace('/deal');
   }, []);
 
   // Error state - controlled fallback
