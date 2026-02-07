@@ -361,6 +361,9 @@ Whenever AI makes a mistake (wrong file, wrong assumption, broke constraints, et
 ## Gate Commands (run before any PR)
 
 ```bash
+# Lint passes (zero warnings)
+npm run lint
+
 # All tests pass
 npm test
 
@@ -371,7 +374,8 @@ npm run build:sanity
 npx expo export -p web
 ```
 
-All three must pass before merging to main.
+All four must pass before merging to main. Lint runs automatically
+in the Vercel build command before `expo export`.
 
 ---
 

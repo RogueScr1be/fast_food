@@ -26,7 +26,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';

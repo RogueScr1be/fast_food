@@ -24,7 +24,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   Easing,
-  runOnJS,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
