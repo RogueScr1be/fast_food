@@ -15,10 +15,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withDelay,
   cancelAnimation,
   Easing,
-  runOnJS,
 } from 'react-native-reanimated';
 import { colors, typography } from '../lib/ui/theme';
 

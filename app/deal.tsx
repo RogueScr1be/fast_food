@@ -86,7 +86,7 @@ export default function DealScreen() {
   // Allergy modal state
   const [showAllergyModal, setShowAllergyModal] = useState(false);
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
-  const [localExcludeAllergens, setLocalExcludeAllergens] = useState<AllergenTag[]>(getExcludeAllergens());
+  const [_localExcludeAllergens, setLocalExcludeAllergens] = useState<AllergenTag[]>(getExcludeAllergens());
 
   // DRM timer ref
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,7 +95,7 @@ export default function DealScreen() {
   // Session ID: increments on each mount cycle. Protects against
   // React 18 StrictMode double-init AND allows re-init when returning
   // from rescue via router.replace('/deal').
-  const [sessionId, setSessionId] = useState(0);
+  const [sessionId, _setSessionId] = useState(0);
   const lastInitSession = useRef(-1);
 
   // Card generation key — increments on each new card to reset idle timer
@@ -220,7 +220,7 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   /** Swipe to pass — reset idle, increment, deal next */
-  const handlePass = useCallback((direction: PassDirection) => {
+  const handlePass = useCallback((_direction: PassDirection) => {
     resetIdle();
     if (currentDeal) addToDealHistory(currentDeal.data.id);
     incrementPassCount();
@@ -275,7 +275,7 @@ export default function DealScreen() {
   // Allergy modal handlers (kept for future AllergyIndicator onPress)
   // ---------------------------------------------------------------------------
 
-  const openAllergyModal = useCallback(() => {
+  const _openAllergyModal = useCallback(() => {
     setTempAllergens(getExcludeAllergens());
     setShowAllergyModal(true);
   }, []);

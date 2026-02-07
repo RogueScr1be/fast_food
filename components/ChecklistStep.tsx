@@ -24,7 +24,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withDelay,
-  withSequence,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';

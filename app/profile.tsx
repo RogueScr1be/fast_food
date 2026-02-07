@@ -49,7 +49,7 @@ const ALLERGEN_LABELS: Record<AllergenTag, string> = {
 };
 
 // Constraint display names
-const CONSTRAINT_LABELS: Record<ConstraintTag, string> = {
+const _CONSTRAINT_LABELS: Record<ConstraintTag, string> = {
   no_oven: 'No Oven',
   kid_safe: 'Kid Safe',
   '15_min': '15 min',
