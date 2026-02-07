@@ -260,7 +260,9 @@ const styles = StyleSheet.create({
   strikeLine: {
     position: 'absolute',
     left: 0,
-    top: '50%',
+    // Fixed to first line's optical midline (lineHeight 22 × ~55%)
+    // so it stays consistent whether text wraps or not.
+    top: 12,
     height: 1.5,
     backgroundColor: colors.accentBlue,
     opacity: 0.5,

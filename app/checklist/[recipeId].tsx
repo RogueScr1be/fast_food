@@ -25,6 +25,7 @@ import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { GreatJobOverlay } from '../../components/GreatJobOverlay';
 
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
@@ -32,6 +33,9 @@ export default function ChecklistScreen() {
 
   // Track completed steps by index
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
+
+  // Great Job overlay — edge-triggered, not on mount
+  const [showGreatJob, setShowGreatJob] = useState(false);
 
   // Steps always in recipe order
   const steps = meal?.steps ?? [];
@@ -45,12 +49,17 @@ export default function ChecklistScreen() {
       const next = new Set(prev);
       if (next.has(index)) {
         next.delete(index);
+        setShowGreatJob(false);
       } else {
         next.add(index);
+        // Trigger Great Job on final step
+        if (next.size === totalSteps && totalSteps > 0) {
+          setShowGreatJob(true);
+        }
       }
       return next;
     });
-  }, []);
+  }, [totalSteps]);
 
   const handleDone = useCallback(() => {
     resetDealState();
@@ -175,6 +184,12 @@ export default function ChecklistScreen() {
           }
         />
       </View>
+
+      {/* Great Job overlay — edge-triggered on final step */}
+      <GreatJobOverlay
+        visible={showGreatJob}
+        onDismiss={() => setShowGreatJob(false)}
+      />
     </SafeAreaView>
   );
 }
