@@ -27,9 +27,9 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { User, AlertCircle, X, Check } from 'lucide-react-native';
-import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import { PrimaryButton } from '../components/PrimaryButton';
+import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   setSelectedMode,
   getSelectedMode,
@@ -78,19 +78,25 @@ interface ModeButtonProps {
 
 function ModeButton({ mode, selected, onPress, onRef }: ModeButtonProps) {
   return (
-    <TouchableOpacity
-      ref={(r) => onRef(r as unknown as View | null)}
-      style={[styles.modeButton, selected && styles.modeButtonSelected]}
-      onPress={onPress}
-      activeOpacity={0.7}
-      accessibilityRole="button"
-      accessibilityLabel={`${MODE_LABELS[mode]} mode`}
-      accessibilityState={{ selected }}
-    >
-      <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>
-        {MODE_LABELS[mode].toUpperCase()}
-      </Text>
-    </TouchableOpacity>
+    // Outer shadow layer (larger, softer)
+    <View style={styles.modeButtonOuter}>
+      {/* Inner shadow layer (tighter) */}
+      <TouchableOpacity
+        ref={(r) => onRef(r as unknown as View | null)}
+        style={[styles.modeButton, selected && styles.modeButtonSelected]}
+        onPress={onPress}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${MODE_LABELS[mode]} mode`}
+        accessibilityState={{ selected }}
+      >
+        {/* Top inner highlight bevel */}
+        <View style={styles.modeHighlight} />
+        <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>
+          {MODE_LABELS[mode].toUpperCase()}
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -338,14 +344,26 @@ export default function TonightScreen() {
         </Text>
       </TouchableOpacity>
 
-      {/* CTA — extends to bottom safe area */}
+      {/* CTA — extends to bottom safe area with scrim */}
+      <LinearGradient
+        colors={['transparent', colors.background]}
+        locations={[0, 0.45]}
+        style={styles.ctaScrim}
+        pointerEvents="none"
+      />
       <View style={[styles.ctaSection, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-        <PrimaryButton
-          label="CHOOSE FOR ME"
-          onPress={handleChoose}
-          tone="primary"
-          labelStyle={styles.ctaLabel}
-        />
+        <View style={styles.ctaOuter}>
+          <TouchableOpacity
+            style={styles.ctaButton}
+            onPress={handleChoose}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Choose for me"
+          >
+            <View style={styles.modeHighlight} />
+            <Text style={styles.ctaLabel}>CHOOSE FOR ME</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── Transition Overlay ──────────────────────────────────── */}
@@ -353,9 +371,11 @@ export default function TonightScreen() {
         <>
           <Animated.View style={scrimStyle} pointerEvents="none" />
           <Animated.View style={[cloneStyle, styles.cloneBase]} pointerEvents="none">
-            <Text style={styles.cloneLabel}>
-              {MODE_LABELS[transitionMode].toUpperCase()}
-            </Text>
+            <View style={styles.cloneInner}>
+              <Text style={styles.cloneLabel}>
+                {MODE_LABELS[transitionMode].toUpperCase()}
+              </Text>
+            </View>
           </Animated.View>
         </>
       )}
@@ -455,13 +475,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Vertical mode buttons
+  // Vertical mode buttons — layered shadow system
   modeContainer: {
     flex: 1,
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
     justifyContent: 'center',
   },
+  // Outer shadow layer (larger, softer)
+  modeButtonOuter: {
+    borderRadius: radii.xl,
+    // Outer shadow: large, soft
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  // Inner card with tighter shadow + border
   modeButton: {
     justifyContent: 'center',
     alignItems: 'center',
@@ -471,29 +502,36 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
     paddingHorizontal: spacing.lg,
     borderWidth: 2,
-    borderColor: colors.borderSubtle,
-    ...shadows.sm,
+    borderColor: colors.accentBlue,
+    overflow: 'hidden',
+    // Inner shadow: tight, slightly darker
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
   },
   modeButtonSelected: {
-    backgroundColor: colors.accentBlue,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
     borderColor: colors.accentBlue,
+  },
+  // Top inner highlight bevel (1px white line at top)
+  modeHighlight: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
   },
   modeLabel: {
     fontSize: typography['4xl'],
     fontWeight: typography.bold,
-    color: colors.textPrimary,
+    color: colors.accentBlue,
     letterSpacing: 1,
     textAlign: 'center',
   },
   modeLabelSelected: {
-    color: colors.textInverse,
-  },
-
-  // CTA label override (matches hero editorial typography)
-  ctaLabel: {
-    fontSize: typography['2xl'],
-    fontWeight: typography.bold,
-    letterSpacing: 1,
+    color: colors.accentBlueDark,
   },
 
   // Allergy link
@@ -510,23 +548,68 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
 
-  // CTA section
+  // CTA section with bottom scrim
+  ctaScrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 120,
+    zIndex: 0,
+  },
   ctaSection: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
+    zIndex: 1,
+  },
+  // CTA — same shadow system as mode buttons
+  ctaOuter: {
+    borderRadius: radii.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  ctaButton: {
+    height: MIN_TOUCH_TARGET + 8,
+    borderRadius: radii.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.accentBlue,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  ctaLabel: {
+    fontSize: typography['2xl'],
+    fontWeight: typography.bold,
+    color: colors.accentBlue,
+    letterSpacing: 1,
+    textAlign: 'center',
   },
 
-  // Transition clone
+  // Transition clone — matches white card + blue text
   cloneBase: {
-    backgroundColor: colors.accentBlue,
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.accentBlue,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
   },
+  cloneInner: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   cloneLabel: {
     fontSize: typography['4xl'],
     fontWeight: typography.bold,
-    color: colors.textInverse,
+    color: colors.accentBlue,
     letterSpacing: 1,
     textAlign: 'center',
   },

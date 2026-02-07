@@ -243,6 +243,18 @@ Mode buttons on Tonight are **text-only, ALL CAPS, centered**.
 Do NOT re-add Lucide icons to the mode buttons. The editorial
 feel comes from bold typography, not icon decoration.
 
+### Tonight Button Depth System (do not flatten)
+
+Mode buttons and CTA use a **layered shadow + border** system:
+- Outer View: `shadowOffset y=8, opacity=0.08, radius=14` (soft depth)
+- Inner TouchableOpacity: `shadowOffset y=2, opacity=0.12, radius=6` (tight)
+- Border: `2px accentBlue` on white surface
+- Top highlight: 1px `rgba(255,255,255,0.6)` bevel inside card
+- Selected state: `rgba(37,99,235,0.08)` blue wash bg (NOT solid blue)
+- Text color: `accentBlue` (NOT textPrimary, NOT textInverse)
+- Android: `elevation: 4` on outer, border compensates for shadow gap
+- Clone overlay matches: white bg + blue border + blue text
+
 ### Checklist Simplification (Phase 3.0.1, do not re-add)
 
 The Cook/Prep toggle has been removed from the checklist screen.
