@@ -32,6 +32,7 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   withSpring,
+  cancelAnimation,
   interpolate,
   interpolateColor,
   Extrapolation,
@@ -47,6 +48,7 @@ import {
   typography,
   glass,
 } from '../lib/ui/theme';
+import { vellum } from '../lib/ui/motion';
 
 // ---------------------------------------------------------------------------
 // Constants (non-dimension-dependent)
@@ -55,11 +57,14 @@ import {
 const HANDLE_ZONE_HEIGHT = 40;
 export const DEFAULT_COLLAPSED_HEIGHT = 72;
 
-const SPRING_CONFIG = {
-  damping: glass.springDamping,
-  stiffness: glass.springStiffness,
-  mass: glass.springMass,
-};
+/** Snap spring uses Vellum motion profile */
+const SPRING_CONFIG = vellum;
+
+/** Hysteresis dead zone around snap points (px). Prevents oscillation. */
+const HYSTERESIS_PX = 20;
+
+/** Velocity threshold for direction-gated snap (px/s) */
+const VELOCITY_SNAP_THRESHOLD = 500;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,35 +155,70 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     // Handle pan gesture
     // -------------------------------------------------------------------
 
+    // Current level snap point (for hysteresis comparison)
+    const currentLevelSnap = useSharedValue(snap0.value);
+
     const handleGesture = Gesture.Pan()
-      .activeOffsetY([-8, 8])
+      .activeOffsetY([-12, 12])
       .failOffsetX([-15, 15])
       .onStart(() => {
+        cancelAnimation(translateY);
         gestureStartY.value = translateY.value;
+        // Record which snap we started at
+        currentLevelSnap.value =
+          level === 0 ? snap0.value : level === 1 ? snap1.value : snap2.value;
       })
       .onUpdate((e) => {
         const next = gestureStartY.value + e.translationY;
         translateY.value = Math.max(snap2.value, Math.min(snap0.value, next));
       })
-      .onEnd(() => {
+      .onEnd((e) => {
         const cur = translateY.value;
+        const vy = e.velocityY;
         const points = [snap2.value, snap1.value, snap0.value];
         const levels: readonly (0 | 1 | 2)[] = [2, 1, 0];
 
-        let nearestIdx = 0;
-        let minDist = Math.abs(cur - points[0]);
-        for (let i = 1; i < points.length; i++) {
-          const dist = Math.abs(cur - points[i]);
-          if (dist < minDist) {
-            minDist = dist;
-            nearestIdx = i;
+        let targetIdx: number;
+
+        // Velocity gate: fast flick snaps in velocity direction
+        if (Math.abs(vy) > VELOCITY_SNAP_THRESHOLD) {
+          if (vy < 0) {
+            // Flick up → expand (lower translateY = more visible)
+            targetIdx = 0; // level 2 (fully open)
+            // Find the next level UP from current position
+            for (let i = 0; i < points.length; i++) {
+              if (points[i] < cur) { targetIdx = i; break; }
+            }
+          } else {
+            // Flick down → collapse (higher translateY = less visible)
+            targetIdx = points.length - 1; // level 0
+            for (let i = points.length - 1; i >= 0; i--) {
+              if (points[i] > cur) { targetIdx = i; break; }
+            }
+          }
+        }
+        // Hysteresis: if still close to starting snap, stay there
+        else if (Math.abs(cur - currentLevelSnap.value) < HYSTERESIS_PX) {
+          targetIdx = points.indexOf(currentLevelSnap.value);
+          if (targetIdx === -1) targetIdx = points.length - 1;
+        }
+        // Default: nearest snap point
+        else {
+          targetIdx = 0;
+          let minDist = Math.abs(cur - points[0]);
+          for (let i = 1; i < points.length; i++) {
+            const dist = Math.abs(cur - points[i]);
+            if (dist < minDist) {
+              minDist = dist;
+              targetIdx = i;
+            }
           }
         }
 
-        translateY.value = withSpring(points[nearestIdx], SPRING_CONFIG);
+        translateY.value = withSpring(points[targetIdx], SPRING_CONFIG);
 
         if (onLevelChange) {
-          runOnJS(onLevelChange)(levels[nearestIdx]);
+          runOnJS(onLevelChange)(levels[targetIdx]);
         }
       });
 
