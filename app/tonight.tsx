@@ -344,6 +344,7 @@ export default function TonightScreen() {
           label="CHOOSE FOR ME"
           onPress={handleChoose}
           tone="primary"
+          labelStyle={styles.ctaLabel}
         />
       </View>
 
@@ -486,6 +487,13 @@ const styles = StyleSheet.create({
   },
   modeLabelSelected: {
     color: colors.textInverse,
+  },
+
+  // CTA label override (matches hero editorial typography)
+  ctaLabel: {
+    fontSize: typography['2xl'],
+    fontWeight: typography.bold,
+    letterSpacing: 1,
   },
 
   // Allergy link

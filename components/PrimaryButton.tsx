@@ -43,6 +43,8 @@ interface PrimaryButtonProps {
   disabled?: boolean;
   /** Additional container styles */
   style?: ViewStyle;
+  /** Override label text style (merged with defaults) */
+  labelStyle?: TextStyle;
   /** Accessibility label (defaults to label) */
   accessibilityLabel?: string;
   /** Optional icon to render before label */
@@ -64,6 +66,7 @@ export function PrimaryButton({
   variant = 'solid',
   disabled = false,
   style,
+  labelStyle,
   accessibilityLabel,
   icon,
 }: PrimaryButtonProps) {
@@ -81,6 +84,7 @@ export function PrimaryButton({
   const textStyle: TextStyle[] = [
     styles.text,
     (isMuted || disabled) && styles.textMuted,
+    labelStyle,
   ].filter(Boolean) as TextStyle[];
 
   return (

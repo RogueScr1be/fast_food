@@ -236,7 +236,8 @@ Mode buttons on Tonight are **text-only, ALL CAPS, centered**.
 - No icons (Sparkles/Utensils/Coins removed).
 - `fontSize: typography['4xl']` (32px), `fontWeight: bold`, `letterSpacing: 1`.
 - Labels: "FANCY", "EASY", "CHEAP" (`.toUpperCase()` in component).
-- "CHOOSE FOR ME" CTA matches the same uppercase voice.
+- "CHOOSE FOR ME" CTA: `fontSize: typography['2xl']` (24px),
+  `fontWeight: bold`, `letterSpacing: 1` via PrimaryButton `labelStyle` prop.
 - Clone overlay renders text-only (no icon) to match the tile.
 
 Do NOT re-add Lucide icons to the mode buttons. The editorial
