@@ -22,6 +22,7 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
@@ -58,6 +59,8 @@ import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard, PassDirection } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
+import { getImageSource } from '../lib/seeds/images';
+import { setPendingHeroTransition } from '../lib/ui/heroTransition';
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -227,10 +230,19 @@ export default function DealScreen() {
     setTimeout(() => dealNextCard(), 50);
   }, [currentDeal, dealNextCard, resetIdle]);
 
-  /** Accept — navigate to checklist/rescue (glass level 2 not used yet) */
+  /** Accept — set up reverse-box transition, then navigate */
+  const { width: dealScreenW, height: dealScreenH } = useWindowDimensions();
+
   const handleAccept = useCallback(() => {
     if (!currentDeal) return;
     resetIdle();
+
+    // Set pending transition for the destination screen's clone overlay
+    setPendingHeroTransition({
+      sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
+      imageSource: getImageSource(currentDeal.data.imageKey),
+      timestamp: Date.now(),
+    });
 
     if (currentDeal.type === 'recipe') {
       router.push({
@@ -243,7 +255,7 @@ export default function DealScreen() {
         params: { mealId: currentDeal.data.id },
       });
     }
-  }, [currentDeal, resetIdle]);
+  }, [currentDeal, resetIdle, dealScreenW, dealScreenH]);
 
   /** Overlay level change from glass handle drag */
   const handleOverlayLevelChange = useCallback((level: OverlayLevel) => {

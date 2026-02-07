@@ -7,7 +7,7 @@
  * - Progress bar + Done → resets and returns to Tonight
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,16 +16,26 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { oak, whisper } from '../../lib/ui/motion';
 import { getDrmById } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
+import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
+import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
@@ -57,6 +67,87 @@ export default function RescueChecklistScreen() {
   // Track completed steps
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
   const [showGreatJob, setShowGreatJob] = useState(false);
+
+  // -----------------------------------------------------------------------
+  // Reverse-box hero transition (from Deal)
+  // -----------------------------------------------------------------------
+
+  const [transition] = useState<PendingHeroTransition | null>(() =>
+    consumePendingHeroTransition(),
+  );
+  const [showClone, setShowClone] = useState(transition !== null);
+  const mountedRef = useRef(true);
+  const destReceivedRef = useRef(false);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cloneX = useSharedValue(transition?.sourceRect.x ?? 0);
+  const cloneY = useSharedValue(transition?.sourceRect.y ?? 0);
+  const cloneW = useSharedValue(transition?.sourceRect.width ?? 0);
+  const cloneH = useSharedValue(transition?.sourceRect.height ?? 0);
+  const cloneRadius = useSharedValue(0);
+  const cloneOpacity = useSharedValue(transition ? 1 : 0);
+  const contentOpacity = useSharedValue(transition ? 0 : 1);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (transition) {
+      fallbackTimerRef.current = setTimeout(() => {
+        if (!destReceivedRef.current && mountedRef.current) fadeOutClone();
+      }, 500);
+    }
+    return () => {
+      mountedRef.current = false;
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      cancelAnimation(cloneX);
+      cancelAnimation(cloneY);
+      cancelAnimation(cloneW);
+      cancelAnimation(cloneH);
+      cancelAnimation(cloneRadius);
+      cancelAnimation(cloneOpacity);
+      cancelAnimation(contentOpacity);
+    };
+  }, []);
+
+  const fadeOutClone = useCallback(() => {
+    cloneOpacity.value = withTiming(0, whisper, (finished) => {
+      if (finished) runOnJS(setShowClone)(false);
+    });
+    contentOpacity.value = withTiming(1, { duration: 200 });
+  }, [cloneOpacity, contentOpacity]);
+
+  const handleHeroReady = useCallback((rect: HeroRect) => {
+    if (!transition || destReceivedRef.current) return;
+    destReceivedRef.current = true;
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+
+    cloneX.value = withSpring(rect.x, oak);
+    cloneY.value = withSpring(rect.y, oak);
+    cloneW.value = withSpring(rect.width, oak);
+    cloneH.value = withSpring(rect.height, oak);
+    cloneRadius.value = withSpring(0, oak);
+
+    contentOpacity.value = withTiming(1, { duration: 200 });
+    setTimeout(() => {
+      if (mountedRef.current) fadeOutClone();
+    }, 350);
+  }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
+
+  const cloneStyle = useAnimatedStyle(() => ({
+    position: 'absolute' as const,
+    left: cloneX.value,
+    top: cloneY.value,
+    width: cloneW.value,
+    height: cloneH.value,
+    borderRadius: cloneRadius.value,
+    opacity: cloneOpacity.value,
+    zIndex: 100,
+    overflow: 'hidden' as const,
+  }));
+
+  const contentAnimStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+    flex: 1,
+  }));
   
   // Progress
   const totalSteps = steps.length;
@@ -131,43 +222,24 @@ export default function RescueChecklistScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Progress Bar */}
+    <View style={styles.container}>
+      {/* Hero image header */}
+      <ChecklistHero
+        imageSource={getImageSource(meal.imageKey)}
+        title={meal.name}
+        progressText={`${completedCount} of ${totalSteps} steps`}
+        meta={`${meal.estimatedTime} · ${meal.ingredients.length} ingredients`}
+        isRescue
+        onBack={handleBack}
+        onHeroReady={transition ? handleHeroReady : undefined}
+      />
+
+      {/* Progress bar + content with animated opacity */}
+      <Animated.View style={contentAnimStyle}>
       <ThinProgressBar
         value={progress}
         accessibilityLabel={`Progress: ${completedCount} of ${totalSteps} steps`}
       />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-        
-        <View style={styles.headerContent}>
-          <View style={styles.rescueBadge}>
-            <Text style={styles.rescueBadgeText}>RESCUE</Text>
-          </View>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {meal.name}
-          </Text>
-          <Text style={styles.headerMeta}>
-            {meal.estimatedTime} · {meal.ingredients.length} ingredients
-          </Text>
-        </View>
-        
-        {/* Small thumbnail */}
-        <Image
-          source={getImageSource(meal.imageKey)}
-          style={styles.thumbnail}
-          resizeMode="cover"
-        />
-      </View>
 
       {/* Steps List */}
       <ScrollView 
@@ -196,12 +268,26 @@ export default function RescueChecklistScreen() {
         />
       </View>
 
+      </Animated.View>
+
       {/* Great Job overlay */}
       <GreatJobOverlay
         visible={showGreatJob}
         onDismiss={() => setShowGreatJob(false)}
       />
-    </SafeAreaView>
+
+      {/* Reverse-box clone overlay */}
+      {showClone && transition && (
+        <Animated.View style={cloneStyle}>
+          <Image
+            source={transition.imageSource}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            contentPosition="bottom"
+          />
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -252,55 +338,6 @@ const styles = StyleSheet.create({
     fontSize: typography.sm,
     color: colors.textMuted,
     textDecorationLine: 'underline',
-  },
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSubtle,
-  },
-  backButton: {
-    width: MIN_TOUCH_TARGET,
-    height: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerContent: {
-    flex: 1,
-    marginLeft: spacing.sm,
-  },
-  rescueBadge: {
-    backgroundColor: colors.warning,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radii.sm,
-    alignSelf: 'flex-start',
-    marginBottom: spacing.xs,
-  },
-  rescueBadgeText: {
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
-    color: colors.textInverse,
-    letterSpacing: 0.5,
-  },
-  headerTitle: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  headerMeta: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-  },
-  thumbnail: {
-    width: 56,
-    height: 56,
-    borderRadius: radii.md,
-    marginLeft: spacing.md,
   },
   // Steps
   stepsContainer: {

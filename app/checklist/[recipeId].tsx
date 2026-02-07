@@ -5,7 +5,7 @@
  * Steps always render in recipe-defined order.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,16 +14,27 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { oak, whisper } from '../../lib/ui/motion';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
+import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
+import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
@@ -37,6 +48,95 @@ export default function ChecklistScreen() {
 
   // Great Job overlay — edge-triggered, not on mount
   const [showGreatJob, setShowGreatJob] = useState(false);
+
+  // -----------------------------------------------------------------------
+  // Reverse-box hero transition (from Deal)
+  // -----------------------------------------------------------------------
+
+  const [transition] = useState<PendingHeroTransition | null>(() =>
+    consumePendingHeroTransition(),
+  );
+  const [showClone, setShowClone] = useState(transition !== null);
+  const mountedRef = useRef(true);
+  const destReceivedRef = useRef(false);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clone shared values (start at source rect)
+  const cloneX = useSharedValue(transition?.sourceRect.x ?? 0);
+  const cloneY = useSharedValue(transition?.sourceRect.y ?? 0);
+  const cloneW = useSharedValue(transition?.sourceRect.width ?? 0);
+  const cloneH = useSharedValue(transition?.sourceRect.height ?? 0);
+  const cloneRadius = useSharedValue(0);
+  const cloneOpacity = useSharedValue(transition ? 1 : 0);
+  const contentOpacity = useSharedValue(transition ? 0 : 1);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    // Safety timeout: if dest rect not received in 500ms, fade clone out
+    if (transition) {
+      fallbackTimerRef.current = setTimeout(() => {
+        if (!destReceivedRef.current && mountedRef.current) {
+          fadeOutClone();
+        }
+      }, 500);
+    }
+    return () => {
+      mountedRef.current = false;
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      cancelAnimation(cloneX);
+      cancelAnimation(cloneY);
+      cancelAnimation(cloneW);
+      cancelAnimation(cloneH);
+      cancelAnimation(cloneRadius);
+      cancelAnimation(cloneOpacity);
+      cancelAnimation(contentOpacity);
+    };
+  }, []);
+
+  const fadeOutClone = useCallback(() => {
+    cloneOpacity.value = withTiming(0, whisper, (finished) => {
+      if (finished) runOnJS(setShowClone)(false);
+    });
+    contentOpacity.value = withTiming(1, { duration: 200 });
+  }, [cloneOpacity, contentOpacity]);
+
+  const handleHeroReady = useCallback((rect: HeroRect) => {
+    if (!transition || destReceivedRef.current) return;
+    destReceivedRef.current = true;
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+
+    // Animate clone from full-screen → hero rect (Oak spring)
+    cloneX.value = withSpring(rect.x, oak);
+    cloneY.value = withSpring(rect.y, oak);
+    cloneW.value = withSpring(rect.width, oak);
+    cloneH.value = withSpring(rect.height, oak);
+    cloneRadius.value = withSpring(0, oak);
+
+    // Fade in content underneath
+    contentOpacity.value = withTiming(1, { duration: 200 });
+
+    // Fade out clone after spring settles (~380ms)
+    setTimeout(() => {
+      if (mountedRef.current) fadeOutClone();
+    }, 350);
+  }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
+
+  const cloneStyle = useAnimatedStyle(() => ({
+    position: 'absolute' as const,
+    left: cloneX.value,
+    top: cloneY.value,
+    width: cloneW.value,
+    height: cloneH.value,
+    borderRadius: cloneRadius.value,
+    opacity: cloneOpacity.value,
+    zIndex: 100,
+    overflow: 'hidden' as const,
+  }));
+
+  const contentAnimStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+    flex: 1,
+  }));
 
   // Steps always in recipe order
   const steps = meal?.steps ?? [];
@@ -104,42 +204,23 @@ export default function ChecklistScreen() {
   const progressValue = progress / 100;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Progress Bar (blue) */}
+    <View style={styles.container}>
+      {/* Hero image header */}
+      <ChecklistHero
+        imageSource={getImageSource(meal.imageKey)}
+        title={meal.name}
+        progressText={`${completedCount} of ${totalSteps} steps`}
+        meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
+        onBack={handleBack}
+        onHeroReady={transition ? handleHeroReady : undefined}
+      />
+
+      {/* Progress bar below hero */}
+      <Animated.View style={contentAnimStyle}>
       <ThinProgressBar
         value={progressValue}
         accessibilityLabel={`Cooking progress: ${completedCount} of ${totalSteps} steps`}
       />
-
-      {/* Header with thumbnail */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerButton}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <View style={styles.headerWithThumb}>
-            <Image
-              source={getImageSource(meal.imageKey)}
-              style={styles.headerThumb}
-              resizeMode="cover"
-            />
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {meal.name}
-              </Text>
-              <Text style={styles.headerSubtitle}>
-                {completedCount} of {totalSteps} steps
-              </Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.headerButton} />
-      </View>
 
       {/* Steps List */}
       <ScrollView
@@ -187,12 +268,26 @@ export default function ChecklistScreen() {
         />
       </View>
 
+      </Animated.View>
+
       {/* Great Job overlay — edge-triggered on final step */}
       <GreatJobOverlay
         visible={showGreatJob}
         onDismiss={() => setShowGreatJob(false)}
       />
-    </SafeAreaView>
+
+      {/* Reverse-box clone overlay (from Deal transition) */}
+      {showClone && transition && (
+        <Animated.View style={cloneStyle}>
+          <Image
+            source={transition.imageSource}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            contentPosition="bottom"
+          />
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -200,48 +295,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingTop: Platform.OS === 'ios' ? spacing.sm : spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  headerButton: {
-    width: MIN_TOUCH_TARGET,
-    height: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerCenter: {
-    flex: 1,
-    paddingHorizontal: spacing.sm,
-  },
-  headerWithThumb: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerThumb: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.sm,
-    backgroundColor: colors.mutedLight,
-    marginRight: spacing.sm,
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-  },
-  headerSubtitle: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-    marginTop: 2,
   },
   stepsList: {
     flex: 1,
