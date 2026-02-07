@@ -6,7 +6,7 @@ You are the dev lead + CTO agent for Fast Food. Your job: ship fast, keep code c
 
 Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 
-- **Tonight Screen** → Mode selection (Fancy/Easy/Cheap) + allergen exclusions
+- **Tonight Hub** → "Time to Eat" — mode selection + allergen exclusions (no tabs)
 - **Deal Screen** → Swipe-based card dealing from local seed data
 - **Checklist Screen** → Step-by-step recipe execution with Cook/Prep toggle
 - **Rescue Screen** → DRM (Dinner Rescue Mode) meal completion
@@ -199,6 +199,37 @@ Glass overlay tint interpolates by expansion level:
 - On Android: single interpolated opaque background (no blur).
 - Tint tokens live in `lib/ui/theme.ts` under `colors.glass*`.
 
+### DRM Autopilot Rule (Phase 2.2, do not regress)
+
+When DRM triggers (3 passes or 45s), deal.tsx navigates **directly**
+to `/rescue/[mealId]` via `router.replace`. No rescue card is shown
+in the deal screen. The user lands straight in the rescue checklist.
+
+- Rescue back button: `router.replace('/deal')` — returns to dealing.
+  NOT `router.back()` (back stack is non-deterministic after replace).
+- Rescue done: `router.replace('/tonight')` — resets entire flow.
+
+### Screen Init Guard Rule (Phase 2.2, do not regress)
+
+Never use a plain `useRef(false)` for one-time init guards on screens
+that can be re-entered via `router.replace`. The ref persists across
+mounts if the component is cached by the navigation framework.
+
+Use a **session counter pattern** instead:
+```ts
+const [sessionId, setSessionId] = useState(0);
+const lastInitSession = useRef(-1);
+
+useEffect(() => {
+  if (lastInitSession.current === sessionId) return;
+  lastInitSession.current = sessionId;
+  // ... init logic
+}, [sessionId, ...deps]);
+```
+Each fresh mount gets `sessionId = 0` (React state resets on mount).
+The ref prevents double-init within the same session (StrictMode).
+Re-entering via replace creates a new mount → new sessionId → re-init.
+
 ### Retired Components (Phase 1.3)
 
 - `components/LockedTransition.tsx` — DELETED. "Locked." overlay is
@@ -256,11 +287,11 @@ All three must pass before merging to main.
 | Concept | Location |
 |---------|----------|
 | Route registration | `app/_layout.tsx` |
-| Tonight screen | `app/(tabs)/tonight.tsx` |
+| Tonight hub | `app/tonight.tsx` |
 | Deal screen | `app/deal.tsx` |
 | Checklist screen | `app/checklist/[recipeId].tsx` |
 | Rescue screen | `app/rescue/[mealId].tsx` |
-| Profile/Settings | `app/(tabs)/profile.tsx` |
+| Profile/Settings | `app/profile.tsx` |
 | Session state | `lib/state/ffSession.ts` |
 | Persistence | `lib/state/persist.ts` |
 | Seed data | `lib/seeds/recipes.ts` |

@@ -56,7 +56,6 @@ import {
 } from '../lib/seeds';
 import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard, PassDirection } from '../components/DecisionCard';
-import { RescueCard } from '../components/RescueCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
 
@@ -93,8 +92,11 @@ export default function DealScreen() {
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
 
-  // Guard against React 18 StrictMode double-mount on web
-  const didInitRef = useRef(false);
+  // Session ID: increments on each mount cycle. Protects against
+  // React 18 StrictMode double-init AND allows re-init when returning
+  // from rescue via router.replace('/deal').
+  const [sessionId, setSessionId] = useState(0);
+  const lastInitSession = useRef(-1);
 
   // Card generation key — increments on each new card to reset idle timer
   const [cardKey, setCardKey] = useState(0);
@@ -150,14 +152,14 @@ export default function DealScreen() {
     if (triggerDrm) {
       const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
       if (drmMeal) {
-        setCurrentDeal({ type: 'drm', data: drmMeal });
-        setWhyText(getRandomWhy(drmMeal));
+        // DRM autopilot: navigate straight to rescue, skip card display
         setCurrentDealId(drmMeal.id);
         setDrmInserted(true);
-        setOverlayLevel(0);
-        setNoMoreRecipes(false);
         setIsLoading(false);
-        setCardKey(k => k + 1);
+        router.replace({
+          pathname: '/rescue/[mealId]',
+          params: { mealId: drmMeal.id },
+        });
         return;
       }
       setDrmInserted(true);
@@ -187,10 +189,13 @@ export default function DealScreen() {
     setCardKey(k => k + 1);
   }, [mode, constraints, drmTimerTriggered]);
 
-  // Initialize deal session
+  // Initialize deal session.
+  // Uses sessionId to allow re-init when returning from rescue.
+  // lastInitSession ref prevents double-init within the same session
+  // (React 18 StrictMode double-mount protection).
   useEffect(() => {
-    if (didInitRef.current) return;
-    didInitRef.current = true;
+    if (lastInitSession.current === sessionId) return;
+    lastInitSession.current = sessionId;
 
     markDealStart();
 
@@ -203,7 +208,7 @@ export default function DealScreen() {
     return () => {
       if (drmTimerRef.current) clearTimeout(drmTimerRef.current);
     };
-  }, [dealNextCard]);
+  }, [sessionId, dealNextCard]);
 
   // Sync local allergen display
   useEffect(() => {
@@ -360,7 +365,7 @@ export default function DealScreen() {
 
           <TouchableOpacity
             style={styles.backToModeButton}
-            onPress={() => router.replace('/(tabs)/tonight')}
+            onPress={() => router.replace('/tonight')}
             accessibilityRole="button"
             accessibilityLabel="Try a different mode"
           >
@@ -395,16 +400,8 @@ export default function DealScreen() {
             modeLabel={modeLabel}
           />
         )}
-        {currentDeal?.type === 'drm' && (
-          <RescueCard
-            meal={currentDeal.data}
-            whyText={whyText}
-            expanded={overlayLevel > 0}
-            onToggleExpand={handleToggleExpand}
-            onAccept={handleAccept}
-            onPass={handlePass}
-          />
-        )}
+        {/* DRM cards no longer render here — autopilot navigates
+            directly to /rescue/[mealId] from dealNextCard() */}
       </Animated.View>
 
       {/* ── Back button (glass, top-left, only at level 0) ────────── */}
@@ -414,7 +411,7 @@ export default function DealScreen() {
             styles.backButton,
             { top: insets.top + spacing.sm },
           ]}
-          onPress={() => router.replace('/(tabs)/tonight')}
+          onPress={() => router.replace('/tonight')}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Go back"

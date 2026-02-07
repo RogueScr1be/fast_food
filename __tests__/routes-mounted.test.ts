@@ -14,8 +14,8 @@ describe('MVP routes exist', () => {
     'app/deal.tsx',
     'app/checklist/[recipeId].tsx',
     'app/rescue/[mealId].tsx',
-    'app/(tabs)/tonight.tsx',
-    'app/(tabs)/profile.tsx',
+    'app/tonight.tsx',
+    'app/profile.tsx',
     'app/_layout.tsx',
   ];
 

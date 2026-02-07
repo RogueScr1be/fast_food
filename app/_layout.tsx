@@ -20,8 +20,6 @@ export default function RootLayout() {
     'Inter-Bold': Inter_700Bold,
   });
 
-  // Hydrate preferences from storage on mount
-  // Includes timeout fallback to prevent black-screen on corrupted storage
   useEffect(() => {
     let alive = true;
 
@@ -30,7 +28,6 @@ export default function RootLayout() {
       return;
     }
 
-    // Timeout fallback: don't let hydration block app forever
     const timeout = setTimeout(() => {
       if (alive) {
         console.warn('[RootLayout] Hydration timeout - proceeding with defaults');
@@ -64,38 +61,44 @@ export default function RootLayout() {
   return (
     <AppProvider>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Root redirect to Tonight */}
+        {/* Root redirect */}
         <Stack.Screen name="index" />
-        
-        {/* Tab navigator (Tonight, Profile) */}
-        <Stack.Screen name="(tabs)" />
-        
-        {/* MVP Deal flow routes - must be explicitly registered for reliable navigation */}
-        <Stack.Screen 
-          name="deal" 
-          options={{ 
+
+        {/* Hub screen (no tabs) */}
+        <Stack.Screen name="tonight" />
+
+        {/* Deal flow */}
+        <Stack.Screen
+          name="deal"
+          options={{
             gestureEnabled: true,
             animation: 'slide_from_right',
-          }} 
+          }}
         />
-        <Stack.Screen 
-          name="checklist/[recipeId]" 
-          options={{ 
+        <Stack.Screen
+          name="checklist/[recipeId]"
+          options={{
             gestureEnabled: true,
             animation: 'slide_from_right',
-          }} 
+          }}
         />
-        
-        {/* DRM rescue checklist - separate from regular checklist */}
-        <Stack.Screen 
-          name="rescue/[mealId]" 
-          options={{ 
+        <Stack.Screen
+          name="rescue/[mealId]"
+          options={{
             gestureEnabled: true,
             animation: 'slide_from_right',
-          }} 
+          }}
         />
-        
-        {/* Fallback */}
+
+        {/* Profile / Settings */}
+        <Stack.Screen
+          name="profile"
+          options={{
+            gestureEnabled: true,
+            animation: 'slide_from_right',
+          }}
+        />
+
         <Stack.Screen name="+not-found" />
       </Stack>
 
