@@ -269,6 +269,15 @@ This prevents a black void flash on first render.
 - The hero `<Image />` always renders immediately (not gated).
 - No fade animations — the gate is instantaneous.
 
+### Checklist Animation Timings (Phase 3.0.2, do not slow down)
+
+ChecklistStep component uses FAST timings — do not increase:
+- Orbit rotation: ≤300ms (Easing.linear)
+- Strikethrough travel: ≤250ms (Easing.out)
+- Uncheck: instant (no animation, cancelAnimation + reset to 0)
+- Rapid taps: cancelAnimation before each new animation sequence
+- Pure Reanimated — no Lottie, no external animation libraries
+
 ### Checklist Simplification (Phase 3.0.1, do not re-add)
 
 The Cook/Prep toggle has been removed from the checklist screen.
