@@ -20,6 +20,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
+import { ChecklistStep } from '../../components/ChecklistStep';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
@@ -134,46 +135,16 @@ export default function ChecklistScreen() {
         style={styles.stepsList}
         contentContainerStyle={styles.stepsContent}
       >
-        {steps.map((text, index) => {
-          const completed = completedIndices.has(index);
-          return (
-            <TouchableOpacity
-              key={index}
-              style={styles.stepRow}
-              onPress={() => toggleStep(index)}
-              activeOpacity={0.7}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: completed }}
-            >
-              <View
-                style={[
-                  styles.stepCheckbox,
-                  completed && styles.stepCheckboxChecked,
-                ]}
-              >
-                {completed && <Check size={14} color={colors.textInverse} />}
-              </View>
-              <View style={styles.stepContent}>
-                <Text
-                  style={[
-                    styles.stepNumber,
-                    completed && styles.stepNumberCompleted,
-                  ]}
-                >
-                  Step {index + 1}
-                </Text>
-                <Text
-                  style={[
-                    styles.stepText,
-                    completed && styles.stepTextCompleted,
-                  ]}
-                >
-                  {text}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+        {steps.map((text, index) => (
+          <ChecklistStep
+            key={index}
+            index={index}
+            text={text}
+            completed={completedIndices.has(index)}
+            onToggle={() => toggleStep(index)}
+            showStepLabel
+          />
+        ))}
 
         {/* Meta info at bottom */}
         <View style={styles.metaSection}>
@@ -261,53 +232,6 @@ const styles = StyleSheet.create({
   stepsContent: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.lg,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSubtle,
-    minHeight: MIN_TOUCH_TARGET,
-  },
-  stepCheckbox: {
-    width: 24,
-    height: 24,
-    borderRadius: radii.sm,
-    borderWidth: 2,
-    borderColor: colors.border,
-    marginRight: spacing.md,
-    marginTop: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepCheckboxChecked: {
-    backgroundColor: colors.accentBlue,
-    borderColor: colors.accentBlue,
-  },
-  stepContent: {
-    flex: 1,
-  },
-  stepNumber: {
-    fontSize: typography.xs,
-    fontWeight: typography.semibold,
-    color: colors.textMuted,
-    marginBottom: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  stepNumberCompleted: {
-    color: colors.textMuted,
-  },
-  stepText: {
-    fontSize: typography.base,
-    color: colors.textPrimary,
-    lineHeight: 22,
-  },
-  stepTextCompleted: {
-    color: colors.textMuted,
-    textDecorationLine: 'line-through',
-    opacity: 0.7,
   },
   metaSection: {
     flexDirection: 'row',

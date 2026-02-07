@@ -220,6 +220,40 @@ export function DecisionCard({
   const useSafeFrame = recipe.heroSafeFrame === true;
 
   // -----------------------------------------------------------------------
+  // Image readiness gate — prevent black void on first render
+  // -----------------------------------------------------------------------
+
+  const [imageReady, setImageReady] = useState(false);
+  const imageReadyRef = useRef(false);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset when recipe changes
+  useEffect(() => {
+    setImageReady(false);
+    imageReadyRef.current = false;
+
+    // Fallback: if onLoad never fires (cached image), flip after 80ms
+    fallbackTimerRef.current = setTimeout(() => {
+      if (!imageReadyRef.current) {
+        imageReadyRef.current = true;
+        setImageReady(true);
+      }
+    }, 80);
+
+    return () => {
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+    };
+  }, [recipe.id]);
+
+  const handleImageLoad = useCallback(() => {
+    if (!imageReadyRef.current) {
+      imageReadyRef.current = true;
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      setImageReady(true);
+    }
+  }, []);
+
+  // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
 
@@ -227,99 +261,109 @@ export function DecisionCard({
     <View style={styles.container}>
       <GestureDetector gesture={composedGesture}>
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
-          {/* ── Hero image ─────────────────────────────────────────── */}
+          {/* ── Hero image (always rendered, triggers readiness) ──── */}
           <Image
             source={imageSource}
             style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
             contentFit={useSafeFrame ? 'contain' : 'cover'}
             contentPosition="bottom"
             accessibilityLabel={`Photo of ${recipe.name}`}
+            onLoad={handleImageLoad}
           />
 
-          {/* ── Scrim gradient ─────────────────────────────────────── */}
-          <LinearGradient
-            colors={[SCRIM_COLORS[variant][0], SCRIM_COLORS[variant][1]]}
-            locations={[0.4, 1]}
-            style={styles.scrim}
-          />
+          {/* ── Overlays: gated on imageReady ──────────────────────── */}
+          {imageReady && (
+            <>
+              {/* Scrim gradient */}
+              <LinearGradient
+                colors={[SCRIM_COLORS[variant][0], SCRIM_COLORS[variant][1]]}
+                locations={[0.4, 1]}
+                style={styles.scrim}
+              />
 
-          {/* ── Rescue badge ───────────────────────────────────────── */}
-          {isRescue && (
-            <View style={styles.rescueBadge}>
-              <Text style={styles.rescueBadgeText}>Rescue</Text>
-            </View>
-          )}
-
-          {/* ── Info overlay on image ──────────────────────────────── */}
-          <View
-            style={[
-              styles.infoOverlay,
-              { bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm },
-            ]}
-          >
-            <Text style={styles.recipeName}>{recipe.name}</Text>
-            <WhyWhisper text={whyText} light />
-            <View style={styles.metaRow}>
-              <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
-              {estimatedCost && (
-                <>
-                  <View style={styles.metaDot} />
-                  <Text style={styles.metaText}>{estimatedCost}</Text>
-                </>
-              )}
-              {isRescue && !estimatedCost && (
-                <>
-                  <View style={styles.metaDot} />
-                  <Text style={styles.metaText}>No-stress</Text>
-                </>
-              )}
-            </View>
-          </View>
-
-          {/* ── Allergy indicator ──────────────────────────────────── */}
-          <AllergyIndicator
-            count={allergenCount}
-            style={{ bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm }}
-          />
-
-          {/* ── Glass overlay ──────────────────────────────────────── */}
-          <GlassOverlay
-            ref={glassRef}
-            level={internalLevel}
-            onLevelChange={handleOverlayLevelChange}
-            modeLabel={modeLabel}
-            externalLiftY={externalLiftY}
-            collapsedHeight={COLLAPSED_GLASS_HEIGHT}
-            stickyContent={
-              <View style={styles.stickyWrapper}>
-                <TouchableOpacity
-                  style={[
-                    styles.acceptButton,
-                    { backgroundColor: ACCEPT_BG[variant] },
-                  ]}
-                  onPress={onAccept}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Let's do this"
-                >
-                  <Text style={styles.acceptButtonText}>Let's do this</Text>
-                </TouchableOpacity>
-              </View>
-            }
-          >
-            {/* Ingredients (level 1+) */}
-            <View style={styles.ingredientsList}>
-              <Text style={styles.ingredientsTitle}>Ingredients</Text>
-              {recipe.ingredients.map((ingredient, i) => (
-                <View key={i} style={styles.ingredientRow}>
-                  <Text style={styles.ingredientName}>{ingredient.name}</Text>
-                  <Text style={styles.ingredientQty}>
-                    {ingredient.quantity}
-                  </Text>
+              {/* Rescue badge */}
+              {isRescue && (
+                <View style={styles.rescueBadge}>
+                  <Text style={styles.rescueBadgeText}>Rescue</Text>
                 </View>
-              ))}
-            </View>
-          </GlassOverlay>
+              )}
+
+              {/* Info overlay on image */}
+              <View
+                style={[
+                  styles.infoOverlay,
+                  { bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm },
+                ]}
+              >
+                <Text style={styles.recipeName}>{recipe.name}</Text>
+                <WhyWhisper text={whyText} light />
+                <View style={styles.metaRow}>
+                  <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
+                  {estimatedCost && (
+                    <>
+                      <View style={styles.metaDot} />
+                      <Text style={styles.metaText}>{estimatedCost}</Text>
+                    </>
+                  )}
+                  {isRescue && !estimatedCost && (
+                    <>
+                      <View style={styles.metaDot} />
+                      <Text style={styles.metaText}>No-stress</Text>
+                    </>
+                  )}
+                </View>
+              </View>
+
+              {/* Allergy indicator */}
+              <AllergyIndicator
+                count={allergenCount}
+                style={{ bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm }}
+              />
+
+              {/* Glass overlay */}
+              <GlassOverlay
+                ref={glassRef}
+                level={internalLevel}
+                onLevelChange={handleOverlayLevelChange}
+                modeLabel={modeLabel}
+                externalLiftY={externalLiftY}
+                collapsedHeight={COLLAPSED_GLASS_HEIGHT}
+                stickyContent={
+                  <View style={styles.stickyWrapper}>
+                    <TouchableOpacity
+                      style={[
+                        styles.acceptButton,
+                        { backgroundColor: ACCEPT_BG[variant] },
+                      ]}
+                      onPress={onAccept}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Let's do this"
+                    >
+                      <Text style={styles.acceptButtonText}>
+                        Let's do this
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                }
+              >
+                {/* Ingredients (level 1+) */}
+                <View style={styles.ingredientsList}>
+                  <Text style={styles.ingredientsTitle}>Ingredients</Text>
+                  {recipe.ingredients.map((ingredient, i) => (
+                    <View key={i} style={styles.ingredientRow}>
+                      <Text style={styles.ingredientName}>
+                        {ingredient.name}
+                      </Text>
+                      <Text style={styles.ingredientQty}>
+                        {ingredient.quantity}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </GlassOverlay>
+            </>
+          )}
         </Animated.View>
       </GestureDetector>
     </View>

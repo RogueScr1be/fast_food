@@ -19,9 +19,10 @@ import {
   Image,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
 import { getDrmById } from '../../lib/seeds';
+import { ChecklistStep } from '../../components/ChecklistStep';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
@@ -165,27 +166,16 @@ export default function RescueChecklistScreen() {
         style={styles.stepsContainer}
         contentContainerStyle={styles.stepsContent}
       >
-        {steps.map((step, index) => {
-          const isCompleted = completedIndices.has(index);
-          return (
-            <TouchableOpacity
-              key={index}
-              style={[styles.stepRow, isCompleted && styles.stepRowCompleted]}
-              onPress={() => toggleStep(index)}
-              activeOpacity={0.7}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isCompleted }}
-              accessibilityLabel={`Step ${index + 1}: ${step}`}
-            >
-              <View style={[styles.checkbox, isCompleted && styles.checkboxChecked]}>
-                {isCompleted && <Check size={16} color={colors.textInverse} />}
-              </View>
-              <Text style={[styles.stepText, isCompleted && styles.stepTextCompleted]}>
-                {step}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+        {steps.map((step, index) => (
+          <ChecklistStep
+            key={index}
+            index={index}
+            text={step}
+            completed={completedIndices.has(index)}
+            onToggle={() => toggleStep(index)}
+            showStepLabel={false}
+          />
+        ))}
       </ScrollView>
 
       {/* Done Button */}
@@ -304,43 +294,6 @@ const styles = StyleSheet.create({
   },
   stepsContent: {
     padding: spacing.lg,
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSubtle,
-    minHeight: MIN_TOUCH_TARGET + 8,
-  },
-  stepRowCompleted: {
-    opacity: 0.6,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: radii.sm,
-    borderWidth: 2,
-    borderColor: colors.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-    marginTop: 2,
-    backgroundColor: colors.surface,
-  },
-  checkboxChecked: {
-    backgroundColor: colors.accentGreen,
-    borderColor: colors.accentGreen,
-  },
-  stepText: {
-    flex: 1,
-    fontSize: typography.base,
-    color: colors.textPrimary,
-    lineHeight: 22,
-  },
-  stepTextCompleted: {
-    textDecorationLine: 'line-through',
-    color: colors.textMuted,
   },
   // Footer
   footer: {

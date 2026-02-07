@@ -256,6 +256,28 @@ Mode buttons and CTA use a **layered shadow + border** system:
 - Android: `elevation: 4` on outer, border compensates for shadow gap
 - Clone overlay matches: white bg + blue border + blue text
 
+### Image Readiness Gate Rule (do not remove)
+
+DecisionCard gates all overlays (scrim, text, glass, allergy indicator)
+behind an `imageReady` state that flips when the hero image loads.
+This prevents a black void flash on first render.
+
+- `onLoad` from expo-image flips `imageReady = true`.
+- Fallback timeout (80ms) covers cached images where `onLoad` may
+  fire synchronously before React commits.
+- Resets on `recipe.id` change so each new card starts clean.
+- The hero `<Image />` always renders immediately (not gated).
+- No fade animations — the gate is instantaneous.
+
+### Checklist Animation Timings (Phase 3.0.2, do not slow down)
+
+ChecklistStep component uses FAST timings — do not increase:
+- Orbit rotation: ≤300ms (Easing.linear)
+- Strikethrough travel: ≤250ms (Easing.out)
+- Uncheck: instant (no animation, cancelAnimation + reset to 0)
+- Rapid taps: cancelAnimation before each new animation sequence
+- Pure Reanimated — no Lottie, no external animation libraries
+
 ### Checklist Simplification (Phase 3.0.1, do not re-add)
 
 The Cook/Prep toggle has been removed from the checklist screen.
