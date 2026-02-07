@@ -25,6 +25,7 @@ import { getDrmById } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
+import { recordCompletion } from '../../lib/state/feedbackLog';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
@@ -86,9 +87,10 @@ export default function RescueChecklistScreen() {
    * Handle Done - reset deal state and go back to Tonight
    */
   const handleDone = useCallback(() => {
+    if (mealId) recordCompletion(mealId);
     resetDealState();
     router.replace('/tonight');
-  }, []);
+  }, [mealId]);
   
   /**
    * Handle back navigation — return to deal (resume swiping)

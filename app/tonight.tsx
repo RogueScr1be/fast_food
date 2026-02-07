@@ -28,7 +28,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { User, AlertCircle, X, Check } from 'lucide-react-native';
+import { User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   setSelectedMode,
@@ -38,6 +38,12 @@ import {
   resetTonight,
 } from '../lib/state/ffSession';
 import type { Mode, AllergenTag } from '../lib/seeds/types';
+import {
+  checkFeedbackEligibility,
+  logFeedback,
+  clearLastCompleted,
+  type FeedbackRating,
+} from '../lib/state/feedbackLog';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,6 +116,33 @@ export default function TonightScreen() {
   const [excludeAllergens, setExcludeAllergensLocal] = useState<AllergenTag[]>(getExcludeAllergens());
   const [showAllergyModal, setShowAllergyModal] = useState(false);
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
+
+  // -----------------------------------------------------------------------
+  // Feedback prompt (delayed, 4h+ after meal completion)
+  // -----------------------------------------------------------------------
+
+  const [feedbackMealId, setFeedbackMealId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    checkFeedbackEligibility().then(mealId => {
+      if (alive && mealId) setFeedbackMealId(mealId);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const handleFeedback = useCallback((rating: FeedbackRating) => {
+    if (!feedbackMealId) return;
+    logFeedback(feedbackMealId, rating);
+    setFeedbackMealId(null);
+  }, [feedbackMealId]);
+
+  const dismissFeedback = useCallback(() => {
+    // Don't log — just hide for this session. Will reappear on next visit
+    // if still eligible (4h rule). Clear if user explicitly dismisses.
+    clearLastCompleted();
+    setFeedbackMealId(null);
+  }, []);
 
   // -----------------------------------------------------------------------
   // Tile refs for measurement
@@ -314,6 +347,45 @@ export default function TonightScreen() {
           <User size={18} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
+
+      {/* Feedback prompt (non-blocking, dismissible) */}
+      {feedbackMealId && (
+        <View style={styles.feedbackCard}>
+          <View style={styles.feedbackHeader}>
+            <Text style={styles.feedbackTitle}>Did you enjoy?</Text>
+            <TouchableOpacity
+              onPress={dismissFeedback}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Dismiss"
+            >
+              <X size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.feedbackOptions}>
+            <TouchableOpacity
+              style={styles.feedbackOption}
+              onPress={() => handleFeedback(-1)}
+              accessibilityLabel="Not great"
+            >
+              <Frown size={28} color={colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.feedbackOption}
+              onPress={() => handleFeedback(0)}
+              accessibilityLabel="It was fine"
+            >
+              <Meh size={28} color={colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.feedbackOption}
+              onPress={() => handleFeedback(1)}
+              accessibilityLabel="Loved it"
+            >
+              <Smile size={28} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Mode buttons — vertical stack */}
       <View style={styles.modeContainer}>
@@ -532,6 +604,39 @@ const styles = StyleSheet.create({
   },
   modeLabelSelected: {
     color: colors.accentBlueDark,
+  },
+
+  // Feedback prompt
+  feedbackCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  feedbackHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  feedbackTitle: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    color: colors.textSecondary,
+  },
+  feedbackOptions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: spacing.xs,
+  },
+  feedbackOption: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Allergy link
