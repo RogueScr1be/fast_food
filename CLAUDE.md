@@ -249,7 +249,8 @@ Mode buttons and CTA use a **layered shadow + border** system:
 - Outer View: `shadowOffset y=8, opacity=0.08, radius=14` (soft depth)
 - Inner TouchableOpacity: `shadowOffset y=2, opacity=0.12, radius=6` (tight)
 - Border: `2px accentBlue` on white surface
-- Top highlight: 1px `rgba(255,255,255,0.6)` bevel inside card
+- Top highlight: 1px `rgba(255,255,255,0.4)` bevel inside card
+- Border width: ALWAYS 2px. Never change on selection (causes jitter).
 - Selected state: `rgba(37,99,235,0.08)` blue wash bg (NOT solid blue)
 - Text color: `accentBlue` (NOT textPrimary, NOT textInverse)
 - Android: `elevation: 4` on outer, border compensates for shadow gap

@@ -521,7 +521,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
   },
   modeLabel: {
     fontSize: typography['4xl'],
