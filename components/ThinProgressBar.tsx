@@ -8,7 +8,7 @@
  * Specs:
  * - Height: 3px
  * - Track: theme border color
- * - Fill: theme accentGreen
+ * - Fill: theme accentBlue
  * - Animation: 220ms timing (no bounce)
  */
 
@@ -64,7 +64,7 @@ const styles = StyleSheet.create({
   },
   fill: {
     height: BAR_HEIGHT,
-    backgroundColor: colors.accentGreen,
+    backgroundColor: colors.accentBlue,
     borderRadius: radii.full,
   },
 });

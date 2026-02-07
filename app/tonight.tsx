@@ -144,7 +144,7 @@ export default function TonightScreen() {
   const cloneY = useSharedValue(0);
   const cloneW = useSharedValue(0);
   const cloneH = useSharedValue(0);
-  const cloneRadius = useSharedValue(radii.lg);
+  const cloneRadius = useSharedValue(radii.xl);
   const cloneOpacity = useSharedValue(0);
   const scrimOpacity = useSharedValue(0);
 
@@ -190,7 +190,7 @@ export default function TonightScreen() {
     cloneY.value = 0;
     cloneW.value = 0;
     cloneH.value = 0;
-    cloneRadius.value = radii.lg;
+    cloneRadius.value = radii.xl;
     if (mountedRef.current) setTransitionMode(null);
     isTransitioning.current = false;
   }, [cloneOpacity, scrimOpacity, cloneX, cloneY, cloneW, cloneH, cloneRadius]);
@@ -227,7 +227,7 @@ export default function TonightScreen() {
           cloneY.value = y;
           cloneW.value = width;
           cloneH.value = height;
-          cloneRadius.value = radii.lg;
+          cloneRadius.value = radii.xl;
           cloneOpacity.value = 1;
           if (mountedRef.current) setTransitionMode(mode);
 
@@ -478,8 +478,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    paddingVertical: spacing.lg,
+    borderRadius: radii.xl,
+    minHeight: 92,
+    paddingVertical: spacing.xl,
     paddingHorizontal: spacing.lg,
     borderWidth: 2,
     borderColor: colors.borderSubtle,
