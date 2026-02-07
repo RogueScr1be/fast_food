@@ -23,9 +23,11 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  cancelAnimation,
   interpolate,
   Extrapolation,
   Easing,
+  runOnJS,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -54,7 +56,6 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ALL_MODES: Mode[] = ['fancy', 'easy', 'cheap'];
 
 const EXPAND_DURATION = 350;
-const NAV_DELAY = Math.round(EXPAND_DURATION * 0.83);
 const FADE_OUT_DURATION = 150;
 
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -166,8 +167,7 @@ export default function TonightScreen() {
   const [transitionMode, setTransitionMode] = useState<Mode | null>(null);
   const isTransitioning = useRef(false);
   const mountedRef = useRef(true);
-  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasNavigated = useRef(false);
 
   const cloneX = useSharedValue(0);
   const cloneY = useSharedValue(0);
@@ -210,19 +210,30 @@ export default function TonightScreen() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (navTimerRef.current) clearTimeout(navTimerRef.current);
-      if (cleanupTimerRef.current) clearTimeout(cleanupTimerRef.current);
+      // Cancel any in-flight animations (prevents ghost clone on return)
+      cancelAnimation(cloneX);
+      cancelAnimation(cloneY);
+      cancelAnimation(cloneW);
+      cancelAnimation(cloneH);
+      cancelAnimation(cloneRadius);
+      cancelAnimation(cloneOpacity);
+      cancelAnimation(scrimOpacity);
       cloneOpacity.value = 0;
       scrimOpacity.value = 0;
       isTransitioning.current = false;
+      hasNavigated.current = false;
     };
   }, []);
 
+  /** Reset all shared values and unlock taps. Safe to call multiple times. */
   const cleanup = useCallback(() => {
-    if (navTimerRef.current) clearTimeout(navTimerRef.current);
-    if (cleanupTimerRef.current) clearTimeout(cleanupTimerRef.current);
-    navTimerRef.current = null;
-    cleanupTimerRef.current = null;
+    cancelAnimation(cloneX);
+    cancelAnimation(cloneY);
+    cancelAnimation(cloneW);
+    cancelAnimation(cloneH);
+    cancelAnimation(cloneRadius);
+    cancelAnimation(cloneOpacity);
+    cancelAnimation(scrimOpacity);
     cloneOpacity.value = 0;
     scrimOpacity.value = 0;
     cloneX.value = 0;
@@ -232,16 +243,23 @@ export default function TonightScreen() {
     cloneRadius.value = radii.xl;
     if (mountedRef.current) setTransitionMode(null);
     isTransitioning.current = false;
+    hasNavigated.current = false;
   }, [cloneOpacity, scrimOpacity, cloneX, cloneY, cloneW, cloneH, cloneRadius]);
 
+  /** Navigate to /deal then fade clone out. Called from animation callback. */
   const doNavigate = useCallback(() => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || hasNavigated.current) return;
+    hasNavigated.current = true;
+
     router.push('/deal');
-    cloneOpacity.value = withTiming(0, { duration: FADE_OUT_DURATION });
+
+    // Fade clone + scrim out; cleanup via completion callback (no setTimeout)
+    cloneOpacity.value = withTiming(0, { duration: FADE_OUT_DURATION }, (finished) => {
+      if (finished) {
+        runOnJS(cleanup)();
+      }
+    });
     scrimOpacity.value = withTiming(0, { duration: FADE_OUT_DURATION });
-    cleanupTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) cleanup();
-    }, FADE_OUT_DURATION + 50);
   }, [cloneOpacity, scrimOpacity, cleanup]);
 
   const measureAndTransition = useCallback(
@@ -268,6 +286,7 @@ export default function TonightScreen() {
           cloneH.value = height;
           cloneRadius.value = radii.xl;
           cloneOpacity.value = 1;
+          hasNavigated.current = false;
           if (mountedRef.current) setTransitionMode(mode);
 
           const timingConfig = {
@@ -277,12 +296,18 @@ export default function TonightScreen() {
 
           cloneX.value = withTiming(0, timingConfig);
           cloneY.value = withTiming(0, timingConfig);
-          cloneW.value = withTiming(SCREEN_WIDTH, timingConfig);
+          // cloneW drives the primary callback: navigate on finish, cleanup on cancel
+          cloneW.value = withTiming(SCREEN_WIDTH, timingConfig, (finished) => {
+            if (finished) {
+              runOnJS(doNavigate)();
+            } else {
+              // Animation was cancelled (e.g. unmount, back gesture)
+              runOnJS(cleanup)();
+            }
+          });
           cloneH.value = withTiming(SCREEN_HEIGHT, timingConfig);
           cloneRadius.value = withTiming(0, timingConfig);
           scrimOpacity.value = withTiming(1, { duration: EXPAND_DURATION * 0.6 });
-
-          navTimerRef.current = setTimeout(doNavigate, NAV_DELAY);
         },
       );
     },
