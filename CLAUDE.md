@@ -290,6 +290,17 @@ Timings (do not increase):
 - Tap anywhere: instant snap + dismiss
 - Fade out: 200ms
 
+### Feedback Log (Phase 3.1, do not change schema)
+
+Storage keys (AsyncStorage):
+- `ff:v1:lastCompleted` — `{ mealId, completedAt }` — single record, overwritten
+- `ff:v1:feedbackLog` — `FeedbackEntry[]` — append-only, never cleared
+
+Eligibility: `now - completedAt >= 4 hours` AND no feedback for that mealId.
+After logging feedback OR explicit dismiss: `lastCompleted` is cleared.
+Prompt never stacks. Never blocks Tonight usage. Uses Lucide face
+icons (Frown/Meh/Smile), not emojis.
+
 ### Checklist Simplification (Phase 3.0.1, do not re-add)
 
 The Cook/Prep toggle has been removed from the checklist screen.
