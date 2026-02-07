@@ -92,6 +92,19 @@ All UI must follow [docs/design/constitution.md](docs/design/constitution.md):
 - `drmInserted` — Whether DRM triggered
 - `dealStartMs` — Timer for 45s DRM
 
+## Import Hygiene Rule (do not skip)
+
+Every React hook used as a bare call (`useEffect(`, `useState(`, etc.)
+MUST be in the file's named imports from `'react'`. Using `React.useEffect`
+works but is inconsistent — prefer named imports for all hooks.
+
+Before committing any file that uses hooks, verify:
+```
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+```
+includes every hook the file actually calls. Missing imports cause
+silent crashes on web (blank screen, `useEffect is not defined`).
+
 ## Stop-and-Ask Triggers (must pause and ask)
 
 - Any schema change to seed types

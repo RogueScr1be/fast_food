@@ -6,7 +6,7 @@
  * Vertical mode buttons, "Choose for Me" CTA at bottom.
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
