@@ -7,12 +7,16 @@
     "moduleResolution": "bundler"
   },
   "include": [
-    "app/_layout.tsx",
-    "app/(tabs)/_layout.tsx",
-    "contexts/**/*.ts",
-    "contexts/**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
     "hooks/**/*.ts",
     "hooks/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "contexts/**/*.ts",
+    "contexts/**/*.tsx",
     "types/**/*.ts"
   ],
   "exclude": [
@@ -22,6 +26,20 @@
     "coverage",
     "**/*.test.ts",
     "**/*.test.tsx",
-    "**/__tests__/**"
+    "**/__tests__/**",
+    "app/api/**",
+    "app/components/**",
+    "app/contexts/**",
+    "app/hooks/**",
+    "lib/decision-os/**",
+    "lib/qa/**",
+    "services/**",
+    "scripts/**",
+    "db/**",
+    "components/GradientButton.tsx",
+    "components/LocationPicker.tsx",
+    "components/PerformanceDebugger.tsx",
+    "components/ReceiptScanner.tsx",
+    "components/SuggestionChips.tsx"
   ]
 }

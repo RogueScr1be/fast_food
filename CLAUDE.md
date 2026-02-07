@@ -92,18 +92,22 @@ All UI must follow [docs/design/constitution.md](docs/design/constitution.md):
 - `drmInserted` — Whether DRM triggered
 - `dealStartMs` — Timer for 45s DRM
 
-## Import Hygiene Rule (do not skip)
+## Import Hygiene Rule (enforced by build pipeline)
 
-Every React hook used as a bare call (`useEffect(`, `useState(`, etc.)
-MUST be in the file's named imports from `'react'`. Using `React.useEffect`
-works but is inconsistent — prefer named imports for all hooks.
+Missing imports cause silent web crashes (blank screen). This is now
+enforced by TWO build gates:
 
-Before committing any file that uses hooks, verify:
-```
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-```
-includes every hook the file actually calls. Missing imports cause
-silent crashes on web (blank screen, `useEffect is not defined`).
+1. **`npm run build:sanity`** (tsc) — catches `TS2304: Cannot find name`
+   for any bare identifier without an import. Covers ALL app/components/
+   hooks/lib files (tsconfig.build.json expanded in Phase 3.1).
+
+2. **`npm run lint`** (ESLint) — catches unused imports/vars that indicate
+   stale code.
+
+Both run in the Vercel build command: `npm run lint && npm run build:sanity && expo export -p web`.
+
+**Smoke-tested:** a file with bare `useEffect()` and no import is caught
+by tsc as `TS2304` and blocks the build.
 
 ## Stop-and-Ask Triggers (must pause and ask)
 

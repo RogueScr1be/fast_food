@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.warning,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
-    borderRadius: radii.xs,
+    borderRadius: radii.sm,
     alignSelf: 'flex-start',
     marginBottom: spacing.xs,
   },

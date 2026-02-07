@@ -100,7 +100,7 @@ export default function ChecklistScreen() {
     );
   }
 
-  const estimatedCost = 'estimatedCost' in meal ? meal.estimatedCost : null;
+  const estimatedCost = 'estimatedCost' in meal ? (meal as any).estimatedCost as string : null;
   const progressValue = progress / 100;
 
   return (
