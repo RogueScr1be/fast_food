@@ -217,6 +217,7 @@ export function DecisionCard({
   const imageSource = getImageSource(recipe.imageKey);
   const allergenCount = recipe.allergens.length;
   const isRescue = variant === 'rescue';
+  const useSafeFrame = recipe.heroSafeFrame === true;
 
   // -----------------------------------------------------------------------
   // Render
@@ -226,11 +227,11 @@ export function DecisionCard({
     <View style={styles.container}>
       <GestureDetector gesture={composedGesture}>
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
-          {/* ── Hero image (expo-image, focus bottom, pulled back ~3%) ── */}
+          {/* ── Hero image ─────────────────────────────────────────── */}
           <Image
             source={imageSource}
-            style={styles.heroImage}
-            contentFit="cover"
+            style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
+            contentFit={useSafeFrame ? 'contain' : 'cover'}
             contentPosition="bottom"
             accessibilityLabel={`Photo of ${recipe.name}`}
           />
@@ -338,15 +339,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.textPrimary, // clean dark edge behind image
     overflow: 'hidden',
   },
-  // Pull back ~3% so bowls/plates aren't clipped at the edges.
-  // The dark card background fills the thin border naturally.
+  // Default: cover with slight pull-back so edges breathe.
   heroImage: {
     position: 'absolute',
     top: '1.5%',
     left: '1.5%',
     right: '1.5%',
     bottom: '1.5%',
-    borderRadius: 4, // very subtle rounding to soften the inset edge
+    borderRadius: 4,
+  },
+  // Safe frame: contain + slight scale-up to reduce letterboxing.
+  // Shows the full dish without clipping; dark bg fills any gaps.
+  heroImageSafe: {
+    position: 'absolute',
+    top: '-3%',
+    left: '-3%',
+    right: '-3%',
+    bottom: '-3%',
+    // Negative insets expand the contain area ~6%, so the image
+    // scales up slightly while still fitting the full dish.
   },
   scrim: {
     position: 'absolute',

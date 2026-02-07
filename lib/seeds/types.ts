@@ -36,6 +36,8 @@ export interface RecipeSeed {
   estimatedTime: string; // e.g., "25 min"
   estimatedCost: string; // e.g., "$15"
   imageKey?: string; // Key for hero image lookup
+  /** When true, hero image uses contain+scale-up to avoid clipping bowls/plates */
+  heroSafeFrame?: boolean;
 }
 
 /**
@@ -52,4 +54,6 @@ export interface DrmSeed {
   whyReasons: string[];
   estimatedTime: string;
   imageKey?: string; // Key for hero image lookup
+  /** When true, hero image uses contain+scale-up to avoid clipping bowls/plates */
+  heroSafeFrame?: boolean;
 }
