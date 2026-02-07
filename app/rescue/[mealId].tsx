@@ -16,13 +16,12 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
 import { getDrmById } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
+import { ChecklistHero } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
@@ -131,43 +130,22 @@ export default function RescueChecklistScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Progress Bar */}
+    <View style={styles.container}>
+      {/* Hero image header */}
+      <ChecklistHero
+        imageSource={getImageSource(meal.imageKey)}
+        title={meal.name}
+        progressText={`${completedCount} of ${totalSteps} steps`}
+        meta={`${meal.estimatedTime} · ${meal.ingredients.length} ingredients`}
+        isRescue
+        onBack={handleBack}
+      />
+
+      {/* Progress bar below hero */}
       <ThinProgressBar
         value={progress}
         accessibilityLabel={`Progress: ${completedCount} of ${totalSteps} steps`}
       />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-        
-        <View style={styles.headerContent}>
-          <View style={styles.rescueBadge}>
-            <Text style={styles.rescueBadgeText}>RESCUE</Text>
-          </View>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {meal.name}
-          </Text>
-          <Text style={styles.headerMeta}>
-            {meal.estimatedTime} · {meal.ingredients.length} ingredients
-          </Text>
-        </View>
-        
-        {/* Small thumbnail */}
-        <Image
-          source={getImageSource(meal.imageKey)}
-          style={styles.thumbnail}
-          resizeMode="cover"
-        />
-      </View>
 
       {/* Steps List */}
       <ScrollView 
@@ -201,7 +179,7 @@ export default function RescueChecklistScreen() {
         visible={showGreatJob}
         onDismiss={() => setShowGreatJob(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -252,55 +230,6 @@ const styles = StyleSheet.create({
     fontSize: typography.sm,
     color: colors.textMuted,
     textDecorationLine: 'underline',
-  },
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSubtle,
-  },
-  backButton: {
-    width: MIN_TOUCH_TARGET,
-    height: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerContent: {
-    flex: 1,
-    marginLeft: spacing.sm,
-  },
-  rescueBadge: {
-    backgroundColor: colors.warning,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radii.sm,
-    alignSelf: 'flex-start',
-    marginBottom: spacing.xs,
-  },
-  rescueBadgeText: {
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
-    color: colors.textInverse,
-    letterSpacing: 0.5,
-  },
-  headerTitle: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  headerMeta: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-  },
-  thumbnail: {
-    width: 56,
-    height: 56,
-    borderRadius: radii.md,
-    marginLeft: spacing.md,
   },
   // Steps
   stepsContainer: {

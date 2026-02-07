@@ -14,13 +14,13 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
-  Image,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
+import { ChecklistHero } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
@@ -104,42 +104,21 @@ export default function ChecklistScreen() {
   const progressValue = progress / 100;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Progress Bar (blue) */}
+    <View style={styles.container}>
+      {/* Hero image header */}
+      <ChecklistHero
+        imageSource={getImageSource(meal.imageKey)}
+        title={meal.name}
+        progressText={`${completedCount} of ${totalSteps} steps`}
+        meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
+        onBack={handleBack}
+      />
+
+      {/* Progress bar below hero */}
       <ThinProgressBar
         value={progressValue}
         accessibilityLabel={`Cooking progress: ${completedCount} of ${totalSteps} steps`}
       />
-
-      {/* Header with thumbnail */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerButton}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <View style={styles.headerWithThumb}>
-            <Image
-              source={getImageSource(meal.imageKey)}
-              style={styles.headerThumb}
-              resizeMode="cover"
-            />
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {meal.name}
-              </Text>
-              <Text style={styles.headerSubtitle}>
-                {completedCount} of {totalSteps} steps
-              </Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.headerButton} />
-      </View>
 
       {/* Steps List */}
       <ScrollView
@@ -192,7 +171,7 @@ export default function ChecklistScreen() {
         visible={showGreatJob}
         onDismiss={() => setShowGreatJob(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -200,48 +179,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingTop: Platform.OS === 'ios' ? spacing.sm : spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  headerButton: {
-    width: MIN_TOUCH_TARGET,
-    height: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerCenter: {
-    flex: 1,
-    paddingHorizontal: spacing.sm,
-  },
-  headerWithThumb: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerThumb: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.sm,
-    backgroundColor: colors.mutedLight,
-    marginRight: spacing.sm,
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-  },
-  headerSubtitle: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-    marginTop: 2,
   },
   stepsList: {
     flex: 1,
