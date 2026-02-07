@@ -268,6 +268,20 @@ export function DecisionCard({
   }, []);
 
   // -----------------------------------------------------------------------
+  // Z-axis: 10% inverse parallax on hero during glass overlay lift
+  // -----------------------------------------------------------------------
+
+  const heroParallaxStyle = useAnimatedStyle(() => {
+    const lift = externalLiftY ? externalLiftY.value : 0;
+    // Inverse: glass lifts up → hero shifts down slightly (depth illusion)
+    // Clamped to ±8px to stay imperceptible as "movement"
+    const shift = Math.min(8, Math.max(-8, lift * 0.1));
+    return {
+      transform: [{ translateY: shift }],
+    };
+  });
+
+  // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
 
@@ -275,15 +289,17 @@ export function DecisionCard({
     <View style={styles.container}>
       <GestureDetector gesture={composedGesture}>
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
-          {/* ── Hero image (always rendered, triggers readiness) ──── */}
-          <Image
-            source={imageSource}
-            style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
-            contentFit={useSafeFrame ? 'contain' : 'cover'}
-            contentPosition="bottom"
-            accessibilityLabel={`Photo of ${recipe.name}`}
-            onLoad={handleImageLoad}
-          />
+          {/* ── Hero image with Z-axis parallax ──────────────────── */}
+          <Animated.View style={[StyleSheet.absoluteFill, heroParallaxStyle]}>
+            <Image
+              source={imageSource}
+              style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
+              contentFit={useSafeFrame ? 'contain' : 'cover'}
+              contentPosition="bottom"
+              accessibilityLabel={`Photo of ${recipe.name}`}
+              onLoad={handleImageLoad}
+            />
+          </Animated.View>
 
           {/* ── Overlays: gated on imageReady ──────────────────────── */}
           {imageReady && (

@@ -23,6 +23,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  interpolate,
+  Extrapolation,
   Easing,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
@@ -183,6 +185,8 @@ export default function TonightScreen() {
     height: cloneH.value,
     borderRadius: cloneRadius.value,
     opacity: cloneOpacity.value,
+    // Z-axis: clone lifts slightly toward camera during expand
+    transform: [{ scale: interpolate(scrimOpacity.value, [0, 1], [1, 1.03], Extrapolation.CLAMP) }],
     zIndex: 1000,
   }));
 
@@ -191,6 +195,14 @@ export default function TonightScreen() {
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
     opacity: scrimOpacity.value,
     zIndex: 999,
+  }));
+
+  // Z-axis: background sinks slightly during clone expansion
+  const bgDepthStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: interpolate(scrimOpacity.value, [0, 1], [1, 0.97], Extrapolation.CLAMP) },
+    ],
+    opacity: interpolate(scrimOpacity.value, [0, 1], [1, 0.88], Extrapolation.CLAMP),
   }));
 
   // Unmount guard
@@ -333,6 +345,8 @@ export default function TonightScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Background depth wrapper — sinks during clone expansion */}
+      <Animated.View style={[styles.bgDepthWrapper, bgDepthStyle]}>
       {/* Header: title + profile icon */}
       <View style={styles.header}>
         <Text style={styles.title}>Time to Eat</Text>
@@ -437,6 +451,7 @@ export default function TonightScreen() {
         </View>
       </View>
 
+      </Animated.View>
       {/* ── Transition Overlay ──────────────────────────────────── */}
       {transitionMode !== null && (
         <>
@@ -536,6 +551,9 @@ const styles = StyleSheet.create({
     fontSize: typography['3xl'],
     fontWeight: typography.bold,
     color: colors.textPrimary,
+  },
+  bgDepthWrapper: {
+    flex: 1,
   },
   profileButton: {
     width: 36,
