@@ -19,7 +19,9 @@ import {
   Platform,
   Switch,
 } from 'react-native';
-import { RefreshCw, Info, AlertTriangle, ChevronRight, X, Check, Trash2 } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { ChevronLeft, RefreshCw, Info, AlertTriangle, ChevronRight, X, Check, Trash2 } from 'lucide-react-native';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getExcludeAllergens,
@@ -66,6 +68,7 @@ const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
 ];
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const [showResetModal, setShowResetModal] = useState(false);
   const [showResetAllModal, setShowResetAllModal] = useState(false);
   const [showAllergyModal, setShowAllergyModal] = useState(false);
@@ -160,6 +163,18 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Back button (glass circle, top-left) */}
+      <TouchableOpacity
+        style={[styles.backButton, { top: insets.top + spacing.sm }]}
+        onPress={() => router.back()}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        <ChevronLeft size={20} color={colors.textSecondary} />
+      </TouchableOpacity>
+
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -455,6 +470,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  backButton: {
+    position: 'absolute',
+    left: spacing.md,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.mutedLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 50,
   },
   scrollView: {
     flex: 1,

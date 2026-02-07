@@ -27,7 +27,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
-import { Sparkles, Utensils, Coins, User, AlertCircle, X, Check } from 'lucide-react-native';
+import { User, AlertCircle, X, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import { PrimaryButton } from '../components/PrimaryButton';
 import {
@@ -59,12 +59,6 @@ const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
   { tag: 'shellfish', label: 'Shellfish' },
 ];
 
-const MODE_ICONS: Record<Mode, React.ComponentType<any>> = {
-  fancy: Sparkles,
-  easy: Utensils,
-  cheap: Coins,
-};
-
 const MODE_LABELS: Record<Mode, string> = {
   fancy: 'Fancy',
   easy: 'Easy',
@@ -83,7 +77,6 @@ interface ModeButtonProps {
 }
 
 function ModeButton({ mode, selected, onPress, onRef }: ModeButtonProps) {
-  const Icon = MODE_ICONS[mode];
   return (
     <TouchableOpacity
       ref={(r) => onRef(r as unknown as View | null)}
@@ -94,12 +87,8 @@ function ModeButton({ mode, selected, onPress, onRef }: ModeButtonProps) {
       accessibilityLabel={`${MODE_LABELS[mode]} mode`}
       accessibilityState={{ selected }}
     >
-      <Icon
-        size={24}
-        color={selected ? colors.textInverse : colors.accentBlue}
-      />
       <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>
-        {MODE_LABELS[mode]}
+        {MODE_LABELS[mode].toUpperCase()}
       </Text>
     </TouchableOpacity>
   );
@@ -352,9 +341,10 @@ export default function TonightScreen() {
       {/* CTA — extends to bottom safe area */}
       <View style={[styles.ctaSection, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
         <PrimaryButton
-          label="Choose for Me"
+          label="CHOOSE FOR ME"
           onPress={handleChoose}
           tone="primary"
+          labelStyle={styles.ctaLabel}
         />
       </View>
 
@@ -363,11 +353,9 @@ export default function TonightScreen() {
         <>
           <Animated.View style={scrimStyle} pointerEvents="none" />
           <Animated.View style={[cloneStyle, styles.cloneBase]} pointerEvents="none">
-            {React.createElement(MODE_ICONS[transitionMode], {
-              size: 32,
-              color: colors.textInverse,
-            })}
-            <Text style={styles.cloneLabel}>{MODE_LABELS[transitionMode]}</Text>
+            <Text style={styles.cloneLabel}>
+              {MODE_LABELS[transitionMode].toUpperCase()}
+            </Text>
           </Animated.View>
         </>
       )}
@@ -475,7 +463,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modeButton: {
-    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.surface,
     borderRadius: radii.xl,
@@ -484,7 +472,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     borderWidth: 2,
     borderColor: colors.borderSubtle,
-    gap: spacing.md,
     ...shadows.sm,
   },
   modeButtonSelected: {
@@ -492,12 +479,21 @@ const styles = StyleSheet.create({
     borderColor: colors.accentBlue,
   },
   modeLabel: {
-    fontSize: typography.lg,
-    fontWeight: typography.semibold,
+    fontSize: typography['4xl'],
+    fontWeight: typography.bold,
     color: colors.textPrimary,
+    letterSpacing: 1,
+    textAlign: 'center',
   },
   modeLabelSelected: {
     color: colors.textInverse,
+  },
+
+  // CTA label override (matches hero editorial typography)
+  ctaLabel: {
+    fontSize: typography['2xl'],
+    fontWeight: typography.bold,
+    letterSpacing: 1,
   },
 
   // Allergy link
@@ -528,10 +524,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cloneLabel: {
-    fontSize: typography.lg,
-    fontWeight: typography.semibold,
+    fontSize: typography['4xl'],
+    fontWeight: typography.bold,
     color: colors.textInverse,
-    marginTop: spacing.sm,
+    letterSpacing: 1,
+    textAlign: 'center',
   },
 
   // Modal
