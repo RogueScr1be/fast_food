@@ -7,7 +7,7 @@
  * - Progress bar + Done → resets and returns to Tonight
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,14 +17,25 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { oak, whisper } from '../../lib/ui/motion';
 import { getDrmById } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
-import { ChecklistHero } from '../../components/ChecklistHero';
+import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
+import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
@@ -56,6 +67,87 @@ export default function RescueChecklistScreen() {
   // Track completed steps
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
   const [showGreatJob, setShowGreatJob] = useState(false);
+
+  // -----------------------------------------------------------------------
+  // Reverse-box hero transition (from Deal)
+  // -----------------------------------------------------------------------
+
+  const [transition] = useState<PendingHeroTransition | null>(() =>
+    consumePendingHeroTransition(),
+  );
+  const [showClone, setShowClone] = useState(transition !== null);
+  const mountedRef = useRef(true);
+  const destReceivedRef = useRef(false);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cloneX = useSharedValue(transition?.sourceRect.x ?? 0);
+  const cloneY = useSharedValue(transition?.sourceRect.y ?? 0);
+  const cloneW = useSharedValue(transition?.sourceRect.width ?? 0);
+  const cloneH = useSharedValue(transition?.sourceRect.height ?? 0);
+  const cloneRadius = useSharedValue(0);
+  const cloneOpacity = useSharedValue(transition ? 1 : 0);
+  const contentOpacity = useSharedValue(transition ? 0 : 1);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (transition) {
+      fallbackTimerRef.current = setTimeout(() => {
+        if (!destReceivedRef.current && mountedRef.current) fadeOutClone();
+      }, 500);
+    }
+    return () => {
+      mountedRef.current = false;
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+      cancelAnimation(cloneX);
+      cancelAnimation(cloneY);
+      cancelAnimation(cloneW);
+      cancelAnimation(cloneH);
+      cancelAnimation(cloneRadius);
+      cancelAnimation(cloneOpacity);
+      cancelAnimation(contentOpacity);
+    };
+  }, []);
+
+  const fadeOutClone = useCallback(() => {
+    cloneOpacity.value = withTiming(0, whisper, (finished) => {
+      if (finished) runOnJS(setShowClone)(false);
+    });
+    contentOpacity.value = withTiming(1, { duration: 200 });
+  }, [cloneOpacity, contentOpacity]);
+
+  const handleHeroReady = useCallback((rect: HeroRect) => {
+    if (!transition || destReceivedRef.current) return;
+    destReceivedRef.current = true;
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+
+    cloneX.value = withSpring(rect.x, oak);
+    cloneY.value = withSpring(rect.y, oak);
+    cloneW.value = withSpring(rect.width, oak);
+    cloneH.value = withSpring(rect.height, oak);
+    cloneRadius.value = withSpring(0, oak);
+
+    contentOpacity.value = withTiming(1, { duration: 200 });
+    setTimeout(() => {
+      if (mountedRef.current) fadeOutClone();
+    }, 350);
+  }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
+
+  const cloneStyle = useAnimatedStyle(() => ({
+    position: 'absolute' as const,
+    left: cloneX.value,
+    top: cloneY.value,
+    width: cloneW.value,
+    height: cloneH.value,
+    borderRadius: cloneRadius.value,
+    opacity: cloneOpacity.value,
+    zIndex: 100,
+    overflow: 'hidden' as const,
+  }));
+
+  const contentAnimStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+    flex: 1,
+  }));
   
   // Progress
   const totalSteps = steps.length;
@@ -139,9 +231,11 @@ export default function RescueChecklistScreen() {
         meta={`${meal.estimatedTime} · ${meal.ingredients.length} ingredients`}
         isRescue
         onBack={handleBack}
+        onHeroReady={transition ? handleHeroReady : undefined}
       />
 
-      {/* Progress bar below hero */}
+      {/* Progress bar + content with animated opacity */}
+      <Animated.View style={contentAnimStyle}>
       <ThinProgressBar
         value={progress}
         accessibilityLabel={`Progress: ${completedCount} of ${totalSteps} steps`}
@@ -174,11 +268,25 @@ export default function RescueChecklistScreen() {
         />
       </View>
 
+      </Animated.View>
+
       {/* Great Job overlay */}
       <GreatJobOverlay
         visible={showGreatJob}
         onDismiss={() => setShowGreatJob(false)}
       />
+
+      {/* Reverse-box clone overlay */}
+      {showClone && transition && (
+        <Animated.View style={cloneStyle}>
+          <Image
+            source={transition.imageSource}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            contentPosition="bottom"
+          />
+        </Animated.View>
+      )}
     </View>
   );
 }
