@@ -27,6 +27,7 @@ import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { GreatJobOverlay } from '../../components/GreatJobOverlay';
 
 /**
  * Fallback steps for DRM meals without defined steps.
@@ -54,6 +55,7 @@ export default function RescueChecklistScreen() {
   
   // Track completed steps
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
+  const [showGreatJob, setShowGreatJob] = useState(false);
   
   // Progress
   const totalSteps = steps.length;
@@ -69,12 +71,16 @@ export default function RescueChecklistScreen() {
       const newSet = new Set(prev);
       if (newSet.has(index)) {
         newSet.delete(index);
+        setShowGreatJob(false);
       } else {
         newSet.add(index);
+        if (newSet.size === totalSteps && totalSteps > 0) {
+          setShowGreatJob(true);
+        }
       }
       return newSet;
     });
-  }, []);
+  }, [totalSteps]);
   
   /**
    * Handle Done - reset deal state and go back to Tonight
@@ -187,6 +193,12 @@ export default function RescueChecklistScreen() {
           disabled={!allComplete}
         />
       </View>
+
+      {/* Great Job overlay */}
+      <GreatJobOverlay
+        visible={showGreatJob}
+        onDismiss={() => setShowGreatJob(false)}
+      />
     </SafeAreaView>
   );
 }

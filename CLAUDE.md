@@ -278,6 +278,18 @@ ChecklistStep component uses FAST timings — do not increase:
 - Rapid taps: cancelAnimation before each new animation sequence
 - Pure Reanimated — no Lottie, no external animation libraries
 
+### Great Job Overlay (Phase 3.0.4, do not change trigger)
+
+The "Great Job!" overlay is **edge-triggered**: it only fires when
+the final step becomes checked during the current session. It does
+NOT fire on screen mount if steps are already complete.
+
+Timings (do not increase):
+- Reveal: ≤700ms (clip-width left→right, Easing.out)
+- Hold after reveal: ≤500ms
+- Tap anywhere: instant snap + dismiss
+- Fade out: 200ms
+
 ### Checklist Simplification (Phase 3.0.1, do not re-add)
 
 The Cook/Prep toggle has been removed from the checklist screen.
