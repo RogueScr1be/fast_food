@@ -80,7 +80,7 @@ export default function RescueChecklistScreen() {
    */
   const handleDone = useCallback(() => {
     resetDealState();
-    router.replace('/(tabs)/tonight');
+    router.replace('/tonight');
   }, []);
   
   /**
@@ -104,7 +104,7 @@ export default function RescueChecklistScreen() {
             style={styles.resetButton} 
             onPress={() => {
               resetDealState();
-              router.replace('/(tabs)/tonight');
+              router.replace('/tonight');
             }}
             accessibilityRole="button"
             accessibilityLabel="Reset tonight and go back"

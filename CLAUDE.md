@@ -6,7 +6,7 @@ You are the dev lead + CTO agent for Fast Food. Your job: ship fast, keep code c
 
 Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 
-- **Tonight Screen** → Mode selection (Fancy/Easy/Cheap) + allergen exclusions
+- **Tonight Hub** → "Time to Eat" — mode selection + allergen exclusions (no tabs)
 - **Deal Screen** → Swipe-based card dealing from local seed data
 - **Checklist Screen** → Step-by-step recipe execution with Cook/Prep toggle
 - **Rescue Screen** → DRM (Dinner Rescue Mode) meal completion
@@ -256,11 +256,11 @@ All three must pass before merging to main.
 | Concept | Location |
 |---------|----------|
 | Route registration | `app/_layout.tsx` |
-| Tonight screen | `app/(tabs)/tonight.tsx` |
+| Tonight hub | `app/tonight.tsx` |
 | Deal screen | `app/deal.tsx` |
 | Checklist screen | `app/checklist/[recipeId].tsx` |
 | Rescue screen | `app/rescue/[mealId].tsx` |
-| Profile/Settings | `app/(tabs)/profile.tsx` |
+| Profile/Settings | `app/profile.tsx` |
 | Session state | `lib/state/ffSession.ts` |
 | Persistence | `lib/state/persist.ts` |
 | Seed data | `lib/seeds/recipes.ts` |

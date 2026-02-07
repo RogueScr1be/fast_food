@@ -360,7 +360,7 @@ export default function DealScreen() {
 
           <TouchableOpacity
             style={styles.backToModeButton}
-            onPress={() => router.replace('/(tabs)/tonight')}
+            onPress={() => router.replace('/tonight')}
             accessibilityRole="button"
             accessibilityLabel="Try a different mode"
           >
@@ -414,7 +414,7 @@ export default function DealScreen() {
             styles.backButton,
             { top: insets.top + spacing.sm },
           ]}
-          onPress={() => router.replace('/(tabs)/tonight')}
+          onPress={() => router.replace('/tonight')}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Go back"

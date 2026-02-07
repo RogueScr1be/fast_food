@@ -20,7 +20,7 @@ import {
   Switch,
 } from 'react-native';
 import { RefreshCw, Info, AlertTriangle, ChevronRight, X, Check, Trash2 } from 'lucide-react-native';
-import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
+import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getExcludeAllergens,
   getConstraints,
@@ -30,8 +30,8 @@ import {
   removeExcludeAllergen,
   resetDealState,
   resetAll,
-} from '../../lib/state/ffSession';
-import type { AllergenTag, ConstraintTag } from '../../lib/seeds/types';
+} from '../lib/state/ffSession';
+import type { AllergenTag, ConstraintTag } from '../lib/seeds/types';
 
 // App version - placeholder for MVP
 const APP_VERSION = 'MVP';
