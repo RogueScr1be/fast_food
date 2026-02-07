@@ -113,7 +113,8 @@ explicitly advances.
 | 1.2 | Card rewrite | `components/DecisionCard.tsx`, `components/RescueCard.tsx`, `components/GlassOverlay.tsx` (extend API) | `app/deal.tsx`, `app/(tabs)/tonight.tsx`, nav/settings |
 | 1.3 | Deal integration | `app/deal.tsx` (strip chrome, wire idle hook) | `app/(tabs)/tonight.tsx`, nav/settings, tabs layout |
 | 1.4 | Shared-element spike | `app/(tabs)/tonight.tsx`, `app/_layout.tsx` (transition config) | Profile, settings, DRM logic, checklist |
-| 2.x | Nav + settings | `app/(tabs)/_layout.tsx`, `app/(tabs)/profile.tsx` | Only when Phase 1 is fully shipped |
+| 2.1 | Tonight hub + nav | `app/(tabs)/tonight.tsx` → `app/tonight.tsx`, `app/(tabs)/profile.tsx` → `app/profile.tsx`, `app/(tabs)/_layout.tsx` (delete), `app/_layout.tsx`, `app/index.tsx`, route refs in deal/checklist/rescue | Do NOT touch DRM trigger logic, checklist animations, feedback, sharing |
+| 2.2 | DRM autopilot | `app/deal.tsx` (DRM → auto-navigate to rescue), `app/rescue/[mealId].tsx` (back path) | Do NOT touch checklist, tonight layout, profile, seed data |
 
 **If you are tempted to "just quickly fix" deal.tsx during Phase 1.2, STOP.**
 That is Phase 1.3 scope. Commit your current work, note the dependency, and
@@ -152,6 +153,19 @@ back. Removing chrome is fine; removing the exit path is not.
   deterministic behavior across web/native.
 - Empty state already has "Try a different mode" link.
 - If you strip UI, always verify the exit path survives.
+
+### Tab Removal Rule (Phase 2.1, do not half-do)
+
+Removing tabs is an all-or-nothing operation. You must:
+1. Move BOTH tab screens (`tonight.tsx`, `profile.tsx`) out of `(tabs)/`
+2. Delete `(tabs)/_layout.tsx`
+3. Update `_layout.tsx` to register the moved screens
+4. Update `index.tsx` redirect
+5. Find-and-replace ALL `/(tabs)/tonight` → `/tonight` across the entire codebase
+6. Verify no orphan references remain
+
+Do NOT move one screen but leave the other in tabs. Do NOT delete the
+tab layout without moving screens first.
 
 ### Dimension Reactivity Rule (decided, do not regress)
 

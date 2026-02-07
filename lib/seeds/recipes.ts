@@ -63,6 +63,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '35 min',
     estimatedCost: '$18',
     imageKey: 'risotto',
+    heroSafeFrame: true,
   },
   {
     id: 'fancy-3',
@@ -213,6 +214,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$8',
     imageKey: 'pasta-marinara',
+    heroSafeFrame: true,
   },
   {
     id: 'easy-3',
@@ -261,6 +263,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$5',
     imageKey: 'stir-fry',
+    heroSafeFrame: true,
   },
   {
     id: 'easy-5',
@@ -337,6 +340,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '25 min',
     estimatedCost: '$3',
     imageKey: 'beans-rice',
+    heroSafeFrame: true,
   },
   {
     id: 'cheap-2',
@@ -361,6 +365,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$2',
     imageKey: 'egg-fried-rice',
+    heroSafeFrame: true,
   },
   {
     id: 'cheap-3',
@@ -385,6 +390,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$4',
     imageKey: 'potato-soup',
+    heroSafeFrame: true,
   },
   {
     id: 'cheap-4',
@@ -409,6 +415,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$2',
     imageKey: 'ramen-upgrade',
+    heroSafeFrame: true,
   },
   {
     id: 'cheap-5',
@@ -478,6 +485,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Zero cooking', 'Everyone wins', 'Sometimes dinner is cereal'],
     estimatedTime: '2 min',
     imageKey: 'cereal',
+    heroSafeFrame: true,
   },
   {
     id: 'drm-2',
@@ -524,6 +532,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Pantry rescue', 'Warm and comforting', 'No effort required'],
     estimatedTime: '8 min',
     imageKey: 'soup-can',
+    heroSafeFrame: true,
   },
   {
     id: 'drm-5',
@@ -570,6 +579,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Dorm room classic', 'Salty comfort', 'Done in 5 minutes'],
     estimatedTime: '5 min',
     imageKey: 'instant-noodles',
+    heroSafeFrame: true,
   },
   {
     id: 'drm-8',
@@ -586,6 +596,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Protein-packed', 'Feels healthy', 'Sweet but substantial'],
     estimatedTime: '2 min',
     imageKey: 'yogurt-granola',
+    heroSafeFrame: true,
   },
   {
     id: 'drm-9',
@@ -642,5 +653,6 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Millennial approved', 'Good fats', 'Trendy but real'],
     estimatedTime: '5 min',
     imageKey: 'oatmeal',
+    heroSafeFrame: true,
   },
 ];
