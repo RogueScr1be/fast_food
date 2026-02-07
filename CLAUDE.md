@@ -378,8 +378,23 @@ npm run build:sanity
 npx expo export -p web
 ```
 
-All four must pass before merging to main. Lint runs automatically
-in the Vercel build command before `expo export`.
+All four must pass before merging to main.
+
+Vercel build runs all three code gates in sequence:
+`npm run lint && npm run build:sanity && expo export -p web`
+
+### Pre-Merge Smoke Checklist (run mentally or on device)
+
+Before declaring any milestone "done", verify these flows work:
+1. `/` → redirects to `/tonight` (check `app/index.tsx`)
+2. Mode tap → box-to-full transition → Deal renders (no black void)
+3. Swipe 3+ cards → DRM autopilot → straight to rescue checklist
+4. Complete all steps → Great Job overlay → Done → back to Tonight
+5. After 4h+ → feedback prompt appears → logs once → never repeats
+6. Profile icon → Settings → back chevron → Tonight
+
+If any flow breaks, fix it before shipping. Do not rely solely on
+CI gates — they catch syntax/type errors, not UX regressions.
 
 ---
 
