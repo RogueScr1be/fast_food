@@ -1,14 +1,11 @@
 /**
  * Checklist Screen — Step-by-Step Cooking Guide
- * 
- * Phase 4: Real checklist with progress tracking.
- * - Thin progress bar at top
- * - Cook/Prep toggle for step ordering
- * - Checkable step list
- * - Done button when all complete
+ *
+ * Phase 3.0.1: Simplified — no Cook/Prep toggle, blue progress.
+ * Steps always render in recipe-defined order.
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,96 +19,48 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { ArrowLeft, Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
-import { 
-  getAnyMealById, 
-  reorderForPrepWithIndices, 
-  calculateProgress,
-} from '../../lib/seeds';
+import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 
-type OrderMode = 'cook' | 'prep';
-
-interface StepState {
-  text: string;
-  completed: boolean;
-  originalIndex: number;
-}
-
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
   const meal = recipeId ? getAnyMealById(recipeId) : null;
-  
-  // Order mode: cook (original) vs prep (prep-first)
-  const [orderMode, setOrderMode] = useState<OrderMode>('cook');
-  
-  // Track completed steps by original index
+
+  // Track completed steps by index
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
 
-  // Compute ordered steps based on mode
-  // Uses stable index mapping to handle duplicate step text correctly
-  const orderedSteps: StepState[] = useMemo(() => {
-    if (!meal) return [];
-    
-    const originalSteps = meal.steps;
-    
-    if (orderMode === 'cook') {
-      // Original order - straightforward mapping
-      return originalSteps.map((text, index) => ({
-        text,
-        completed: completedIndices.has(index),
-        originalIndex: index,
-      }));
-    } else {
-      // Prep-first order - use stable index mapping to avoid indexOf bugs
-      const reordered = reorderForPrepWithIndices(originalSteps);
-      return reordered.map(({ text, originalIndex }) => ({
-        text,
-        completed: completedIndices.has(originalIndex),
-        originalIndex,
-      }));
-    }
-  }, [meal, orderMode, completedIndices]);
-
-  // Progress calculation
-  const totalSteps = meal?.steps.length || 0;
+  // Steps always in recipe order
+  const steps = meal?.steps ?? [];
+  const totalSteps = steps.length;
   const completedCount = completedIndices.size;
   const progress = calculateProgress(completedCount, totalSteps);
   const allComplete = completedCount === totalSteps && totalSteps > 0;
 
-  /**
-   * Toggle step completion
-   */
-  const toggleStep = useCallback((originalIndex: number) => {
+  const toggleStep = useCallback((index: number) => {
     setCompletedIndices(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(originalIndex)) {
-        newSet.delete(originalIndex);
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
       } else {
-        newSet.add(originalIndex);
+        next.add(index);
       }
-      return newSet;
+      return next;
     });
   }, []);
 
-  /**
-   * Handle Done - reset deal state and return to Tonight
-   */
   const handleDone = useCallback(() => {
     resetDealState();
     router.replace('/tonight');
   }, []);
 
-  /**
-   * Handle Back
-   */
   const handleBack = useCallback(() => {
     router.back();
   }, []);
 
-  // Error state - controlled fallback instead of crash
+  // Error state
   if (!meal) {
     return (
       <SafeAreaView style={styles.container}>
@@ -120,10 +69,8 @@ export default function ChecklistScreen() {
           <Text style={styles.errorSubtitle}>
             {recipeId ? `ID: ${recipeId}` : 'No recipe ID provided'}
           </Text>
-          
-          {/* Primary action: Reset and start fresh */}
-          <TouchableOpacity 
-            style={styles.resetButton} 
+          <TouchableOpacity
+            style={styles.resetButton}
             onPress={() => {
               resetDealState();
               router.replace('/tonight');
@@ -133,8 +80,6 @@ export default function ChecklistScreen() {
           >
             <Text style={styles.resetButtonText}>Reset Tonight</Text>
           </TouchableOpacity>
-          
-          {/* Secondary: Just go back */}
           <TouchableOpacity style={styles.backLink} onPress={handleBack}>
             <Text style={styles.backLinkText}>Go back</Text>
           </TouchableOpacity>
@@ -143,15 +88,12 @@ export default function ChecklistScreen() {
     );
   }
 
-  // Get estimated cost (only on RecipeSeed, not DrmSeed)
   const estimatedCost = 'estimatedCost' in meal ? meal.estimatedCost : null;
-
-  // Progress value (0-1)
   const progressValue = progress / 100;
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Progress Bar */}
+      {/* Progress Bar (blue) */}
       <ThinProgressBar
         value={progressValue}
         accessibilityLabel={`Cooking progress: ${completedCount} of ${totalSteps} steps`}
@@ -175,7 +117,9 @@ export default function ChecklistScreen() {
               resizeMode="cover"
             />
             <View style={styles.headerText}>
-              <Text style={styles.headerTitle} numberOfLines={1}>{meal.name}</Text>
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {meal.name}
+              </Text>
               <Text style={styles.headerSubtitle}>
                 {completedCount} of {totalSteps} steps
               </Text>
@@ -185,80 +129,51 @@ export default function ChecklistScreen() {
         <View style={styles.headerButton} />
       </View>
 
-      {/* Cook/Prep Toggle */}
-      <View style={styles.toggleContainer}>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            orderMode === 'cook' && styles.toggleButtonActive,
-          ]}
-          onPress={() => setOrderMode('cook')}
-          accessibilityRole="button"
-          accessibilityState={{ selected: orderMode === 'cook' }}
-        >
-          <Text style={[
-            styles.toggleText,
-            orderMode === 'cook' && styles.toggleTextActive,
-          ]}>
-            Cook now
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            orderMode === 'prep' && styles.toggleButtonActive,
-          ]}
-          onPress={() => setOrderMode('prep')}
-          accessibilityRole="button"
-          accessibilityState={{ selected: orderMode === 'prep' }}
-        >
-          <Text style={[
-            styles.toggleText,
-            orderMode === 'prep' && styles.toggleTextActive,
-          ]}>
-            Prep first
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       {/* Steps List */}
-      <ScrollView 
+      <ScrollView
         style={styles.stepsList}
         contentContainerStyle={styles.stepsContent}
       >
-        {orderedSteps.map((step, displayIndex) => (
-          <TouchableOpacity
-            key={`${step.originalIndex}-${orderMode}`}
-            style={styles.stepRow}
-            onPress={() => toggleStep(step.originalIndex)}
-            activeOpacity={0.7}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: step.completed }}
-          >
-            <View style={[
-              styles.stepCheckbox,
-              step.completed && styles.stepCheckboxChecked,
-            ]}>
-              {step.completed && (
-                <Check size={14} color={colors.textInverse} />
-              )}
-            </View>
-            <View style={styles.stepContent}>
-              <Text style={[
-                styles.stepNumber,
-                step.completed && styles.stepNumberCompleted,
-              ]}>
-                Step {displayIndex + 1}
-              </Text>
-              <Text style={[
-                styles.stepText,
-                step.completed && styles.stepTextCompleted,
-              ]}>
-                {step.text}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+        {steps.map((text, index) => {
+          const completed = completedIndices.has(index);
+          return (
+            <TouchableOpacity
+              key={index}
+              style={styles.stepRow}
+              onPress={() => toggleStep(index)}
+              activeOpacity={0.7}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: completed }}
+            >
+              <View
+                style={[
+                  styles.stepCheckbox,
+                  completed && styles.stepCheckboxChecked,
+                ]}
+              >
+                {completed && <Check size={14} color={colors.textInverse} />}
+              </View>
+              <View style={styles.stepContent}>
+                <Text
+                  style={[
+                    styles.stepNumber,
+                    completed && styles.stepNumberCompleted,
+                  ]}
+                >
+                  Step {index + 1}
+                </Text>
+                <Text
+                  style={[
+                    styles.stepText,
+                    completed && styles.stepTextCompleted,
+                  ]}
+                >
+                  {text}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
 
         {/* Meta info at bottom */}
         <View style={styles.metaSection}>
@@ -275,11 +190,18 @@ export default function ChecklistScreen() {
       {/* Done Button */}
       <View style={styles.footer}>
         <PrimaryButton
-          label={allComplete ? "Done" : `${totalSteps - completedCount} steps left`}
+          label={allComplete ? 'Done' : `${totalSteps - completedCount} steps left`}
           onPress={handleDone}
           disabled={!allComplete}
-          icon={<Check size={20} color={allComplete ? colors.textInverse : colors.textMuted} />}
-          accessibilityLabel={allComplete ? "Done cooking" : "Complete all steps first"}
+          icon={
+            <Check
+              size={20}
+              color={allComplete ? colors.textInverse : colors.textMuted}
+            />
+          }
+          accessibilityLabel={
+            allComplete ? 'Done cooking' : 'Complete all steps first'
+          }
         />
       </View>
     </SafeAreaView>
@@ -291,7 +213,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -334,39 +255,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-  // Cook/Prep Toggle
-  toggleContainer: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    backgroundColor: colors.mutedLight,
-    borderRadius: radii.md,
-    padding: 3,
-  },
-  toggleButton: {
-    flex: 1,
-    height: MIN_TOUCH_TARGET - 6,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radii.sm,
-  },
-  toggleButtonActive: {
-    backgroundColor: colors.surface,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  toggleText: {
-    fontSize: typography.sm,
-    fontWeight: typography.medium,
-    color: colors.textMuted,
-  },
-  toggleTextActive: {
-    color: colors.textPrimary,
-  },
-  // Steps list
   stepsList: {
     flex: 1,
   },
@@ -394,8 +282,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   stepCheckboxChecked: {
-    backgroundColor: colors.accentGreen,
-    borderColor: colors.accentGreen,
+    backgroundColor: colors.accentBlue,
+    borderColor: colors.accentBlue,
   },
   stepContent: {
     flex: 1,
@@ -421,7 +309,6 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     opacity: 0.7,
   },
-  // Meta section
   metaSection: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -440,14 +327,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.textMuted,
     marginHorizontal: spacing.sm,
   },
-  // Footer
   footer: {
     padding: spacing.md,
     paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.borderSubtle,
   },
-  // Error state
   centered: {
     flex: 1,
     justifyContent: 'center',

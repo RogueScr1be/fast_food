@@ -230,6 +230,15 @@ Each fresh mount gets `sessionId = 0` (React state resets on mount).
 The ref prevents double-init within the same session (StrictMode).
 Re-entering via replace creates a new mount → new sessionId → re-init.
 
+### Checklist Simplification (Phase 3.0.1, do not re-add)
+
+The Cook/Prep toggle has been removed from the checklist screen.
+Steps always render in recipe-defined order. Do NOT re-introduce
+`orderMode`, `reorderForPrepWithIndices`, or any toggle UI.
+
+Progress and checkbox colors are **blue** (`accentBlue`), not green.
+This applies to both `ThinProgressBar` and `stepCheckboxChecked`.
+
 ### Retired Components (Phase 1.3)
 
 - `components/LockedTransition.tsx` — DELETED. "Locked." overlay is
