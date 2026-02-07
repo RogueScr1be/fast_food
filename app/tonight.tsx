@@ -171,7 +171,7 @@ export default function TonightScreen() {
   const cloneY = useSharedValue(0);
   const cloneW = useSharedValue(0);
   const cloneH = useSharedValue(0);
-  const cloneRadius = useSharedValue(radii.xl);
+  const cloneRadius = useSharedValue<number>(radii.xl);
   const cloneOpacity = useSharedValue(0);
   const scrimOpacity = useSharedValue(0);
 
