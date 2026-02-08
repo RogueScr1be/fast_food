@@ -50,6 +50,11 @@ let nonceCounter = 0;
 
 /**
  * Set pending transition data. Call from Deal before router.push.
+ *
+ * Overwrite policy: last write wins. If called while a pending
+ * transition exists, the old one is discarded (expiry timer cleared,
+ * new nonce assigned). Only the latest set can be consumed.
+ *
  * @param destKey — e.g. `checklist:fancy-1` or `rescue:drm-3`
  */
 export function setPendingHeroTransition(data: {

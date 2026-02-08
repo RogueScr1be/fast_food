@@ -94,7 +94,8 @@ export default function ChecklistScreen() {
   }, []);
 
   const fadeOutClone = useCallback(() => {
-    cloneOpacity.value = withTiming(0, whisper, (finished) => {
+    // 120ms fade (tighter than standard whisper 180ms for snappy finish)
+    cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
       if (finished) runOnJS(setShowClone)(false);
     });
     contentOpacity.value = withTiming(1, { duration: 200 });

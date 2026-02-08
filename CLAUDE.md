@@ -286,6 +286,12 @@ Mode buttons and CTA use a **layered shadow + border** system:
 Do NOT remove the destKey guard. It prevents wrong-screen consumption
 under rapid taps.
 
+Overwrite policy: last `setPendingHeroTransition` wins. Old expiry
+timer is cleared, old pending is discarded. Tested and documented.
+
+Reverse-box clone fade: 120ms (not standard whisper 180ms). Override
+via `{ ...whisper, duration: 120 }`. Total transition ~570ms.
+
 ### Image Readiness Gate Rule (do not remove)
 
 DecisionCard gates all overlays (scrim, text, glass, allergy indicator)
