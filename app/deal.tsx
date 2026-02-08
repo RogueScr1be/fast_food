@@ -238,10 +238,14 @@ export default function DealScreen() {
     resetIdle();
 
     // Set pending transition for the destination screen's clone overlay
+    const destKey = currentDeal.type === 'recipe'
+      ? `checklist:${currentDeal.data.id}`
+      : `rescue:${currentDeal.data.id}`;
+
     setPendingHeroTransition({
       sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
       imageSource: getImageSource(currentDeal.data.imageKey),
-      timestamp: Date.now(),
+      destKey,
     });
 
     if (currentDeal.type === 'recipe') {

@@ -200,9 +200,9 @@ export default function TonightScreen() {
   // Z-axis: background sinks slightly during clone expansion
   const bgDepthStyle = useAnimatedStyle(() => ({
     transform: [
-      { scale: interpolate(scrimOpacity.value, [0, 1], [1, 0.97], Extrapolation.CLAMP) },
+      { scale: interpolate(scrimOpacity.value, [0, 1], [1, 0.985], Extrapolation.CLAMP) },
     ],
-    opacity: interpolate(scrimOpacity.value, [0, 1], [1, 0.88], Extrapolation.CLAMP),
+    opacity: interpolate(scrimOpacity.value, [0, 1], [1, 0.93], Extrapolation.CLAMP),
   }));
 
   // Unmount guard
