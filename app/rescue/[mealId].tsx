@@ -21,6 +21,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withSequence,
   withTiming,
   cancelAnimation,
   runOnJS,
@@ -28,7 +29,7 @@ import Animated, {
 import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
-import { oak, whisper } from '../../lib/ui/motion';
+import { latex, oak, whisper } from '../../lib/ui/motion';
 import { getDrmById } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
 import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
@@ -113,7 +114,7 @@ export default function RescueChecklistScreen() {
     cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
       if (finished) runOnJS(setShowClone)(false);
     });
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
@@ -127,7 +128,8 @@ export default function RescueChecklistScreen() {
     cloneH.value = withSpring(rect.height, oak);
     cloneRadius.value = withSpring(0, oak);
 
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    // Fade in content (Whisper)
+    contentOpacity.value = withTiming(1, whisper);
     // Delay fade until Oak spring is fully settled (~380ms + margin)
     setTimeout(() => {
       if (mountedRef.current) fadeOutClone();
@@ -156,7 +158,35 @@ export default function RescueChecklistScreen() {
   const completedCount = completedIndices.size;
   const progress = totalSteps > 0 ? completedCount / totalSteps : 0;
   const allComplete = completedCount === totalSteps && totalSteps > 0;
-  
+
+  // Done button bloom
+  const doneBloom = useSharedValue(1);
+  const wasCompleteRef = useRef(false);
+  const bloomMountedRef = useRef(false);
+
+  useEffect(() => {
+    if (!bloomMountedRef.current) {
+      bloomMountedRef.current = true;
+      wasCompleteRef.current = allComplete;
+      return;
+    }
+    if (allComplete && !wasCompleteRef.current) {
+      cancelAnimation(doneBloom);
+      doneBloom.value = withSequence(
+        withSpring(1.04, latex),
+        withSpring(1, latex),
+      );
+    } else if (!allComplete && wasCompleteRef.current) {
+      cancelAnimation(doneBloom);
+      doneBloom.value = 1;
+    }
+    wasCompleteRef.current = allComplete;
+  }, [allComplete]);
+
+  const doneBloomStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: doneBloom.value }],
+  }));
+
   /**
    * Toggle step completion
    */
@@ -260,15 +290,15 @@ export default function RescueChecklistScreen() {
         ))}
       </ScrollView>
 
-      {/* Done Button */}
-      <View style={styles.footer}>
+      {/* Done Button with bloom */}
+      <Animated.View style={[styles.footer, doneBloomStyle]}>
         <PrimaryButton
           label={allComplete ? 'Done' : `${completedCount}/${totalSteps} steps`}
           onPress={handleDone}
           tone="accept"
           disabled={!allComplete}
         />
-      </View>
+      </Animated.View>
 
       </Animated.View>
 

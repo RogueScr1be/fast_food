@@ -19,6 +19,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withSequence,
   withTiming,
   cancelAnimation,
   runOnJS,
@@ -27,7 +28,7 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
-import { oak, whisper } from '../../lib/ui/motion';
+import { latex, oak, whisper } from '../../lib/ui/motion';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
 import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
@@ -98,7 +99,7 @@ export default function ChecklistScreen() {
     cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
       if (finished) runOnJS(setShowClone)(false);
     });
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
@@ -113,8 +114,8 @@ export default function ChecklistScreen() {
     cloneH.value = withSpring(rect.height, oak);
     cloneRadius.value = withSpring(0, oak);
 
-    // Fade in content underneath
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    // Fade in content underneath (Whisper)
+    contentOpacity.value = withTiming(1, whisper);
 
     // Fade out clone after spring settles (~380ms)
     // Delay fade until Oak spring is fully settled (~380ms + margin)
@@ -146,6 +147,36 @@ export default function ChecklistScreen() {
   const completedCount = completedIndices.size;
   const progress = calculateProgress(completedCount, totalSteps);
   const allComplete = completedCount === totalSteps && totalSteps > 0;
+
+  // Done button bloom: scale pulse on completion edge (false → true)
+  const doneBloom = useSharedValue(1);
+  const wasCompleteRef = useRef(false);
+  const bloomMountedRef = useRef(false);
+
+  useEffect(() => {
+    if (!bloomMountedRef.current) {
+      bloomMountedRef.current = true;
+      wasCompleteRef.current = allComplete;
+      return;
+    }
+    if (allComplete && !wasCompleteRef.current) {
+      // Edge: just completed → bloom
+      cancelAnimation(doneBloom);
+      doneBloom.value = withSequence(
+        withSpring(1.04, latex),
+        withSpring(1, latex),
+      );
+    } else if (!allComplete && wasCompleteRef.current) {
+      // Unchecked → reset immediately
+      cancelAnimation(doneBloom);
+      doneBloom.value = 1;
+    }
+    wasCompleteRef.current = allComplete;
+  }, [allComplete]);
+
+  const doneBloomStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: doneBloom.value }],
+  }));
 
   const toggleStep = useCallback((index: number) => {
     setCompletedIndices(prev => {
@@ -252,8 +283,8 @@ export default function ChecklistScreen() {
         </View>
       </ScrollView>
 
-      {/* Done Button */}
-      <View style={styles.footer}>
+      {/* Done Button with bloom */}
+      <Animated.View style={[styles.footer, doneBloomStyle]}>
         <PrimaryButton
           label={allComplete ? 'Done' : `${totalSteps - completedCount} steps left`}
           onPress={handleDone}
@@ -268,7 +299,7 @@ export default function ChecklistScreen() {
             allComplete ? 'Done cooking' : 'Complete all steps first'
           }
         />
-      </View>
+      </Animated.View>
 
       </Animated.View>
 

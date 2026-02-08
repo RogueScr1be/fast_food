@@ -289,6 +289,9 @@ export default function TonightScreen() {
           hasNavigated.current = false;
           if (mountedRef.current) setTransitionMode(mode);
 
+          // Exception: uses timing (not Oak spring) because the callback-based
+          // nav timing requires deterministic duration. Interruptible via
+          // cancelAnimation + finished===false callback.
           const timingConfig = {
             duration: EXPAND_DURATION,
             easing: Easing.bezier(0.25, 0.1, 0.25, 1),

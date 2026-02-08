@@ -19,14 +19,14 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { colors, typography } from '../lib/ui/theme';
+import { whisper } from '../lib/ui/motion';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const REVEAL_DURATION = 700;  // ms — handwriting reveal
+const REVEAL_DURATION = 700;  // Exception: longer than whisperSlow (350ms) for handwriting feel
 const HOLD_DURATION = 500;    // ms — hold after reveal before dismiss
-const FADE_DURATION = 200;    // ms — overlay fade out
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,12 +59,11 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
   }, []);
 
   const doDismiss = useCallback(() => {
-    // Fade out
-    overlayOpacity.value = withTiming(0, { duration: FADE_DURATION });
-    // Wait for fade, then call parent
+    // Fade out (Whisper)
+    overlayOpacity.value = withTiming(0, whisper);
     dismissTimer.current = setTimeout(() => {
       if (mountedRef.current) onDismiss();
-    }, FADE_DURATION + 30);
+    }, whisper.duration + 30);
   }, [onDismiss, overlayOpacity]);
 
   // Edge detection: only animate on false → true
@@ -75,7 +74,7 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
       cancelAnimation(overlayOpacity);
       cancelAnimation(revealWidth);
 
-      overlayOpacity.value = withTiming(1, { duration: 150 });
+      overlayOpacity.value = withTiming(1, whisper); // fade in
       revealWidth.value = 0;
       revealWidth.value = withTiming(1, {
         duration: REVEAL_DURATION,
