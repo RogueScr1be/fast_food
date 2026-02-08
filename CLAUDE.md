@@ -332,6 +332,18 @@ does `scale: 1.0 → 1.04 → 1.0` using `withSequence(withSpring(1.04, latex), 
 - Applied to both checklist and rescue screens
 - No confetti, no sound, no new copy
 
+### Motion Audit Complete (Phase E, do not regress)
+
+Every `withSpring`/`withTiming` call in shipped code has been audited.
+Status: all use named profiles OR have documented inline exceptions.
+
+Documented exceptions (do not "fix" these — they're intentional):
+- Tonight clone expansion: `withTiming(350ms, bezier)` — needs deterministic
+  duration for callback-based nav. Interruptible via cancelAnimation.
+- Idle affordance: custom 600ms/800ms timings — pedagogical, not UI response.
+- ChecklistStep orbit: 300ms linear — loading indicator, not physical motion.
+- GreatJobOverlay reveal: 700ms — handwriting feel, longer than whisperSlow.
+
 ### Checklist Animation Timings (Phase 3.0.2, do not slow down)
 
 ChecklistStep component uses FAST timings — do not increase:

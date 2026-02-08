@@ -99,7 +99,7 @@ export default function ChecklistScreen() {
     cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
       if (finished) runOnJS(setShowClone)(false);
     });
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
@@ -114,8 +114,8 @@ export default function ChecklistScreen() {
     cloneH.value = withSpring(rect.height, oak);
     cloneRadius.value = withSpring(0, oak);
 
-    // Fade in content underneath
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    // Fade in content underneath (Whisper)
+    contentOpacity.value = withTiming(1, whisper);
 
     // Fade out clone after spring settles (~380ms)
     // Delay fade until Oak spring is fully settled (~380ms + margin)

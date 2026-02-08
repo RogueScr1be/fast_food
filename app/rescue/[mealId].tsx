@@ -114,7 +114,7 @@ export default function RescueChecklistScreen() {
     cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
       if (finished) runOnJS(setShowClone)(false);
     });
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
@@ -128,7 +128,8 @@ export default function RescueChecklistScreen() {
     cloneH.value = withSpring(rect.height, oak);
     cloneRadius.value = withSpring(0, oak);
 
-    contentOpacity.value = withTiming(1, { duration: 200 });
+    // Fade in content (Whisper)
+    contentOpacity.value = withTiming(1, whisper);
     // Delay fade until Oak spring is fully settled (~380ms + margin)
     setTimeout(() => {
       if (mountedRef.current) fadeOutClone();
