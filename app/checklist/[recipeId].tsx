@@ -151,8 +151,14 @@ export default function ChecklistScreen() {
   // Done button bloom: scale pulse on completion edge (false → true)
   const doneBloom = useSharedValue(1);
   const wasCompleteRef = useRef(false);
+  const bloomMountedRef = useRef(false);
 
   useEffect(() => {
+    if (!bloomMountedRef.current) {
+      bloomMountedRef.current = true;
+      wasCompleteRef.current = allComplete;
+      return;
+    }
     if (allComplete && !wasCompleteRef.current) {
       // Edge: just completed → bloom
       cancelAnimation(doneBloom);

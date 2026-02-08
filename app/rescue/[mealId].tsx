@@ -161,8 +161,14 @@ export default function RescueChecklistScreen() {
   // Done button bloom
   const doneBloom = useSharedValue(1);
   const wasCompleteRef = useRef(false);
+  const bloomMountedRef = useRef(false);
 
   useEffect(() => {
+    if (!bloomMountedRef.current) {
+      bloomMountedRef.current = true;
+      wasCompleteRef.current = allComplete;
+      return;
+    }
     if (allComplete && !wasCompleteRef.current) {
       cancelAnimation(doneBloom);
       doneBloom.value = withSequence(
