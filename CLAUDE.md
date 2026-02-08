@@ -321,6 +321,17 @@ This prevents a black void flash on first render.
 - The hero `<Image />` always renders immediately (not gated).
 - No fade animations — the gate is instantaneous.
 
+### Done Button Bloom (Phase D, do not make louder)
+
+When all checklist steps complete (edge false→true), the Done button
+does `scale: 1.0 → 1.04 → 1.0` using `withSequence(withSpring(1.04, latex), withSpring(1, latex))`.
+- Fires on edge only (wasCompleteRef tracks previous state)
+- Does NOT fire on screen mount if already complete
+- Uncheck resets scale to 1 immediately (cancelAnimation + set 1)
+- Recheck triggers bloom again (edge detection resets)
+- Applied to both checklist and rescue screens
+- No confetti, no sound, no new copy
+
 ### Checklist Animation Timings (Phase 3.0.2, do not slow down)
 
 ChecklistStep component uses FAST timings — do not increase:

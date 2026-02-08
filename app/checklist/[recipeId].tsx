@@ -19,6 +19,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withSequence,
   withTiming,
   cancelAnimation,
   runOnJS,
@@ -27,7 +28,7 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Check } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../../lib/ui/theme';
-import { oak, whisper } from '../../lib/ui/motion';
+import { latex, oak, whisper } from '../../lib/ui/motion';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
 import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
@@ -147,6 +148,30 @@ export default function ChecklistScreen() {
   const progress = calculateProgress(completedCount, totalSteps);
   const allComplete = completedCount === totalSteps && totalSteps > 0;
 
+  // Done button bloom: scale pulse on completion edge (false → true)
+  const doneBloom = useSharedValue(1);
+  const wasCompleteRef = useRef(false);
+
+  useEffect(() => {
+    if (allComplete && !wasCompleteRef.current) {
+      // Edge: just completed → bloom
+      cancelAnimation(doneBloom);
+      doneBloom.value = withSequence(
+        withSpring(1.04, latex),
+        withSpring(1, latex),
+      );
+    } else if (!allComplete && wasCompleteRef.current) {
+      // Unchecked → reset immediately
+      cancelAnimation(doneBloom);
+      doneBloom.value = 1;
+    }
+    wasCompleteRef.current = allComplete;
+  }, [allComplete]);
+
+  const doneBloomStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: doneBloom.value }],
+  }));
+
   const toggleStep = useCallback((index: number) => {
     setCompletedIndices(prev => {
       const next = new Set(prev);
@@ -252,8 +277,8 @@ export default function ChecklistScreen() {
         </View>
       </ScrollView>
 
-      {/* Done Button */}
-      <View style={styles.footer}>
+      {/* Done Button with bloom */}
+      <Animated.View style={[styles.footer, doneBloomStyle]}>
         <PrimaryButton
           label={allComplete ? 'Done' : `${totalSteps - completedCount} steps left`}
           onPress={handleDone}
@@ -268,7 +293,7 @@ export default function ChecklistScreen() {
             allComplete ? 'Done cooking' : 'Complete all steps first'
           }
         />
-      </View>
+      </Animated.View>
 
       </Animated.View>
 
