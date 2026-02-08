@@ -332,10 +332,8 @@ export default function TonightScreen() {
 
   const handleChoose = useCallback(() => {
     if (isTransitioning.current) return;
-    let modeToUse = selectedModeLocal;
-    if (!modeToUse) {
-      modeToUse = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
-    }
+    // Always uniform random — never reuse prior selection
+    const modeToUse = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
     setSelectedModeLocal(modeToUse);
     setSelectedMode(modeToUse);
     resetTonight();
@@ -500,6 +498,7 @@ export default function TonightScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Allergies</Text>
               <TouchableOpacity
@@ -768,12 +767,20 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(245, 245, 245, 0.97)',
     borderTopLeftRadius: radii.xl,
     borderTopRightRadius: radii.xl,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.sm,
     paddingBottom: Platform.OS === 'ios' ? spacing.xxl : spacing.xl,
     maxHeight: '70%',
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
   },
   modalHeader: {
     flexDirection: 'row',
