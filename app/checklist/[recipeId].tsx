@@ -54,7 +54,7 @@ export default function ChecklistScreen() {
   // -----------------------------------------------------------------------
 
   const [transition] = useState<PendingHeroTransition | null>(() =>
-    consumePendingHeroTransition(),
+    recipeId ? consumePendingHeroTransition(`checklist:${recipeId}`) : null,
   );
   const [showClone, setShowClone] = useState(transition !== null);
   const mountedRef = useRef(true);
@@ -116,9 +116,10 @@ export default function ChecklistScreen() {
     contentOpacity.value = withTiming(1, { duration: 200 });
 
     // Fade out clone after spring settles (~380ms)
+    // Delay fade until Oak spring is fully settled (~380ms + margin)
     setTimeout(() => {
       if (mountedRef.current) fadeOutClone();
-    }, 350);
+    }, 450);
   }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
 
   const cloneStyle = useAnimatedStyle(() => ({

@@ -73,7 +73,7 @@ export default function RescueChecklistScreen() {
   // -----------------------------------------------------------------------
 
   const [transition] = useState<PendingHeroTransition | null>(() =>
-    consumePendingHeroTransition(),
+    mealId ? consumePendingHeroTransition(`rescue:${mealId}`) : null,
   );
   const [showClone, setShowClone] = useState(transition !== null);
   const mountedRef = useRef(true);
@@ -127,9 +127,10 @@ export default function RescueChecklistScreen() {
     cloneRadius.value = withSpring(0, oak);
 
     contentOpacity.value = withTiming(1, { duration: 200 });
+    // Delay fade until Oak spring is fully settled (~380ms + margin)
     setTimeout(() => {
       if (mountedRef.current) fadeOutClone();
-    }, 350);
+    }, 450);
   }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
 
   const cloneStyle = useAnimatedStyle(() => ({

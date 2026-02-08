@@ -273,6 +273,19 @@ Mode buttons and CTA use a **layered shadow + border** system:
 - Android: `elevation: 4` on outer, border compensates for shadow gap
 - Clone overlay matches: white bg + blue border + blue text
 
+### Hero Transition Singleton Rule (do not weaken)
+
+`lib/ui/heroTransition.ts` uses destKey matching + nonce + expiry:
+- `setPendingHeroTransition({ ..., destKey: 'checklist:fancy-1' })`
+- `consumePendingHeroTransition('checklist:fancy-1')` — only returns
+  if destKey matches AND not expired (2s). Returns null on mismatch
+  WITHOUT clearing pending (another screen may need it).
+- Single-consume: first match clears pending. Second returns null.
+- Expiry timer auto-clears after 2000ms.
+
+Do NOT remove the destKey guard. It prevents wrong-screen consumption
+under rapid taps.
+
 ### Image Readiness Gate Rule (do not remove)
 
 DecisionCard gates all overlays (scrim, text, glass, allergy indicator)
