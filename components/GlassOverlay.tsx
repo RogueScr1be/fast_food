@@ -109,12 +109,12 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     const effectiveCollapsed = collapsedHeight ?? DEFAULT_COLLAPSED_HEIGHT;
 
     // Compute dimension-dependent values
+    // ALL snap caps use containerHeight as basis (not windowHeight)
     const containerHeight = Math.round(windowHeight * 0.92);
-    const halfHeight = Math.round(windowHeight * 0.5);
 
-    // Shared values for snap points (worklet-safe, updated on dimension change)
+    // Shared values for snap points (worklet-safe)
     const snap0 = useSharedValue(containerHeight - effectiveCollapsed);
-    const snap1 = useSharedValue(containerHeight - halfHeight);
+    const snap1 = useSharedValue(containerHeight - Math.round(containerHeight * 0.5));
     const snap2 = useSharedValue(0);
     const containerH = useSharedValue(containerHeight);
 
@@ -127,22 +127,30 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     /** Padding below content when clamped */
     const CONTENT_PADDING = 24;
 
-    const computeSnap1 = useCallback((containerH: number, halfH: number) => {
+    /**
+     * Compute snap1 (Level 1 stop).
+     * capPx = 50% of containerHeight (NOT windowHeight)
+     * contentNeeded = collapsedHeight + measured children + padding
+     * level1Height = min(capPx, contentNeeded)
+     * snap1 = containerHeight - level1Height
+     */
+    const computeSnap1 = useCallback((cH: number) => {
+      const capPx = Math.round(cH * 0.5);
       if (measuredContentH.current > 0) {
-        const contentNeeded = measuredContentH.current + effectiveCollapsed + CONTENT_PADDING;
-        return containerH - Math.min(halfH, contentNeeded);
+        const contentNeeded = effectiveCollapsed + measuredContentH.current + CONTENT_PADDING;
+        const level1Height = Math.min(capPx, contentNeeded);
+        return cH - level1Height;
       }
-      return containerH - halfH;
+      return cH - capPx;
     }, [effectiveCollapsed]);
 
     // Recompute snap points when dimensions or collapsedHeight change
     useEffect(() => {
       const newContainerH = Math.round(windowHeight * 0.92);
-      const newHalfH = Math.round(windowHeight * 0.5);
 
       containerH.value = newContainerH;
       snap0.value = newContainerH - effectiveCollapsed;
-      snap1.value = computeSnap1(newContainerH, newHalfH);
+      snap1.value = computeSnap1(newContainerH);
       snap2.value = 0;
 
       const target =
@@ -153,17 +161,14 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     /** Called when Level 1 content (children) measures its height */
     const handleContentLayout = useCallback((e: { nativeEvent: { layout: { height: number } } }) => {
       const h = e.nativeEvent.layout.height;
-      if (Math.abs(h - measuredContentH.current) < 2) return; // no meaningful change
+      if (Math.abs(h - measuredContentH.current) < 2) return;
       measuredContentH.current = h;
 
       const cH = Math.round(windowHeight * 0.92);
-      const halfH = Math.round(windowHeight * 0.5);
-      const newSnap1 = computeSnap1(cH, halfH);
+      const newSnap1 = computeSnap1(cH);
 
-      // Only update if significantly different (>4px) to avoid micro-jitter
       if (Math.abs(snap1.value - newSnap1) > 4) {
         snap1.value = newSnap1;
-        // If currently at Level 1 and not being dragged, re-snap
         if (level === 1) {
           translateY.value = withSpring(newSnap1, SPRING_CONFIG);
         }
@@ -207,50 +212,52 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
       .onEnd((e) => {
         const cur = translateY.value;
         const vy = e.velocityY;
-        const points = [snap2.value, snap1.value, snap0.value];
-        const levels: readonly (0 | 1 | 2)[] = [2, 1, 0];
 
-        let targetIdx: number;
+        // Level 2 deep-pull gate: must drag past snap1 by 80+ px
+        // AND velocity > 900px/s upward. Otherwise snap to Level 0 or 1.
+        const DEEP_PULL_EXTRA = 80;
+        const DEEP_PULL_VELOCITY = 900;
+        const pastSnap1 = snap1.value - cur; // positive = past snap1 toward L2
 
-        // Velocity gate: fast flick snaps in velocity direction
-        if (Math.abs(vy) > VELOCITY_SNAP_THRESHOLD) {
+        let targetLevel: 0 | 1 | 2;
+
+        // Deep pull to Level 2: very deliberate gesture required
+        if (pastSnap1 > DEEP_PULL_EXTRA && vy < -DEEP_PULL_VELOCITY) {
+          targetLevel = 2;
+        }
+        // Velocity gate: flick up → Level 1, flick down → Level 0
+        else if (Math.abs(vy) > VELOCITY_SNAP_THRESHOLD) {
           if (vy < 0) {
-            // Flick up → expand (lower translateY = more visible)
-            targetIdx = 0; // level 2 (fully open)
-            // Find the next level UP from current position
-            for (let i = 0; i < points.length; i++) {
-              if (points[i] < cur) { targetIdx = i; break; }
-            }
+            // Flick up → Level 1 (NOT Level 2)
+            targetLevel = cur < snap0.value ? 1 : 0;
           } else {
-            // Flick down → collapse (higher translateY = less visible)
-            targetIdx = points.length - 1; // level 0
-            for (let i = points.length - 1; i >= 0; i--) {
-              if (points[i] > cur) { targetIdx = i; break; }
-            }
+            // Flick down → Level 0
+            targetLevel = 0;
           }
         }
-        // Hysteresis: if still close to starting snap, stay there
+        // Hysteresis: if close to starting snap, stay
         else if (Math.abs(cur - currentLevelSnap.value) < HYSTERESIS_PX) {
-          targetIdx = points.indexOf(currentLevelSnap.value);
-          if (targetIdx === -1) targetIdx = points.length - 1;
+          // Find which level the starting snap corresponds to
+          if (Math.abs(currentLevelSnap.value - snap0.value) < 5) targetLevel = 0;
+          else if (Math.abs(currentLevelSnap.value - snap1.value) < 5) targetLevel = 1;
+          else targetLevel = 2;
         }
-        // Default: nearest snap point
+        // Default: nearest of Level 0 or Level 1 only
         else {
-          targetIdx = 0;
-          let minDist = Math.abs(cur - points[0]);
-          for (let i = 1; i < points.length; i++) {
-            const dist = Math.abs(cur - points[i]);
-            if (dist < minDist) {
-              minDist = dist;
-              targetIdx = i;
-            }
-          }
+          const dist0 = Math.abs(cur - snap0.value);
+          const dist1 = Math.abs(cur - snap1.value);
+          targetLevel = dist1 < dist0 ? 1 : 0;
         }
 
-        translateY.value = withSpring(points[targetIdx], SPRING_CONFIG);
+        const targetY =
+          targetLevel === 0 ? snap0.value :
+          targetLevel === 1 ? snap1.value :
+          snap2.value;
+
+        translateY.value = withSpring(targetY, SPRING_CONFIG);
 
         if (onLevelChange) {
-          runOnJS(onLevelChange)(levels[targetIdx]);
+          runOnJS(onLevelChange)(targetLevel);
         }
       });
 
@@ -446,7 +453,6 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   contentSection: {
-    flex: 1,
     paddingHorizontal: spacing.md,
   },
   expandedSection: {
