@@ -137,16 +137,18 @@ explicitly advances.
 That is Phase 1.3 scope. Commit your current work, note the dependency, and
 move to the correct phase.
 
-### Idle Affordance Behavior (decided, do not re-debate)
+### Idle Affordance Behavior (Phase C, do not re-debate)
 
-After ~7 s of inactivity on a deal card:
-- **Nudge** the card horizontally (~12 px pulse, returns to 0).
-- **Lift** the glass overlay slightly (~40 px) via `externalLiftY`.
+Staged, first-session-only silent onboarding:
+- **4s idle:** glass overlay lifts (~40px) — teaches panel existence
+- **+1.5s:** card nudges horizontally (~12px pulse) — teaches swipe
+- **One-shot:** fires once per app lifetime. `hasSeenAffordance` persisted
+  in AsyncStorage (`ff:v1:hasSeenAffordance`). Any user interaction
+  (swipe, accept, overlay drag) sets it true and disables forever.
 - **Do NOT change `overlayLevel`** — level stays at 0. The lift is purely
-  visual and teaches the user that the glass can be dragged, without
-  actually opening content.
-- On any user interaction (swipe, tap, overlay drag), call `resetIdle()`.
-- Idle triggers **once per card**; timer resets when a new card is dealt.
+  visual.
+- Hook does NOT manage persistence. `deal.tsx` reads the flag and passes
+  `enabled` to the hook. `markAffordanceSeen()` writes the flag.
 
 ### Gesture Composition Rule (decided Phase 1.3.1, do not regress)
 

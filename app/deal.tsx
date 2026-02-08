@@ -61,6 +61,7 @@ import type { OverlayLevel } from '../components/GlassOverlay';
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
 import { getImageSource } from '../lib/seeds/images';
 import { setPendingHeroTransition } from '../lib/ui/heroTransition';
+import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -120,15 +121,34 @@ export default function DealScreen() {
   const insets = useSafeAreaInsets();
 
   // ---------------------------------------------------------------------------
-  // Idle affordance — nudge card + lift glass after ~7 s
-  // Resets on card change (cardKey) and on any user interaction (resetIdle)
+  // Idle affordance — staged silent onboarding (first session only)
   // ---------------------------------------------------------------------------
 
+  const [affordanceEligible, setAffordanceEligible] = useState(false);
+
+  // Check persistence on mount
+  useEffect(() => {
+    let alive = true;
+    getHasSeenAffordance().then(seen => {
+      if (alive && !seen) setAffordanceEligible(true);
+    });
+    return () => { alive = false; };
+  }, []);
+
   const { nudgeX, overlayLiftY, resetIdle } = useIdleAffordance({
-    enabled: !isLoading && !noMoreRecipes && currentDeal !== null,
+    enabled: affordanceEligible && !isLoading && !noMoreRecipes && currentDeal !== null,
   });
 
-  // Reset idle timer whenever a new card is dealt
+  /** Mark affordance as seen + cancel. Called on any user interaction. */
+  const markAffordanceSeen = useCallback(() => {
+    if (affordanceEligible) {
+      setAffordanceEligible(false);
+      setHasSeenAffordance();
+    }
+    resetIdle();
+  }, [affordanceEligible, resetIdle]);
+
+  // Reset idle on new card (but don't mark seen — just cancel current timers)
   useEffect(() => {
     resetIdle();
   }, [cardKey]);
@@ -222,20 +242,20 @@ export default function DealScreen() {
   // Handlers
   // ---------------------------------------------------------------------------
 
-  /** Swipe to pass — reset idle, increment, deal next */
+  /** Swipe to pass — mark affordance seen, increment, deal next */
   const handlePass = useCallback((_direction: PassDirection) => {
-    resetIdle();
+    markAffordanceSeen();
     if (currentDeal) addToDealHistory(currentDeal.data.id);
     incrementPassCount();
     setTimeout(() => dealNextCard(), 50);
-  }, [currentDeal, dealNextCard, resetIdle]);
+  }, [currentDeal, dealNextCard, markAffordanceSeen]);
 
-  /** Accept — set up reverse-box transition, then navigate */
+  /** Accept — mark seen, set up reverse-box transition, then navigate */
   const { width: dealScreenW, height: dealScreenH } = useWindowDimensions();
 
   const handleAccept = useCallback(() => {
     if (!currentDeal) return;
-    resetIdle();
+    markAffordanceSeen();
 
     // Set pending transition for the destination screen's clone overlay
     const destKey = currentDeal.type === 'recipe'
@@ -259,19 +279,19 @@ export default function DealScreen() {
         params: { mealId: currentDeal.data.id },
       });
     }
-  }, [currentDeal, resetIdle, dealScreenW, dealScreenH]);
+  }, [currentDeal, markAffordanceSeen, dealScreenW, dealScreenH]);
 
   /** Overlay level change from glass handle drag */
   const handleOverlayLevelChange = useCallback((level: OverlayLevel) => {
-    resetIdle();
+    markAffordanceSeen();
     setOverlayLevel(level);
-  }, [resetIdle]);
+  }, [markAffordanceSeen]);
 
-  /** Legacy toggle for backward compat (shouldn't fire in new flow) */
+  /** Legacy toggle for backward compat */
   const handleToggleExpand = useCallback(() => {
-    resetIdle();
+    markAffordanceSeen();
     setOverlayLevel(prev => (prev === 0 ? 1 : 0));
-  }, [resetIdle]);
+  }, [markAffordanceSeen]);
 
   /** Reset and start over */
   const handleShuffle = useCallback(() => {
