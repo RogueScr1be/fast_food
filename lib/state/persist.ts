@@ -14,6 +14,7 @@ const KEYS = {
   selectedMode: `ff:${STORAGE_VERSION}:selectedMode`,
   constraints: `ff:${STORAGE_VERSION}:constraints`,
   excludeAllergens: `ff:${STORAGE_VERSION}:excludeAllergens`,
+  hasSeenAffordance: `ff:${STORAGE_VERSION}:hasSeenAffordance`,
 } as const;
 
 /**
@@ -156,6 +157,34 @@ export async function clearPrefs(): Promise<void> {
   } catch (error) {
     // Log but don't throw
     console.warn('[persist] Failed to clear preferences:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Affordance flag (first-run onboarding)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if user has seen the idle affordance. Default false.
+ */
+export async function getHasSeenAffordance(): Promise<boolean> {
+  try {
+    const val = await AsyncStorage.getItem(KEYS.hasSeenAffordance);
+    return val === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark that user has seen (or interacted before) the idle affordance.
+ * Once set, the affordance never fires again.
+ */
+export async function setHasSeenAffordance(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.hasSeenAffordance, 'true');
+  } catch {
+    // Silent — non-critical
   }
 }
 
