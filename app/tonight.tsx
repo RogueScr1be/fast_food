@@ -332,10 +332,8 @@ export default function TonightScreen() {
 
   const handleChoose = useCallback(() => {
     if (isTransitioning.current) return;
-    let modeToUse = selectedModeLocal;
-    if (!modeToUse) {
-      modeToUse = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
-    }
+    // Always uniform random — never reuse prior selection
+    const modeToUse = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
     setSelectedModeLocal(modeToUse);
     setSelectedMode(modeToUse);
     resetTonight();
