@@ -12,8 +12,8 @@
  *   wins when horizontal. No PanResponder anywhere.
  *
  * Image:
- *   expo-image with contentFit="cover" contentPosition="bottom" so food
- *   images focus on the bottom (plate) rather than the top (empty space).
+ *   expo-image with contentFit="cover" always (full-bleed, no letterboxing).
+ *   contentPosition="bottom" for safe-frame, "center" for default.
  *
  * Variant:
  *   "default" — cool scrim, blue accept CTA
@@ -238,11 +238,11 @@ export function DecisionCard({
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;
 
-  // Log once per recipe when using fallback framing (non-safe-frame)
+  // Warn once per recipe when using fallback framing (center, non-safe-frame)
   const loggedFramingRef = useRef<string | null>(null);
   if (!useSafeFrame && loggedFramingRef.current !== recipe.id) {
     loggedFramingRef.current = recipe.id;
-    // Intentionally non-spammy: once per recipe ID per component instance
+    console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.imageKey });
   }
 
   // -----------------------------------------------------------------------
@@ -305,8 +305,8 @@ export function DecisionCard({
           <Animated.View style={[StyleSheet.absoluteFill, heroParallaxStyle]}>
             <Image
               source={imageSource}
-              style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
-              contentFit={useSafeFrame ? 'contain' : 'cover'}
+              style={styles.heroImage}
+              contentFit="cover"
               contentPosition={useSafeFrame ? 'bottom' : 'center'}
               accessibilityLabel={`Photo of ${recipe.name}`}
               onLoad={handleImageLoad}
@@ -433,17 +433,6 @@ const styles = StyleSheet.create({
     right: '1.5%',
     bottom: '1.5%',
     borderRadius: 4,
-  },
-  // Safe frame: contain + slight scale-up to reduce letterboxing.
-  // Shows the full dish without clipping; dark bg fills any gaps.
-  heroImageSafe: {
-    position: 'absolute',
-    top: '-3%',
-    left: '-3%',
-    right: '-3%',
-    bottom: '-3%',
-    // Negative insets expand the contain area ~6%, so the image
-    // scales up slightly while still fitting the full dish.
   },
   scrim: {
     position: 'absolute',
