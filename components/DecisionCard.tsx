@@ -49,7 +49,7 @@ import {
 } from '../lib/ui/theme';
 import { latex } from '../lib/ui/motion';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
-import { getImageSource } from '../lib/seeds/images';
+import { getImageSourceSafe } from '../lib/seeds/images';
 import { WhyWhisper } from './WhyWhisper';
 import { GlassOverlay, OverlayLevel } from './GlassOverlay';
 import type { GlassOverlayRef } from './GlassOverlay';
@@ -227,11 +227,23 @@ export function DecisionCard({
   // -----------------------------------------------------------------------
 
   const estimatedCost =
-    'estimatedCost' in recipe ? recipe.estimatedCost : null;
-  const imageSource = getImageSource(recipe.imageKey);
+    'estimatedCost' in recipe ? (recipe as any).estimatedCost as string : null;
+  const imageSource = getImageSourceSafe({
+    imageKey: recipe.imageKey,
+    recipeId: recipe.id,
+    mode: modeLabel,
+    isRescue: variant === 'rescue',
+  });
   const allergenCount = recipe.allergens.length;
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;
+
+  // Log once per recipe when using fallback framing (non-safe-frame)
+  const loggedFramingRef = useRef<string | null>(null);
+  if (!useSafeFrame && loggedFramingRef.current !== recipe.id) {
+    loggedFramingRef.current = recipe.id;
+    // Intentionally non-spammy: once per recipe ID per component instance
+  }
 
   // -----------------------------------------------------------------------
   // Image readiness gate — prevent black void on first render
@@ -295,7 +307,7 @@ export function DecisionCard({
               source={imageSource}
               style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
               contentFit={useSafeFrame ? 'contain' : 'cover'}
-              contentPosition="bottom"
+              contentPosition={useSafeFrame ? 'bottom' : 'center'}
               accessibilityLabel={`Photo of ${recipe.name}`}
               onLoad={handleImageLoad}
             />
