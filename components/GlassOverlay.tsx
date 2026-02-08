@@ -19,7 +19,7 @@
  *   parent (DecisionCard) can compose it with Gesture.Exclusive().
  */
 
-import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import {
   View,
   Text,
@@ -122,6 +122,19 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
     const gestureStartY = useSharedValue(0);
     const isFirstRender = useRef(true);
 
+    // Content height measurement for Level 1 clamp
+    const measuredContentH = useRef(0);
+    /** Padding below content when clamped */
+    const CONTENT_PADDING = 24;
+
+    const computeSnap1 = useCallback((containerH: number, halfH: number) => {
+      if (measuredContentH.current > 0) {
+        const contentNeeded = measuredContentH.current + effectiveCollapsed + CONTENT_PADDING;
+        return containerH - Math.min(halfH, contentNeeded);
+      }
+      return containerH - halfH;
+    }, [effectiveCollapsed]);
+
     // Recompute snap points when dimensions or collapsedHeight change
     useEffect(() => {
       const newContainerH = Math.round(windowHeight * 0.92);
@@ -129,14 +142,33 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
 
       containerH.value = newContainerH;
       snap0.value = newContainerH - effectiveCollapsed;
-      snap1.value = newContainerH - newHalfH;
+      snap1.value = computeSnap1(newContainerH, newHalfH);
       snap2.value = 0;
 
-      // Re-snap to current level immediately (no spring on dimension change)
       const target =
         level === 0 ? snap0.value : level === 1 ? snap1.value : snap2.value;
       translateY.value = target;
     }, [windowHeight, effectiveCollapsed]);
+
+    /** Called when Level 1 content (children) measures its height */
+    const handleContentLayout = useCallback((e: { nativeEvent: { layout: { height: number } } }) => {
+      const h = e.nativeEvent.layout.height;
+      if (Math.abs(h - measuredContentH.current) < 2) return; // no meaningful change
+      measuredContentH.current = h;
+
+      const cH = Math.round(windowHeight * 0.92);
+      const halfH = Math.round(windowHeight * 0.5);
+      const newSnap1 = computeSnap1(cH, halfH);
+
+      // Only update if significantly different (>4px) to avoid micro-jitter
+      if (Math.abs(snap1.value - newSnap1) > 4) {
+        snap1.value = newSnap1;
+        // If currently at Level 1 and not being dragged, re-snap
+        if (level === 1) {
+          translateY.value = withSpring(newSnap1, SPRING_CONFIG);
+        }
+      }
+    }, [windowHeight, level, computeSnap1]);
 
     // Animate to level on prop change
     useEffect(() => {
@@ -345,9 +377,11 @@ export const GlassOverlay = forwardRef<GlassOverlayRef, GlassOverlayProps>(
         {/* Sticky content */}
         {stickyContent}
 
-        {/* Level 1 content */}
+        {/* Level 1 content (measured for height clamp) */}
         <Animated.View style={[styles.contentSection, childrenStyle]}>
-          {children}
+          <View onLayout={handleContentLayout}>
+            {children}
+          </View>
         </Animated.View>
 
         {/* Level 2 content */}
