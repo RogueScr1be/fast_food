@@ -292,6 +292,20 @@ timer is cleared, old pending is discarded. Tested and documented.
 Reverse-box clone fade: 120ms (not standard whisper 180ms). Override
 via `{ ...whisper, duration: 120 }`. Total transition ~570ms.
 
+### Glass Overlay Snap Basis Rule (do not mix)
+
+All GlassOverlay snap point calculations must use `containerHeight`
+(windowHeight × 0.92) as the basis, NEVER raw `windowHeight`. Mixing
+bases causes Level 1 to overshoot.
+
+Formula: `snap1 = containerH - min(containerH * 0.5, collapsedH + contentH + 24)`
+
+Level 2 is gated behind a deep pull (80px past snap1 + velocity >900px/s).
+Normal ingredient drags always resolve to Level 0 or Level 1.
+
+Content measurement: `onLayout` on a non-flex wrapper around children.
+Never measure a `flex: 1` container (it reports flex space, not content).
+
 ### Image Readiness Gate Rule (do not remove)
 
 DecisionCard gates all overlays (scrim, text, glass, allergy indicator)
