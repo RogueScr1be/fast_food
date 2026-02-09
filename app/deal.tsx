@@ -211,7 +211,6 @@ export default function DealScreen() {
       setShowEnterClone(false);
       pendingEnterRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeId, winW, winH]);
 
   const enterCloneStyle = useAnimatedStyle(() => ({
