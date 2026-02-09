@@ -12,6 +12,8 @@
  * - Allergy modal still available
  */
 
+import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -126,27 +128,30 @@ export default function DealScreen() {
 
   const [affordanceEligible, setAffordanceEligible] = useState(false);
 
-  // Check persistence on mount
-  useEffect(() => {
-    let alive = true;
-    getHasSeenAffordance().then(seen => {
-      if (alive && !seen) setAffordanceEligible(true);
-    });
-    return () => { alive = false; };
-  }, []);
+useEffect(() => {
+  let mounted = true;
+  (async () => {
+    const seen = await getHasSeenAffordance();
+    if (!mounted) return;
+    setAffordanceEligible(!seen);
+  })();
+  return () => {
+    mounted = false;
+  };
+}, []);
 
   const { nudgeX, overlayLiftY, resetIdle } = useIdleAffordance({
-    enabled: affordanceEligible && !isLoading && !noMoreRecipes && currentDeal !== null,
-  });
+  enabled: affordanceEligible,
+  liftDelayMs: 4000,
+  nudgeDelayMs: 1500,
+});
 
   /** Mark affordance as seen + cancel. Called on any user interaction. */
   const markAffordanceSeen = useCallback(() => {
-    if (affordanceEligible) {
-      setAffordanceEligible(false);
-      setHasSeenAffordance();
-    }
-    resetIdle();
-  }, [affordanceEligible, resetIdle]);
+  if (!affordanceEligible) return;
+  setAffordanceEligible(false);
+  void setHasSeenAffordance(true);
+}, [affordanceEligible]);
 
   // Reset idle on new card (but don't mark seen — just cancel current timers)
   useEffect(() => {
@@ -243,41 +248,25 @@ export default function DealScreen() {
   // Handlers
   // ---------------------------------------------------------------------------
 
-  /** Swipe to pass — mark affordance seen, increment, deal next */
-  const handlePass = useCallback((_direction: PassDirection) => {
-    markAffordanceSeen();
-    if (currentDeal) addToDealHistory(currentDeal.data.id);
-    incrementPassCount();
-    setTimeout(() => dealNextCard(), 50);
-  }, [currentDeal, dealNextCard, markAffordanceSeen]);
-
-  /** Accept — mark seen, set up reverse-box transition, then navigate */
-  const { width: dealScreenW, height: dealScreenH } = useWindowDimensions();
-
   const handleAccept = useCallback(() => {
-    if (!currentDeal) return;
-    markAffordanceSeen();
+  markAffordanceSeen();
+  resetIdle();
+  // existing accept logic...
+}, [markAffordanceSeen, resetIdle]);
 
-    // Both recipe and rescue accept → standard checklist
-    const destKey = `checklist:${currentDeal.data.id}`;
+const handlePass = useCallback(() => {
+  markAffordanceSeen();
+  resetIdle();
+  // existing pass logic...
+}, [markAffordanceSeen, resetIdle]);
 
-    setPendingHeroTransition({
-      sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
-      imageSource: getImageSource(currentDeal.data.imageKey),
-      destKey,
-    });
+const handleOverlayLevelChange = useCallback((lvl: 0|1|2) => {
+  markAffordanceSeen();
+  resetIdle();
+  setOverlayLevel(lvl);
+}, [markAffordanceSeen, resetIdle]);
 
-    router.push({
-      pathname: '/checklist/[recipeId]',
-      params: { recipeId: currentDeal.data.id },
-    });
-  }, [currentDeal, markAffordanceSeen, dealScreenW, dealScreenH]);
-
-  /** Overlay level change from glass handle drag */
-  const handleOverlayLevelChange = useCallback((level: OverlayLevel) => {
-    markAffordanceSeen();
-    setOverlayLevel(level);
-  }, [markAffordanceSeen]);
+// If you have any touch/press that might trigger without intent, do NOT call markAffordanceSeen there.
 
   /** Legacy toggle for backward compat */
   const handleToggleExpand = useCallback(() => {
