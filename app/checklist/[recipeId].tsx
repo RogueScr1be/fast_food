@@ -15,7 +15,7 @@ import { ChevronLeft } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '@/lib/ui/theme';
 import { getAnyMealById } from '@/lib/seeds';
 import { getImageSourceSafe } from '@/lib/seeds/images';
-import { consumePendingHeroTransition } from '@/lib/ui/heroTransition';
+import { consumePendingHeroTransition, setPendingHeroTransition } from '@/lib/ui/heroTransition';
 import { Oak, whisper } from '@/lib/ui/motion';
 
 import { ChecklistStep } from '@/components/ChecklistStep';
@@ -139,8 +139,21 @@ export default function ChecklistScreen() {
         progressText={`${doneSet.size}/${steps.length}`}
         meta={meal.meta ?? ''}
         onHeroReady={onHeroReady}
-        onBack={() => router.back()}
-      />
+       onBack={() => {
+         if (!heroRect) {
+           router.back();
+           return;
+         }
+
+         // Set pending transition: checklist hero banner -> full-screen Deal hero
+         setPendingHeroTransition({
+           sourceRect: heroRect,
+           imageSource,
+           destKey: `deal:${meal.id}`,
+         });
+
+         router.back();
+       }}
 
       <ScrollView contentContainerStyle={styles.content}>
         {steps.map((s, i) => (
