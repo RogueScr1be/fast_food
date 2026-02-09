@@ -223,12 +223,15 @@ export function DecisionCard({
   // Compose gestures: handle (vertical) wins over swipe (horizontal)
   // -----------------------------------------------------------------------
 
+  // Compose gestures only when swipe is enabled.
+  // When swipeDisabled, no card-level gesture — glass overlay handle
+  // has its own GestureDetector internally.
   const handleGesture = glassRef.current?.getHandleGesture();
-  const composedGesture = swipeDisabled
-    ? (handleGesture ?? Gesture.Tap()) // handle-only, no horizontal swipe
-    : handleGesture
-      ? Gesture.Exclusive(handleGesture, swipeGesture)
-      : swipeGesture;
+  const composedGesture = !swipeDisabled
+    ? (handleGesture
+        ? Gesture.Exclusive(handleGesture, swipeGesture)
+        : swipeGesture)
+    : null;
 
   // -----------------------------------------------------------------------
   // Derived data
@@ -307,9 +310,7 @@ export function DecisionCard({
   // Render
   // -----------------------------------------------------------------------
 
-  return (
-    <View style={styles.container}>
-      <GestureDetector gesture={composedGesture}>
+  const cardContent = (
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
           {/* ── Hero image with Z-axis parallax ──────────────────── */}
           <Animated.View style={[StyleSheet.absoluteFill, heroParallaxStyle]}>
@@ -417,7 +418,17 @@ export function DecisionCard({
             </>
           )}
         </Animated.View>
-      </GestureDetector>
+  );
+
+  return (
+    <View style={styles.container}>
+      {composedGesture ? (
+        <GestureDetector gesture={composedGesture}>
+          {cardContent}
+        </GestureDetector>
+      ) : (
+        cardContent
+      )}
     </View>
   );
 }
