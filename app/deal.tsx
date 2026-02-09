@@ -24,7 +24,6 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
-  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
@@ -38,7 +37,6 @@ import {
   getConstraints,
   getDealHistory,
   setCurrentDealId,
-  incrementPassCount,
   addToDealHistory,
   resetDealState,
   getPassCount,
@@ -58,7 +56,7 @@ import {
   hasConflictingAllergens,
 } from '../lib/seeds';
 import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
-import { DecisionCard, PassDirection } from '../components/DecisionCard';
+import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
 import { getImageSource } from '../lib/seeds/images';
