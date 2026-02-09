@@ -175,14 +175,15 @@ export default function DealScreen() {
     if (triggerDrm) {
       const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
       if (drmMeal) {
-        // DRM autopilot: navigate straight to rescue, skip card display
+        // Show rescue hero card (no auto-navigate, no swiping)
+        setCurrentDeal({ type: 'drm', data: drmMeal });
+        setWhyText(getRandomWhy(drmMeal));
         setCurrentDealId(drmMeal.id);
         setDrmInserted(true);
+        setOverlayLevel(0);
+        setNoMoreRecipes(false);
         setIsLoading(false);
-        router.replace({
-          pathname: '/rescue/[mealId]',
-          params: { mealId: drmMeal.id },
-        });
+        setCardKey(k => k + 1);
         return;
       }
       setDrmInserted(true);
@@ -257,10 +258,8 @@ export default function DealScreen() {
     if (!currentDeal) return;
     markAffordanceSeen();
 
-    // Set pending transition for the destination screen's clone overlay
-    const destKey = currentDeal.type === 'recipe'
-      ? `checklist:${currentDeal.data.id}`
-      : `rescue:${currentDeal.data.id}`;
+    // Both recipe and rescue accept → standard checklist
+    const destKey = `checklist:${currentDeal.data.id}`;
 
     setPendingHeroTransition({
       sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
@@ -268,17 +267,10 @@ export default function DealScreen() {
       destKey,
     });
 
-    if (currentDeal.type === 'recipe') {
-      router.push({
-        pathname: '/checklist/[recipeId]',
-        params: { recipeId: currentDeal.data.id },
-      });
-    } else {
-      router.push({
-        pathname: '/rescue/[mealId]',
-        params: { mealId: currentDeal.data.id },
-      });
-    }
+    router.push({
+      pathname: '/checklist/[recipeId]',
+      params: { recipeId: currentDeal.data.id },
+    });
   }, [currentDeal, markAffordanceSeen, dealScreenW, dealScreenH]);
 
   /** Overlay level change from glass handle drag */
@@ -422,10 +414,12 @@ export default function DealScreen() {
     <View style={styles.container}>
       {/* Idle-nudge wrapper (Reanimated) around the card */}
       <Animated.View style={[styles.cardWrapper, idleNudgeStyle]}>
-        {currentDeal?.type === 'recipe' && (
+        {currentDeal && (
           <DecisionCard
             recipe={currentDeal.data}
             whyText={whyText}
+            variant={currentDeal.type === 'drm' ? 'rescue' : 'default'}
+            swipeDisabled={currentDeal.type === 'drm'}
             expanded={overlayLevel > 0}
             onToggleExpand={handleToggleExpand}
             onAccept={handleAccept}
@@ -436,8 +430,6 @@ export default function DealScreen() {
             modeLabel={modeLabel}
           />
         )}
-        {/* DRM cards no longer render here — autopilot navigates
-            directly to /rescue/[mealId] from dealNextCard() */}
       </Animated.View>
 
       {/* ── Back button (glass, top-left, only at level 0) ────────── */}

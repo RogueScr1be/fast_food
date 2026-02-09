@@ -86,6 +86,8 @@ export interface DecisionCardProps {
   onAccept: () => void;
   onPass: (direction: PassDirection) => void;
   variant?: CardVariant;
+  /** When true, horizontal swipe gesture is disabled (Rescue cards) */
+  swipeDisabled?: boolean;
   overlayLevel?: OverlayLevel;
   onOverlayLevelChange?: (level: OverlayLevel) => void;
   externalLiftY?: SharedValue<number>;
@@ -118,6 +120,7 @@ export function DecisionCard({
   onAccept,
   onPass,
   variant = 'default',
+  swipeDisabled = false,
   overlayLevel,
   onOverlayLevelChange,
   externalLiftY,
@@ -221,9 +224,11 @@ export function DecisionCard({
   // -----------------------------------------------------------------------
 
   const handleGesture = glassRef.current?.getHandleGesture();
-  const composedGesture = handleGesture
-    ? Gesture.Exclusive(handleGesture, swipeGesture)
-    : swipeGesture;
+  const composedGesture = swipeDisabled
+    ? (handleGesture ?? Gesture.Tap()) // handle-only, no horizontal swipe
+    : handleGesture
+      ? Gesture.Exclusive(handleGesture, swipeGesture)
+      : swipeGesture;
 
   // -----------------------------------------------------------------------
   // Derived data
