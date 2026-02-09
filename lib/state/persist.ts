@@ -1,106 +1,77 @@
-/**
- * Persisted user preferences + one-shot flags.
- *
- * Rules:
- * - Single AsyncStorage import (no duplicates).
- * - Backward compatible parsing (missing keys -> defaults).
- * - Validation is defensive (unknown tags are dropped).
- */
-
+// lib/state/persist.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { AllergenTag, ConstraintTag } from '../seeds/types';
 
-export type PrefsSchemaV1 = {
-  excludeAllergens: AllergenTag[];
-  constraints: ConstraintTag[];
-};
+const KEY_PREFIX = 'ff:v1:';
 
-export const STORAGE_KEYS = {
-  prefs: 'ff:v1:prefs',
-  hasSeenAffordance: 'ff:v1:hasSeenAffordance',
-} as const;
-
-const DEFAULT_PREFS: PrefsSchemaV1 = {
-  excludeAllergens: [],
-  constraints: [],
-};
-
-const ALLERGEN_SET = new Set<AllergenTag>([
-  'dairy',
-  'nuts',
-  'gluten',
-  'eggs',
-  'soy',
-  'shellfish',
-]);
-
-const CONSTRAINT_SET = new Set<ConstraintTag>([
-  'vegetarian',
-  'no_dairy',
-  '15_min',
-  'no_oven',
-  'kid_safe',
-]);
-
-function isAllergenTag(x: unknown): x is AllergenTag {
-  return typeof x === 'string' && ALLERGEN_SET.has(x as AllergenTag);
+function key(k: string) {
+  return `${KEY_PREFIX}${k}`;
 }
 
-function isConstraintTag(x: unknown): x is ConstraintTag {
-  return typeof x === 'string' && CONSTRAINT_SET.has(x as ConstraintTag);
-}
-
-function safeArray<T>(x: unknown): unknown[] {
-  return Array.isArray(x) ? x : [];
-}
-
-function parsePrefs(raw: string | null): PrefsSchemaV1 {
-  if (!raw) return DEFAULT_PREFS;
-
+async function getJson<T>(k: string, fallback: T): Promise<T> {
   try {
-    const obj = JSON.parse(raw) as Partial<PrefsSchemaV1> | null;
-
-    const excludeAllergens = safeArray(obj?.excludeAllergens)
-      .filter(isAllergenTag) as AllergenTag[];
-
-    const constraints = safeArray(obj?.constraints)
-      .filter(isConstraintTag) as ConstraintTag[];
-
-    return { excludeAllergens, constraints };
+    const raw = await AsyncStorage.getItem(key(k));
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
   } catch {
-    return DEFAULT_PREFS;
+    return fallback;
   }
 }
 
-export async function loadPrefs(): Promise<PrefsSchemaV1> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEYS.prefs);
-  return parsePrefs(raw);
+async function setJson(k: string, value: unknown): Promise<void> {
+  await AsyncStorage.setItem(key(k), JSON.stringify(value));
 }
 
-export async function savePrefs(prefs: PrefsSchemaV1): Promise<void> {
-  // Defensive sanitize on write too.
-  const cleaned: PrefsSchemaV1 = {
-    excludeAllergens: safeArray(prefs?.excludeAllergens).filter(isAllergenTag) as AllergenTag[],
-    constraints: safeArray(prefs?.constraints).filter(isConstraintTag) as ConstraintTag[],
-  };
+// -----------------------------------------------------------------------------
+// Idle affordance (silent onboarding)
+// -----------------------------------------------------------------------------
+const HAS_SEEN_AFFORDANCE = 'hasSeenAffordance';
 
-  await AsyncStorage.setItem(STORAGE_KEYS.prefs, JSON.stringify(cleaned));
-}
-
-export async function clearPrefs(): Promise<void> {
-  await AsyncStorage.removeItem(STORAGE_KEYS.prefs);
-}
-
-/**
- * One-shot idle affordance flag
- * - Missing -> false
- * - Stored as "true"/"false" string for simplicity
- */
 export async function getHasSeenAffordance(): Promise<boolean> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEYS.hasSeenAffordance);
-  return raw === 'true';
+  return getJson<boolean>(HAS_SEEN_AFFORDANCE, false);
 }
 
-export async function setHasSeenAffordance(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEYS.hasSeenAffordance, value ? 'true' : 'false');
+export async function setHasSeenAffordance(v: boolean): Promise<void> {
+  await setJson(HAS_SEEN_AFFORDANCE, v);
+}
+
+// -----------------------------------------------------------------------------
+// Phase 3.1 feedback (kept intact if you’re still using it)
+// -----------------------------------------------------------------------------
+export type FeedbackRating = -1 | 0 | 1;
+
+export type FeedbackEntry = {
+  mealId: string;
+  rating: FeedbackRating;
+  timestamp: number;
+  // optional metadata for future learning loop
+  mode?: 'fancy' | 'easy' | 'cheap';
+  isRescue?: boolean;
+  source?: string;
+};
+
+const LAST_COMPLETED = 'lastCompleted';
+const FEEDBACK_LOG = 'feedbackLog';
+
+export async function getLastCompleted(): Promise<{ mealId: string; completedAt: number } | null> {
+  return getJson<{ mealId: string; completedAt: number } | null>(LAST_COMPLETED, null);
+}
+
+export async function setLastCompleted(mealId: string, completedAt: number): Promise<void> {
+  await setJson(LAST_COMPLETED, { mealId, completedAt });
+}
+
+export async function clearLastCompleted(): Promise<void> {
+  await AsyncStorage.removeItem(key(LAST_COMPLETED));
+}
+
+export async function getFeedbackLog(): Promise<FeedbackEntry[]> {
+  return getJson<FeedbackEntry[]>(FEEDBACK_LOG, []);
+}
+
+export async function appendFeedback(entry: FeedbackEntry): Promise<void> {
+  const log = await getFeedbackLog();
+  // idempotent by mealId (one rating per meal)
+  if (log.some(e => e.mealId === entry.mealId)) return;
+  log.push(entry);
+  await setJson(FEEDBACK_LOG, log);
 }
