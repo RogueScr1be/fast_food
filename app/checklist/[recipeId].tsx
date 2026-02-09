@@ -35,6 +35,7 @@ import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
+import { setPendingHeroTransition } from '@/lib/ui/heroTransition';
 import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -101,6 +102,22 @@ export default function ChecklistScreen() {
     });
     contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
+
+  const handleBackToDeal = useCallback(() => {
+  const src = heroRectRef.current;
+
+  // If we have a measured rect, seed Deal-enter animation.
+  if (src) {
+    setPendingHeroTransition({
+      destKey: `deal:${recipeId}`,
+      sourceRect: src,
+      createdAt: Date.now(),
+    });
+  }
+
+  // Deterministic: go back to Deal with the same meal.
+  router.replace({ pathname: '/deal', params: { resume: recipeId } });
+}, [recipeId]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
     if (!transition || destReceivedRef.current) return;
@@ -244,8 +261,9 @@ export default function ChecklistScreen() {
         title={meal.name}
         progressText={`${completedCount} of ${totalSteps} steps`}
         meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
-        onBack={handleBack}
-        onHeroReady={transition ? handleHeroReady : undefined}
+        recipe={recipe}
+        onHeroReady={handleHeroReady}
+        onBack={handleBackToDeal}
       />
 
       {/* Progress bar below hero */}
