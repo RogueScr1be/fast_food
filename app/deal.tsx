@@ -28,8 +28,6 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 
-import { useIdleAffordance } from '@/hooks/useIdleAffordance';
-
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getSelectedMode,
