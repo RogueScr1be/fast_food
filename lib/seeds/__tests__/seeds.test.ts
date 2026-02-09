@@ -571,3 +571,33 @@ describe('Seed Helpers', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// A2: Image + heroSafeFrame integrity audit
+// ---------------------------------------------------------------------------
+
+import { hasImageKey } from '../images';
+
+describe('Recipe image integrity audit', () => {
+  const allMeals = [...RECIPES, ...DRM_MEALS];
+
+  it('every recipe has a defined imageKey that exists in RECIPE_IMAGES', () => {
+    const missing: string[] = [];
+    for (const meal of allMeals) {
+      if (!meal.imageKey || !hasImageKey(meal.imageKey)) {
+        missing.push(`${meal.id} (imageKey: ${meal.imageKey ?? 'undefined'})`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('every recipe has heroSafeFrame explicitly defined as a boolean', () => {
+    const missing: string[] = [];
+    for (const meal of allMeals) {
+      if (typeof meal.heroSafeFrame !== 'boolean') {
+        missing.push(`${meal.id} (heroSafeFrame: ${String(meal.heroSafeFrame)})`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});

@@ -12,8 +12,8 @@
  *   wins when horizontal. No PanResponder anywhere.
  *
  * Image:
- *   expo-image with contentFit="cover" contentPosition="bottom" so food
- *   images focus on the bottom (plate) rather than the top (empty space).
+ *   expo-image with contentFit="cover" always (full-bleed, no letterboxing).
+ *   contentPosition="bottom" for safe-frame, "center" for default.
  *
  * Variant:
  *   "default" — cool scrim, blue accept CTA
@@ -49,7 +49,7 @@ import {
 } from '../lib/ui/theme';
 import { latex } from '../lib/ui/motion';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
-import { getImageSource } from '../lib/seeds/images';
+import { getImageSourceSafe } from '../lib/seeds/images';
 import { WhyWhisper } from './WhyWhisper';
 import { GlassOverlay, OverlayLevel } from './GlassOverlay';
 import type { GlassOverlayRef } from './GlassOverlay';
@@ -60,6 +60,9 @@ import { AllergyIndicator } from './AllergyIndicator';
 // ---------------------------------------------------------------------------
 
 const SWIPE_THRESHOLD = 120;
+
+/** Module-level warn-once set: [HERO_FALLBACK_FRAME] fires once per recipeId per session */
+const warnedHeroFallback = new Set<string>();
 const SWIPE_OUT_DURATION = 250;
 /** Velocity gate: fast flick dismisses even under distance threshold */
 const SWIPE_VELOCITY_THRESHOLD = 800;
@@ -83,6 +86,8 @@ export interface DecisionCardProps {
   onAccept: () => void;
   onPass: (direction: PassDirection) => void;
   variant?: CardVariant;
+  /** When true, horizontal swipe gesture is disabled (Rescue cards) */
+  swipeDisabled?: boolean;
   overlayLevel?: OverlayLevel;
   onOverlayLevelChange?: (level: OverlayLevel) => void;
   externalLiftY?: SharedValue<number>;
@@ -115,6 +120,7 @@ export function DecisionCard({
   onAccept,
   onPass,
   variant = 'default',
+  swipeDisabled = false,
   overlayLevel,
   onOverlayLevelChange,
   externalLiftY,
@@ -217,21 +223,40 @@ export function DecisionCard({
   // Compose gestures: handle (vertical) wins over swipe (horizontal)
   // -----------------------------------------------------------------------
 
+  // Compose gestures only when swipe is enabled.
+  // When swipeDisabled, no card-level gesture — glass overlay handle
+  // has its own GestureDetector internally.
   const handleGesture = glassRef.current?.getHandleGesture();
-  const composedGesture = handleGesture
-    ? Gesture.Exclusive(handleGesture, swipeGesture)
-    : swipeGesture;
+  const composedGesture = !swipeDisabled
+    ? (handleGesture
+        ? Gesture.Exclusive(handleGesture, swipeGesture)
+        : swipeGesture)
+    : null;
 
   // -----------------------------------------------------------------------
   // Derived data
   // -----------------------------------------------------------------------
 
   const estimatedCost =
-    'estimatedCost' in recipe ? recipe.estimatedCost : null;
-  const imageSource = getImageSource(recipe.imageKey);
+    'estimatedCost' in recipe ? (recipe as any).estimatedCost as string : null;
+  const imageSource = getImageSourceSafe({
+    imageKey: recipe.imageKey,
+    recipeId: recipe.id,
+    mode: modeLabel,
+    isRescue: variant === 'rescue',
+  });
   const allergenCount = recipe.allergens.length;
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;
+
+  // Warn once per recipeId per session (module lifetime)
+  if (!useSafeFrame) {
+    const warnKey = `${recipe.id}:${recipe.imageKey ?? 'none'}`;
+    if (!warnedHeroFallback.has(warnKey)) {
+      warnedHeroFallback.add(warnKey);
+      console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.imageKey });
+    }
+  }
 
   // -----------------------------------------------------------------------
   // Image readiness gate — prevent black void on first render
@@ -285,17 +310,15 @@ export function DecisionCard({
   // Render
   // -----------------------------------------------------------------------
 
-  return (
-    <View style={styles.container}>
-      <GestureDetector gesture={composedGesture}>
+  const cardContent = (
         <Animated.View style={[styles.card, cardAnimatedStyle]}>
           {/* ── Hero image with Z-axis parallax ──────────────────── */}
           <Animated.View style={[StyleSheet.absoluteFill, heroParallaxStyle]}>
             <Image
               source={imageSource}
-              style={useSafeFrame ? styles.heroImageSafe : styles.heroImage}
-              contentFit={useSafeFrame ? 'contain' : 'cover'}
-              contentPosition="bottom"
+              style={styles.heroImage}
+              contentFit="cover"
+              contentPosition={useSafeFrame ? 'bottom' : 'center'}
               accessibilityLabel={`Photo of ${recipe.name}`}
               onLoad={handleImageLoad}
             />
@@ -395,7 +418,17 @@ export function DecisionCard({
             </>
           )}
         </Animated.View>
-      </GestureDetector>
+  );
+
+  return (
+    <View style={styles.container}>
+      {composedGesture ? (
+        <GestureDetector gesture={composedGesture}>
+          {cardContent}
+        </GestureDetector>
+      ) : (
+        cardContent
+      )}
     </View>
   );
 }
@@ -421,17 +454,6 @@ const styles = StyleSheet.create({
     right: '1.5%',
     bottom: '1.5%',
     borderRadius: 4,
-  },
-  // Safe frame: contain + slight scale-up to reduce letterboxing.
-  // Shows the full dish without clipping; dark bg fills any gaps.
-  heroImageSafe: {
-    position: 'absolute',
-    top: '-3%',
-    left: '-3%',
-    right: '-3%',
-    bottom: '-3%',
-    // Negative insets expand the contain area ~6%, so the image
-    // scales up slightly while still fitting the full dish.
   },
   scrim: {
     position: 'absolute',

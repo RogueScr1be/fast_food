@@ -37,6 +37,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '18 min',
     estimatedCost: '$22',
     imageKey: 'salmon',
+    heroSafeFrame: false,
   },
   {
     id: 'fancy-2',
@@ -88,6 +89,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '35 min',
     estimatedCost: '$16',
     imageKey: 'chicken-marsala',
+    heroSafeFrame: false,
   },
   {
     id: 'fancy-4',
@@ -113,6 +115,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$24',
     imageKey: 'scampi',
+    heroSafeFrame: false,
   },
   {
     id: 'fancy-5',
@@ -138,6 +141,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '25 min',
     estimatedCost: '$35',
     imageKey: 'steak',
+    heroSafeFrame: false,
   },
   {
     id: 'fancy-6',
@@ -162,6 +166,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$14',
     imageKey: 'ratatouille',
+    heroSafeFrame: false,
   },
 
   // ============================================
@@ -190,6 +195,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '40 min',
     estimatedCost: '$14',
     imageKey: 'sheet-pan-chicken',
+    heroSafeFrame: false,
   },
   {
     id: 'easy-2',
@@ -239,6 +245,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$10',
     imageKey: 'quesadillas',
+    heroSafeFrame: false,
   },
   {
     id: 'easy-4',
@@ -288,6 +295,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '20 min',
     estimatedCost: '$15',
     imageKey: 'fried-rice',
+    heroSafeFrame: false,
   },
   {
     id: 'easy-6',
@@ -312,6 +320,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '12 min',
     estimatedCost: '$6',
     imageKey: 'caprese-salad',
+    heroSafeFrame: false,
   },
 
   // ============================================
@@ -440,6 +449,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '10 min',
     estimatedCost: '$4',
     imageKey: 'veggie-curry',
+    heroSafeFrame: false,
   },
   {
     id: 'cheap-6',
@@ -464,6 +474,7 @@ export const RECIPES: RecipeSeed[] = [
     estimatedTime: '15 min',
     estimatedCost: '$4',
     imageKey: 'pasta-aglio',
+    heroSafeFrame: false,
   },
 ];
 
@@ -502,6 +513,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Childhood classic', 'No judgment here', 'Protein + carbs'],
     estimatedTime: '3 min',
     imageKey: 'toast-pb',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-3',
@@ -517,6 +529,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Charcuterie lite', 'Pairs with wine', 'Snack dinner energy'],
     estimatedTime: '5 min',
     imageKey: 'crackers-cheese',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-4',
@@ -549,6 +562,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Breakfast for dinner', 'Quick protein', 'Always satisfying'],
     estimatedTime: '8 min',
     imageKey: 'sandwich',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-6',
@@ -564,6 +578,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Zero prep', 'Sharing is caring', 'Valid dinner choice'],
     estimatedTime: '1 min',
     imageKey: 'chips-salsa',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-7',
@@ -609,6 +624,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Freezer MVP', 'Everyone agrees', 'Reliable backup'],
     estimatedTime: '20 min',
     imageKey: 'frozen-pizza',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-10',
@@ -624,6 +640,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Sweet and salty', 'Surprisingly filling', 'Healthy snack dinner'],
     estimatedTime: '3 min',
     imageKey: 'banana-pb',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-11',
@@ -636,6 +653,7 @@ export const DRM_MEALS: DrmSeed[] = [
     whyReasons: ['Freezer savior', 'Hot and filling', 'Gas station gourmet'],
     estimatedTime: '4 min',
     imageKey: 'grilled-cheese',
+    heroSafeFrame: false,
   },
   {
     id: 'drm-12',
