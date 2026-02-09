@@ -12,6 +12,8 @@
  * - Back chevron → /tonight (deterministic)
  */
 
+import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
