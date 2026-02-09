@@ -15,8 +15,6 @@
 
 // hooks/useIdleAffordance.ts
 import { useCallback, useEffect, useRef } from 'react';
-import { Easing } from 'react-native-reanimated';
-import reanimated, { useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 import { motion } from '@/lib/ui/motion'; // adjust import to your actual motion token file
 
 type Args = {
