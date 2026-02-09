@@ -13,134 +13,94 @@
  * The caller (deal.tsx) controls `enabled` based on persisted state.
  */
 
-import { useRef, useCallback, useEffect } from 'react';
-import {
-  useSharedValue,
-  withTiming,
-  withSequence,
-  Easing,
-} from 'react-native-reanimated';
-import { idle } from '../lib/ui/theme';
-import { whisper } from '../lib/ui/motion';
+// hooks/useIdleAffordance.ts
+import { useCallback, useEffect, useRef } from 'react';
+import { Easing } from 'react-native-reanimated';
+import Animated, { useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
+import { motion } from '@/lib/ui/motion'; // adjust import to your actual motion token file
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+type Args = {
+  enabled: boolean;
+  liftDelayMs?: number;     // default 4000
+  nudgeDelayMs?: number;    // default 1500 (after lift)
+};
 
-/** Time before glass lift (Step 1) */
-export const STEP1_DELAY_MS = 4000;
-/** Additional time before card nudge (Step 2) */
-export const STEP2_DELAY_MS = 1500;
-
-export const NUDGE_PX = idle.nudgePx;  // 12
-export const LIFT_PX = idle.liftPx;    // 40
-
-const NUDGE_DURATION = 600;  // Exception: pedagogical timing, not UI response
-const LIFT_DURATION = 800;   // Exception: pedagogical timing, not UI response
-
-// Keep old export name for test compatibility
-export const IDLE_THRESHOLD_MS = STEP1_DELAY_MS;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface UseIdleAffordanceOptions {
-  /** Enable / disable. When false, timers are cleared and values snap to 0. */
-  enabled?: boolean;
-}
-
-export interface UseIdleAffordanceReturn {
-  nudgeX: ReturnType<typeof useSharedValue<number>>;
-  overlayLiftY: ReturnType<typeof useSharedValue<number>>;
-  isIdle: boolean;
-  /** Cancel timers + reset values. Call on any user interaction. */
-  resetIdle: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-export function useIdleAffordance(
-  options: UseIdleAffordanceOptions = {},
-): UseIdleAffordanceReturn {
-  const { enabled = true } = options;
-
+export function useIdleAffordance({
+  enabled,
+  liftDelayMs = 4000,
+  nudgeDelayMs = 1500,
+}: Args) {
   const nudgeX = useSharedValue(0);
   const overlayLiftY = useSharedValue(0);
-  const isIdleRef = useRef(false);
-  const firedRef = useRef(false); // one-shot guard for this mount cycle
-  const timer1Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const timerLiftRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerNudgeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const firedRef = useRef(false);
 
   const clearTimers = useCallback(() => {
-    if (timer1Ref.current) { clearTimeout(timer1Ref.current); timer1Ref.current = null; }
-    if (timer2Ref.current) { clearTimeout(timer2Ref.current); timer2Ref.current = null; }
+    if (timerLiftRef.current) {
+      clearTimeout(timerLiftRef.current);
+      timerLiftRef.current = null;
+    }
+    if (timerNudgeRef.current) {
+      clearTimeout(timerNudgeRef.current);
+      timerNudgeRef.current = null;
+    }
   }, []);
 
-  /** Step 1: lift glass overlay */
-  const triggerStep1 = useCallback(() => {
-    isIdleRef.current = true;
-    overlayLiftY.value = withTiming(LIFT_PX, {
-      duration: LIFT_DURATION,
-      easing: Easing.out(Easing.ease),
-    });
-
-    // Schedule Step 2
-    timer2Ref.current = setTimeout(() => {
-      // Step 2: nudge card horizontally (single pulse)
-      nudgeX.value = withSequence(
-        withTiming(NUDGE_PX, {
-          duration: NUDGE_DURATION,
-          easing: Easing.inOut(Easing.ease),
-        }),
-        withTiming(0, {
-          duration: NUDGE_DURATION,
-          easing: Easing.inOut(Easing.ease),
-        }),
-      );
-    }, STEP2_DELAY_MS);
-  }, [nudgeX, overlayLiftY]);
-
-  /** Start the staged sequence (one-shot) */
-  const startSequence = useCallback(() => {
-    if (firedRef.current) return; // already fired this mount
-    clearTimers();
-    timer1Ref.current = setTimeout(() => {
-      firedRef.current = true;
-      triggerStep1();
-    }, STEP1_DELAY_MS);
-  }, [clearTimers, triggerStep1]);
-
-  /** Reset: cancel everything, snap values to 0 */
   const resetIdle = useCallback(() => {
+    // cancel any pending triggers
     clearTimers();
-    isIdleRef.current = false;
-    nudgeX.value = withTiming(0, whisper);
-    overlayLiftY.value = withTiming(0, whisper);
-    // Do NOT restart — one-shot. Once reset, it's done.
+
+    // cancel animations + snap back
+    cancelAnimation(nudgeX);
+    cancelAnimation(overlayLiftY);
+
+    nudgeX.value = withTiming(0, motion.whisper);
+    overlayLiftY.value = withTiming(0, motion.whisper);
+    // IMPORTANT: do NOT restart timers here (one-shot behavior)
   }, [clearTimers, nudgeX, overlayLiftY]);
 
-  // Lifecycle: start sequence when enabled, clear on disable/unmount
   useEffect(() => {
-    if (enabled && !firedRef.current) {
-      startSequence();
-    } else if (!enabled) {
+    // If disabled, always clean and do nothing.
+    if (!enabled) {
       clearTimers();
-      isIdleRef.current = false;
+      firedRef.current = true; // treat disabled as “already done”
+      cancelAnimation(nudgeX);
+      cancelAnimation(overlayLiftY);
       nudgeX.value = 0;
       overlayLiftY.value = 0;
+      return;
     }
-    return clearTimers;
-  }, [enabled, startSequence, clearTimers, nudgeX, overlayLiftY]);
+
+    // If already fired (one-shot), do nothing.
+    if (firedRef.current) return;
+
+    // Schedule staged affordance
+    timerLiftRef.current = setTimeout(() => {
+      // Step 1: lift glass (teach handle)
+      overlayLiftY.value = withTiming(-40, motion.whisper);
+
+      timerNudgeRef.current = setTimeout(() => {
+        // Step 2: nudge card (teach swipe)
+        // single pulse: 0 -> 12 -> 0
+        nudgeX.value = withTiming(12, { duration: 220, easing: Easing.out(Easing.ease) }, () => {
+          nudgeX.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.ease) });
+        });
+
+        firedRef.current = true;
+      }, nudgeDelayMs);
+    }, liftDelayMs);
+
+    return () => {
+      clearTimers();
+    };
+  }, [enabled, liftDelayMs, nudgeDelayMs, clearTimers, nudgeX, overlayLiftY]);
 
   return {
     nudgeX,
     overlayLiftY,
-    isIdle: isIdleRef.current,
     resetIdle,
   };
 }
-
-export default useIdleAffordance;
