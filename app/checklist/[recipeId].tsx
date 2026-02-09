@@ -32,7 +32,6 @@ import { latex, oak, whisper } from '../../lib/ui/motion';
 import { getAnyMealById, calculateProgress } from '../../lib/seeds';
 import { ChecklistStep } from '../../components/ChecklistStep';
 import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
-import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
 import { setPendingHeroTransition } from '@/lib/ui/heroTransition';
@@ -105,42 +104,9 @@ export default function ChecklistScreen() {
     contentOpacity.value = withTiming(1, whisper);
   }, [cloneOpacity, contentOpacity]);
 
-  const handleBackToDeal = useCallback(() => {
-  const src = heroRectRef.current;
-
-  // If we have a measured rect, seed Deal-enter animation.
-  if (src) {
-    setPendingHeroTransition({
-      destKey: `deal:${recipeId}`,
-      sourceRect: src,
-    });
-  }
-
   // Deterministic: go back to Deal with the same meal.
   router.replace({ pathname: '/deal', params: { resume: recipeId } });
 }, [recipeId]);
-
-  const handleHeroReady = useCallback((rect: HeroRect) => {
-    if (!transition || destReceivedRef.current) return;
-    destReceivedRef.current = true;
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-
-    // Animate clone from full-screen → hero rect (Oak spring)
-    cloneX.value = withSpring(rect.x, oak);
-    cloneY.value = withSpring(rect.y, oak);
-    cloneW.value = withSpring(rect.width, oak);
-    cloneH.value = withSpring(rect.height, oak);
-    cloneRadius.value = withSpring(0, oak);
-
-    // Fade in content underneath (Whisper)
-    contentOpacity.value = withTiming(1, whisper);
-
-    // Fade out clone after spring settles (~380ms)
-    // Delay fade until Oak spring is fully settled (~380ms + margin)
-    setTimeout(() => {
-      if (mountedRef.current) fadeOutClone();
-    }, 450);
-  }, [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone]);
 
   const cloneStyle = useAnimatedStyle(() => ({
     position: 'absolute' as const,
