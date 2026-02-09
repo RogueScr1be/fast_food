@@ -31,7 +31,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
+import { Utensils, User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   setSelectedMode,
@@ -373,17 +373,21 @@ export default function TonightScreen() {
     <SafeAreaView style={styles.container}>
       {/* Background depth wrapper — sinks during clone expansion */}
       <Animated.View style={[styles.bgDepthWrapper, bgDepthStyle]}>
-      {/* Header: title + profile icon */}
+      {/* Header: icon — FAST FOOD — profile */}
       <View style={styles.header}>
-        <Text style={styles.title}>Time to Eat</Text>
+        <View style={styles.headerIcon}>
+          <Utensils size={18} color={colors.textPrimary} />
+        </View>
+        <Text style={styles.title}>FAST FOOD</Text>
         <TouchableOpacity
-          style={styles.profileButton}
+          style={styles.headerIcon}
           onPress={() => router.push('/profile')}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Profile settings"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <User size={18} color={colors.textSecondary} />
+          <User size={18} color={colors.textPrimary} />
         </TouchableOpacity>
       </View>
 
@@ -574,21 +578,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.lg,
   },
-  title: {
-    fontSize: typography['3xl'],
-    fontWeight: typography.bold,
-    color: colors.textPrimary,
-  },
-  bgDepthWrapper: {
-    flex: 1,
-  },
-  profileButton: {
+  headerIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.mutedLight,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  title: {
+    flex: 1,
+    fontSize: typography['2xl'],
+    fontWeight: typography.bold,
+    color: colors.textPrimary,
+    textAlign: 'center',
+    letterSpacing: 1.5,
+  },
+  bgDepthWrapper: {
+    flex: 1,
   },
 
   // Vertical mode buttons — layered shadow system
