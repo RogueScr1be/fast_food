@@ -713,7 +713,7 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   ctaSection: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md, // 16px (narrower than mode container's 24px)
     paddingTop: spacing.sm,
     zIndex: 1,
   },

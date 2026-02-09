@@ -488,16 +488,18 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: spacing.xxl,
   },
-  // Header
+  // Header — title centered to screen, chevron absolutely positioned
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: Platform.OS === 'ios' ? spacing.md : spacing.lg,
     paddingBottom: spacing.md,
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: typography['3xl'],
     fontWeight: typography.bold,
     color: colors.textPrimary,
+    textAlign: 'center',
   },
   // Sections
   section: {
