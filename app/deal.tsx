@@ -59,8 +59,6 @@ import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
-import { getImageSource } from '../lib/seeds/images';
-import { setPendingHeroTransition } from '../lib/ui/heroTransition';
 import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
 
 // All allergens for the modal
