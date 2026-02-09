@@ -47,7 +47,7 @@ import {
   typography,
   MIN_TOUCH_TARGET,
 } from '../lib/ui/theme';
-import { latex } from '../lib/ui/motion';
+import { latex, easeOut } from '../lib/ui/motion';
 import type { RecipeSeed, DrmSeed } from '../lib/seeds/types';
 import { getImageSourceSafe } from '../lib/seeds/images';
 import { WhyWhisper } from './WhyWhisper';
@@ -199,13 +199,13 @@ export function DecisionCard({
       if (dismissRight) {
         swipeX.value = withTiming(
           w + 100,
-          { duration: SWIPE_OUT_DURATION },
+          { duration: SWIPE_OUT_DURATION, easing: easeOut },
           () => runOnJS(firePass)('right'),
         );
       } else if (dismissLeft) {
         swipeX.value = withTiming(
           -w - 100,
-          { duration: SWIPE_OUT_DURATION },
+          { duration: SWIPE_OUT_DURATION, easing: easeOut },
           () => runOnJS(firePass)('left'),
         );
       } else {

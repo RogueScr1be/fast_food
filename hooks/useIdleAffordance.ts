@@ -21,6 +21,7 @@ import {
   Easing,
 } from 'react-native-reanimated';
 import { idle } from '../lib/ui/theme';
+import { whisper } from '../lib/ui/motion';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -34,9 +35,8 @@ export const STEP2_DELAY_MS = 1500;
 export const NUDGE_PX = idle.nudgePx;  // 12
 export const LIFT_PX = idle.liftPx;    // 40
 
-const NUDGE_DURATION = 600;
-const LIFT_DURATION = 800;
-const RESET_DURATION = 200;
+const NUDGE_DURATION = 600;  // Exception: pedagogical timing, not UI response
+const LIFT_DURATION = 800;   // Exception: pedagogical timing, not UI response
 
 // Keep old export name for test compatibility
 export const IDLE_THRESHOLD_MS = STEP1_DELAY_MS;
@@ -117,8 +117,8 @@ export function useIdleAffordance(
   const resetIdle = useCallback(() => {
     clearTimers();
     isIdleRef.current = false;
-    nudgeX.value = withTiming(0, { duration: RESET_DURATION });
-    overlayLiftY.value = withTiming(0, { duration: RESET_DURATION });
+    nudgeX.value = withTiming(0, whisper);
+    overlayLiftY.value = withTiming(0, whisper);
     // Do NOT restart — one-shot. Once reset, it's done.
   }, [clearTimers, nudgeX, overlayLiftY]);
 
