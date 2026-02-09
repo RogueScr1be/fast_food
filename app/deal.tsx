@@ -13,6 +13,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import {
   View,
   Text,
@@ -27,7 +29,6 @@ import { router } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 
 import { useIdleAffordance } from '@/hooks/useIdleAffordance';
-import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
 
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
