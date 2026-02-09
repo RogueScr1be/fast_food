@@ -1,25 +1,23 @@
 /**
  * Deal Screen — Full-Screen Editorial Card Experience
  *
- * Phase 1.3: Chrome-free, full-bleed card with glass overlay + idle affordance.
- *
  * - Shows one recipe at a time (edge-to-edge hero image)
- * - Swipe-to-pass gestures handled by DecisionCard
+ * - Swipe-to-pass gestures handled by DecisionCard (disabled for DRM)
  * - Glass overlay (level 0/1/2) managed as controlled state here
- * - Idle affordance: subtle nudge + glass lift after ~4 then 5.5s inactivity
+ * - Idle affordance: staged lift + nudge (first session only)
  * - DRM insertion after 3 passes OR 45 seconds
- * - Accept → navigate to /checklist or /rescue (no LockedTransition)
- * - Allergy modal still available
+ * - Accept → /checklist/[recipeId]
+ * - Back chevron → /tonight (replace)
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
-import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Platform,
+  ActivityIndicator,
   Modal,
   ScrollView,
 } from 'react-native';
@@ -38,6 +36,7 @@ import {
   setCurrentDealId,
   addToDealHistory,
   resetDealState,
+  incrementPassCount,
   getPassCount,
   getDrmInserted,
   setDrmInserted,
@@ -54,8 +53,12 @@ import {
   hasConflictingAllergens,
 } from '../lib/seeds';
 import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
+
 import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
+
+import { useIdleAffordance } from '../hooks/useIdleAffordance';
+import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
 
 const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
 
@@ -92,16 +95,14 @@ export default function DealScreen() {
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
 
-  // Session ID: increments on each mount cycle. Protects against
-  // React 18 StrictMode double-init AND allows re-init when returning
-  // from rescue via router.replace('/deal').
-  const [sessionId, _setSessionId] = useState(0);
+  // StrictMode re-init guard
+  const [sessionId] = useState(0);
   const lastInitSession = useRef(-1);
 
   // Card generation key — increments on each new card to reset idle timer
   const [cardKey, setCardKey] = useState(0);
 
-  // Get session state - ensure we have a mode
+  // Ensure we have a mode
   const [mode] = useState(() => {
     const savedMode = getSelectedMode();
     if (savedMode) return savedMode;
@@ -109,11 +110,10 @@ export default function DealScreen() {
     setSelectedMode(randomMode);
     return randomMode;
   });
-  const constraints = getConstraints();
 
+  const constraints = getConstraints();
   const isValidMode = mode === 'fancy' || mode === 'easy' || mode === 'cheap';
 
-  // Safe area for back button positioning
   const insets = useSafeAreaInsets();
 
   // ---------------------------------------------------------------------------
@@ -140,19 +140,17 @@ export default function DealScreen() {
     nudgeDelayMs: 1500,
   });
 
-  /** Mark affordance as seen + cancel. Called on any user interaction. */
   const markAffordanceSeen = useCallback(() => {
     if (!affordanceEligible) return;
     setAffordanceEligible(false);
     void setHasSeenAffordance(true);
   }, [affordanceEligible]);
 
-  // Reset idle on new card (but don't mark seen — just cancel current timers)
   useEffect(() => {
     resetIdle();
-  }, [cardKey, resetIdle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardKey]);
 
-  // Reanimated animated style for the idle nudge wrapper
   const idleNudgeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: nudgeX.value }],
   }));
@@ -167,14 +165,11 @@ export default function DealScreen() {
     const drmInserted = getDrmInserted();
     const excludeAllergens = getExcludeAllergens();
 
-    const triggerDrm = !drmInserted && (
-      passCount >= DRM_PASS_THRESHOLD || drmTimerTriggered
-    );
+    const triggerDrm = !drmInserted && (passCount >= DRM_PASS_THRESHOLD || drmTimerTriggered);
 
     if (triggerDrm) {
       const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
       if (drmMeal) {
-        // Show rescue hero card (no auto-navigate, no swiping)
         setCurrentDeal({ type: 'drm', data: drmMeal });
         setWhyText(getRandomWhy(drmMeal));
         setCurrentDealId(drmMeal.id);
@@ -193,7 +188,6 @@ export default function DealScreen() {
     if (!recipe && constraints.length > 0) {
       recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, []);
     }
-
     if (!recipe && excludeAllergens.length > 0) {
       recipe = pickNextRecipe(mode, [], dealHistory, []);
     }
@@ -208,14 +202,11 @@ export default function DealScreen() {
       setCurrentDeal(null);
       setNoMoreRecipes(true);
     }
+
     setIsLoading(false);
     setCardKey(k => k + 1);
   }, [mode, constraints, drmTimerTriggered]);
 
-  // Initialize deal session.
-  // Uses sessionId to allow re-init when returning from rescue.
-  // lastInitSession ref prevents double-init within the same session
-  // (React 18 StrictMode double-mount protection).
   useEffect(() => {
     if (lastInitSession.current === sessionId) return;
     lastInitSession.current = sessionId;
@@ -233,42 +224,52 @@ export default function DealScreen() {
     };
   }, [sessionId, dealNextCard]);
 
-  // Sync local allergen display
   useEffect(() => {
     setLocalExcludeAllergens(getExcludeAllergens());
   }, [showAllergyModal]);
 
   // ---------------------------------------------------------------------------
-  // Handlers
+  // Handlers (REAL implementations — no stubs)
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
+    if (!currentDeal) return;
+
     markAffordanceSeen();
     resetIdle();
-    // existing accept logic...
-  }, [markAffordanceSeen, resetIdle]);
+
+    // Go to the standard checklist for BOTH recipe + DRM.
+    router.push(`/checklist/${currentDeal.data.id}`);
+  }, [currentDeal, markAffordanceSeen, resetIdle]);
 
   const handlePass = useCallback(() => {
+    if (!currentDeal) return;
+
     markAffordanceSeen();
     resetIdle();
-    // existing pass logic...
-  }, [markAffordanceSeen, resetIdle]);
 
-  const handleOverlayLevelChange = useCallback((lvl: 0|1|2) => {
-    markAffordanceSeen();
-    resetIdle();
-    setOverlayLevel(lvl);
-  }, [markAffordanceSeen, resetIdle]);
+    // Mark as seen + increment pass count, then deal next.
+    addToDealHistory(currentDeal.data.id);
+    incrementPassCount();
+    setOverlayLevel(0);
+    dealNextCard();
+  }, [currentDeal, markAffordanceSeen, resetIdle, dealNextCard]);
 
-  // If you have any touch/press that might trigger without intent, do NOT call markAffordanceSeen there.
+  const handleOverlayLevelChange = useCallback(
+    (lvl: 0 | 1 | 2) => {
+      markAffordanceSeen();
+      resetIdle();
+      setOverlayLevel(lvl);
+    },
+    [markAffordanceSeen, resetIdle],
+  );
 
-  /** Legacy toggle for backward compat */
   const handleToggleExpand = useCallback(() => {
     markAffordanceSeen();
+    resetIdle();
     setOverlayLevel(prev => (prev === 0 ? 1 : 0));
-  }, [markAffordanceSeen]);
+  }, [markAffordanceSeen, resetIdle]);
 
-  /** Reset and start over */
   const handleShuffle = useCallback(() => {
     resetDealState();
     setDrmTimerTriggered(false);
@@ -292,9 +293,7 @@ export default function DealScreen() {
   }, []);
 
   const toggleAllergen = (tag: AllergenTag) => {
-    setTempAllergens(prev =>
-      prev.includes(tag) ? prev.filter(a => a !== tag) : [...prev, tag],
-    );
+    setTempAllergens(prev => (prev.includes(tag) ? prev.filter(a => a !== tag) : [...prev, tag]));
   };
 
   const saveAllergens = useCallback(() => {
@@ -306,6 +305,7 @@ export default function DealScreen() {
       addToDealHistory(currentDeal.data.id);
       setTimeout(() => {
         const dealHistory = getDealHistory();
+
         if (currentDeal.type === 'drm') {
           const drmMeal = pickDrmMeal(tempAllergens, dealHistory);
           if (drmMeal) {
@@ -317,18 +317,17 @@ export default function DealScreen() {
             return;
           }
         }
-        if (mode) {
-          const recipe = pickNextRecipe(mode, tempAllergens, dealHistory, constraints);
-          if (recipe) {
-            setCurrentDeal({ type: 'recipe', data: recipe });
-            setWhyText(getRandomWhy(recipe));
-            setCurrentDealId(recipe.id);
-            setOverlayLevel(0);
-            setCardKey(k => k + 1);
-          } else {
-            setCurrentDeal(null);
-            setNoMoreRecipes(true);
-          }
+
+        const next = pickNextRecipe(mode, tempAllergens, dealHistory, constraints);
+        if (next) {
+          setCurrentDeal({ type: 'recipe', data: next });
+          setWhyText(getRandomWhy(next));
+          setCurrentDealId(next.id);
+          setOverlayLevel(0);
+          setCardKey(k => k + 1);
+        } else {
+          setCurrentDeal(null);
+          setNoMoreRecipes(true);
         }
       }, 50);
     }
@@ -342,7 +341,7 @@ export default function DealScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>Loading…</Text>
+          <ActivityIndicator size="large" color={colors.accentBlue} />
         </View>
       </View>
     );
@@ -357,12 +356,8 @@ export default function DealScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>
-            That's all for {isValidMode ? mode : 'tonight'}
-          </Text>
-          <Text style={styles.emptySubtitle}>
-            You've seen {seenCount} options
-          </Text>
+          <Text style={styles.emptyTitle}>That’s all for {isValidMode ? mode : 'tonight'}</Text>
+          <Text style={styles.emptySubtitle}>You’ve seen {seenCount} options</Text>
 
           <TouchableOpacity
             style={styles.resetTonightButton}
@@ -395,7 +390,6 @@ export default function DealScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Idle-nudge wrapper (Reanimated) around the card */}
       <Animated.View style={[styles.cardWrapper, idleNudgeStyle]}>
         {currentDeal && (
           <DecisionCard
@@ -415,13 +409,9 @@ export default function DealScreen() {
         )}
       </Animated.View>
 
-      {/* ── Back button (glass, top-left, only at level 0) ────────── */}
       {overlayLevel === 0 && (
         <TouchableOpacity
-          style={[
-            styles.backButton,
-            { top: insets.top + spacing.sm },
-          ]}
+          style={[styles.backButton, { top: insets.top + spacing.sm }]}
           onPress={() => router.replace('/tonight')}
           activeOpacity={0.7}
           accessibilityRole="button"
@@ -464,14 +454,9 @@ export default function DealScreen() {
                   accessibilityState={{ checked: tempAllergens.includes(tag) }}
                 >
                   <View
-                    style={[
-                      styles.checkbox,
-                      tempAllergens.includes(tag) && styles.checkboxChecked,
-                    ]}
+                    style={[styles.checkbox, tempAllergens.includes(tag) && styles.checkboxChecked]}
                   >
-                    {tempAllergens.includes(tag) && (
-                      <Check size={16} color={colors.textInverse} />
-                    )}
+                    {tempAllergens.includes(tag) && <Check size={16} color={colors.textInverse} />}
                   </View>
                   <Text style={styles.allergenLabel}>{label}</Text>
                 </TouchableOpacity>
@@ -494,14 +479,10 @@ export default function DealScreen() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.textPrimary, // Dark bg matches card fallback
+    backgroundColor: colors.textPrimary,
   },
   cardWrapper: {
     flex: 1,
@@ -562,7 +543,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textDecorationLine: 'underline',
   },
-  // Modal styles (kept for allergy management)
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
@@ -633,7 +613,7 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     padding: spacing.lg,
-    paddingBottom: spacing.xl,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
