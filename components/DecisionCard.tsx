@@ -60,6 +60,9 @@ import { AllergyIndicator } from './AllergyIndicator';
 // ---------------------------------------------------------------------------
 
 const SWIPE_THRESHOLD = 120;
+
+/** Module-level warn-once set: [HERO_FALLBACK_FRAME] fires once per recipeId per session */
+const warnedHeroFallback = new Set<string>();
 const SWIPE_OUT_DURATION = 250;
 /** Velocity gate: fast flick dismisses even under distance threshold */
 const SWIPE_VELOCITY_THRESHOLD = 800;
@@ -238,11 +241,13 @@ export function DecisionCard({
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;
 
-  // Warn once per recipe when using fallback framing (center, non-safe-frame)
-  const loggedFramingRef = useRef<string | null>(null);
-  if (!useSafeFrame && loggedFramingRef.current !== recipe.id) {
-    loggedFramingRef.current = recipe.id;
-    console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.imageKey });
+  // Warn once per recipeId per session (module lifetime)
+  if (!useSafeFrame) {
+    const warnKey = `${recipe.id}:${recipe.imageKey ?? 'none'}`;
+    if (!warnedHeroFallback.has(warnKey)) {
+      warnedHeroFallback.add(warnKey);
+      console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.imageKey });
+    }
   }
 
   // -----------------------------------------------------------------------
