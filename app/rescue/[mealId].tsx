@@ -118,7 +118,6 @@ export default function RescueChecklistScreen() {
     setPendingHeroTransition({
       destKey: `deal:${mealId}`,
       sourceRect: src,
-      createdAt: Date.now(),
     });
   }
 
