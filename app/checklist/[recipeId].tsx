@@ -112,7 +112,6 @@ export default function ChecklistScreen() {
     setPendingHeroTransition({
       destKey: `deal:${recipeId}`,
       sourceRect: src,
-      createdAt: Date.now(),
     });
   }
 
