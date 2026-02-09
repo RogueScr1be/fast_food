@@ -61,6 +61,7 @@ export default function ChecklistScreen() {
   const [showClone, setShowClone] = useState(transition !== null);
   const mountedRef = useRef(true);
   const heroRectRef = useRef<HeroRect | null>(null);
+  const heroRectRef = useRef<TransitionRect | null>(null);
   const destReceivedRef = useRef(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
