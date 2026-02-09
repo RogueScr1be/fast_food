@@ -332,7 +332,7 @@ does `scale: 1.0 → 1.04 → 1.0` using `withSequence(withSpring(1.04, latex), 
 - Applied to both checklist and rescue screens
 - No confetti, no sound, no new copy
 
-### Motion Audit Complete (Phase E, do not regress)
+### Motion Audit Complete (Phase E final, do not regress)
 
 Every `withSpring`/`withTiming` call in shipped code has been audited.
 Status: all use named profiles OR have documented inline exceptions.

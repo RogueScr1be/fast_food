@@ -17,7 +17,7 @@ jest.mock('react-native-reanimated', () => {
     useAnimatedStyle: (fn: () => unknown) => fn,
     withTiming,
     withSequence,
-    Easing: { ease: 'ease', inOut: () => 'inOut', out: () => 'out' },
+    Easing: { ease: 'ease', inOut: () => 'inOut', out: () => 'out', bezier: () => 'bezier' },
   };
 });
 

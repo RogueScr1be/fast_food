@@ -33,6 +33,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Utensils, User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import { whisper } from '../lib/ui/motion';
 import {
   setSelectedMode,
   getSelectedMode,
@@ -254,12 +255,12 @@ export default function TonightScreen() {
     router.push('/deal');
 
     // Fade clone + scrim out; cleanup via completion callback (no setTimeout)
-    cloneOpacity.value = withTiming(0, { duration: FADE_OUT_DURATION }, (finished) => {
+    cloneOpacity.value = withTiming(0, { ...whisper, duration: FADE_OUT_DURATION }, (finished) => {
       if (finished) {
         runOnJS(cleanup)();
       }
     });
-    scrimOpacity.value = withTiming(0, { duration: FADE_OUT_DURATION });
+    scrimOpacity.value = withTiming(0, { ...whisper, duration: FADE_OUT_DURATION });
   }, [cloneOpacity, scrimOpacity, cleanup]);
 
   const measureAndTransition = useCallback(
@@ -310,7 +311,7 @@ export default function TonightScreen() {
           });
           cloneH.value = withTiming(SCREEN_HEIGHT, timingConfig);
           cloneRadius.value = withTiming(0, timingConfig);
-          scrimOpacity.value = withTiming(1, { duration: EXPAND_DURATION * 0.6 });
+          scrimOpacity.value = withTiming(1, { ...whisper, duration: Math.round(EXPAND_DURATION * 0.6) });
         },
       );
     },
@@ -713,7 +714,7 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   ctaSection: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md, // 16px (narrower than mode container's 24px)
     paddingTop: spacing.sm,
     zIndex: 1,
   },
