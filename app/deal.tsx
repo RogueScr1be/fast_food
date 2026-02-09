@@ -1,16 +1,18 @@
 /**
  * Deal Screen — Full-Screen Editorial Card Experience
  *
+ * Phase 1.3: Chrome-free, full-bleed card with glass overlay + idle affordance.
+ *
  * - Shows one recipe at a time (edge-to-edge hero image)
- * - Swipe-to-pass gestures handled by DecisionCard (disabled for DRM)
+ * - Swipe-to-pass gestures handled by DecisionCard
  * - Glass overlay (level 0/1/2) managed as controlled state here
- * - Idle affordance: staged lift + nudge (first session only)
+ * - Idle affordance: staged silent onboarding (first session only)
  * - DRM insertion after 3 passes OR 45 seconds
- * - Accept → /checklist/[recipeId]
- * - Back chevron → /tonight (replace)
+ * - Accept → navigate to /checklist/[recipeId]
+ * - Back chevron → /tonight (deterministic)
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,13 +22,27 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { useAnimatedStyle } from 'react-native-reanimated';
-import { router } from 'expo-router';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  withSpring,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
+import { oak, whisper } from '@/lib/ui/motion';
+import {
+  consumePendingHeroTransition,
+  type PendingHeroTransition,
+} from '@/lib/ui/heroTransition';
+
 import {
   getSelectedMode,
   setSelectedMode,
@@ -36,7 +52,6 @@ import {
   setCurrentDealId,
   addToDealHistory,
   resetDealState,
-  incrementPassCount,
   getPassCount,
   getDrmInserted,
   setDrmInserted,
@@ -51,16 +66,16 @@ import {
   pickDrmMeal,
   getRandomWhy,
   hasConflictingAllergens,
+  getAnyMealById,
 } from '../lib/seeds';
-import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 
+import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 
-import { useIdleAffordance } from '../hooks/useIdleAffordance';
-import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
-
-const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
+import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+import { useIdleAffordance } from '@/hooks/useIdleAffordance';
+import { getImageSourceSafe } from '@/lib/seeds/images';
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -77,7 +92,15 @@ type CurrentDeal =
   | { type: 'drm'; data: DrmSeed }
   | null;
 
+const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
+
 export default function DealScreen() {
+  const params = useLocalSearchParams<{ resume?: string }>();
+  const resumeId = typeof params.resume === 'string' ? params.resume : undefined;
+
+  const insets = useSafeAreaInsets();
+  const { width: winW, height: winH } = useWindowDimensions();
+
   const [currentDeal, setCurrentDeal] = useState<CurrentDeal>(null);
   const [whyText, setWhyText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -95,14 +118,14 @@ export default function DealScreen() {
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
 
-  // StrictMode re-init guard
+  // Session ID guard (StrictMode + re-entry)
   const [sessionId] = useState(0);
   const lastInitSession = useRef(-1);
 
   // Card generation key — increments on each new card to reset idle timer
   const [cardKey, setCardKey] = useState(0);
 
-  // Ensure we have a mode
+  // Ensure mode exists
   const [mode] = useState(() => {
     const savedMode = getSelectedMode();
     if (savedMode) return savedMode;
@@ -110,11 +133,101 @@ export default function DealScreen() {
     setSelectedMode(randomMode);
     return randomMode;
   });
-
   const constraints = getConstraints();
   const isValidMode = mode === 'fancy' || mode === 'easy' || mode === 'cheap';
 
-  const insets = useSafeAreaInsets();
+  // ---------------------------------------------------------------------------
+  // (NEW) Checklist → Deal “expand to full hero” transition
+  // ---------------------------------------------------------------------------
+
+  const pendingEnterRef = useRef<PendingHeroTransition | null>(null);
+  const [showEnterClone, setShowEnterClone] = useState(false);
+
+  const enterX = useSharedValue(0);
+  const enterY = useSharedValue(0);
+  const enterW = useSharedValue(0);
+  const enterH = useSharedValue(0);
+  const enterOpacity = useSharedValue(0);
+  const contentOpacity = useSharedValue(1);
+
+  const resumeMeal = useMemo(() => {
+    if (!resumeId) return null;
+    return getAnyMealById(resumeId);
+  }, [resumeId]);
+
+  // Consume pending transition on mount if we’re returning from checklist
+  useEffect(() => {
+    if (!resumeId) return;
+
+    const pending = consumePendingHeroTransition(`deal:${resumeId}`);
+    if (!pending) return;
+
+    pendingEnterRef.current = pending;
+
+    // Initialize clone at source rect
+    enterX.value = pending.sourceRect.x;
+    enterY.value = pending.sourceRect.y;
+    enterW.value = pending.sourceRect.width;
+    enterH.value = pending.sourceRect.height;
+    enterOpacity.value = 1;
+
+    // Hide underlying content until the clone expands
+    contentOpacity.value = 0;
+
+    setShowEnterClone(true);
+
+    // Animate clone to full-screen (Oak), then fade it out (Whisper 120ms),
+    // while fading content in (Whisper).
+    enterX.value = withSpring(0, oak);
+    enterY.value = withSpring(0, oak);
+    enterW.value = withSpring(winW, oak);
+    enterH.value = withSpring(winH, oak);
+
+    // Settle delay mirrors checklist reverse-box quality
+    const settleMs = 450;
+
+    const t = setTimeout(() => {
+      contentOpacity.value = withTiming(1, whisper);
+      enterOpacity.value = withTiming(
+        0,
+        { ...whisper, duration: 120 },
+        (finished) => {
+          if (finished) {
+            runOnJS(setShowEnterClone)(false);
+            pendingEnterRef.current = null;
+          }
+        },
+      );
+    }, settleMs);
+
+    return () => {
+      clearTimeout(t);
+      cancelAnimation(enterX);
+      cancelAnimation(enterY);
+      cancelAnimation(enterW);
+      cancelAnimation(enterH);
+      cancelAnimation(enterOpacity);
+      cancelAnimation(contentOpacity);
+      setShowEnterClone(false);
+      pendingEnterRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeId, winW, winH]);
+
+  const enterCloneStyle = useAnimatedStyle(() => ({
+    position: 'absolute',
+    left: enterX.value,
+    top: enterY.value,
+    width: enterW.value,
+    height: enterH.value,
+    opacity: enterOpacity.value,
+    borderRadius: 0,
+    overflow: 'hidden',
+  }));
+
+  const contentFadeStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+  }));
 
   // ---------------------------------------------------------------------------
   // Idle affordance — staged silent onboarding (first session only)
@@ -147,8 +260,8 @@ export default function DealScreen() {
   }, [affordanceEligible]);
 
   useEffect(() => {
-  resetIdle();
-}, [cardKey, resetIdle]);
+    resetIdle();
+  }, [cardKey, resetIdle]);
 
   const idleNudgeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: nudgeX.value }],
@@ -176,7 +289,7 @@ export default function DealScreen() {
         setOverlayLevel(0);
         setNoMoreRecipes(false);
         setIsLoading(false);
-        setCardKey(k => k + 1);
+        setCardKey((k) => k + 1);
         return;
       }
       setDrmInserted(true);
@@ -184,12 +297,8 @@ export default function DealScreen() {
 
     let recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, constraints);
 
-    if (!recipe && constraints.length > 0) {
-      recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, []);
-    }
-    if (!recipe && excludeAllergens.length > 0) {
-      recipe = pickNextRecipe(mode, [], dealHistory, []);
-    }
+    if (!recipe && constraints.length > 0) recipe = pickNextRecipe(mode, excludeAllergens, dealHistory, []);
+    if (!recipe && excludeAllergens.length > 0) recipe = pickNextRecipe(mode, [], dealHistory, []);
 
     if (recipe) {
       setCurrentDeal({ type: 'recipe', data: recipe });
@@ -201,11 +310,11 @@ export default function DealScreen() {
       setCurrentDeal(null);
       setNoMoreRecipes(true);
     }
-
     setIsLoading(false);
-    setCardKey(k => k + 1);
+    setCardKey((k) => k + 1);
   }, [mode, constraints, drmTimerTriggered]);
 
+  // Init session
   useEffect(() => {
     if (lastInitSession.current === sessionId) return;
     lastInitSession.current = sessionId;
@@ -216,41 +325,52 @@ export default function DealScreen() {
       setDrmTimerTriggered(true);
     }, DRM_TIME_THRESHOLD_MS);
 
+    // If we came back from checklist with a specific meal, show it.
+    if (resumeMeal) {
+      const isDrm = (resumeMeal as any).kind === 'drm' || (resumeMeal as any).type === 'drm';
+      setCurrentDeal(isDrm ? ({ type: 'drm', data: resumeMeal as DrmSeed } as CurrentDeal) : ({ type: 'recipe', data: resumeMeal as RecipeSeed } as CurrentDeal));
+      setWhyText(getRandomWhy(resumeMeal as any));
+      setCurrentDealId((resumeMeal as any).id);
+      setOverlayLevel(0);
+      setNoMoreRecipes(false);
+      setIsLoading(false);
+      setCardKey((k) => k + 1);
+      return () => {
+        if (drmTimerRef.current) clearTimeout(drmTimerRef.current);
+      };
+    }
+
     dealNextCard();
 
     return () => {
       if (drmTimerRef.current) clearTimeout(drmTimerRef.current);
     };
-  }, [sessionId, dealNextCard]);
+  }, [sessionId, dealNextCard, resumeMeal]);
 
   useEffect(() => {
     setLocalExcludeAllergens(getExcludeAllergens());
   }, [showAllergyModal]);
 
   // ---------------------------------------------------------------------------
-  // Handlers (REAL implementations — no stubs)
+  // Handlers
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
-    if (!currentDeal) return;
-
     markAffordanceSeen();
     resetIdle();
 
-    // Go to the standard checklist for BOTH recipe + DRM.
+    if (!currentDeal) return;
+
+    addToDealHistory(currentDeal.data.id);
     router.push(`/checklist/${currentDeal.data.id}`);
   }, [currentDeal, markAffordanceSeen, resetIdle]);
 
   const handlePass = useCallback(() => {
-    if (!currentDeal) return;
-
     markAffordanceSeen();
     resetIdle();
 
-    // Mark as seen + increment pass count, then deal next.
+    if (!currentDeal) return;
     addToDealHistory(currentDeal.data.id);
-    incrementPassCount();
-    setOverlayLevel(0);
     dealNextCard();
   }, [currentDeal, markAffordanceSeen, resetIdle, dealNextCard]);
 
@@ -265,9 +385,8 @@ export default function DealScreen() {
 
   const handleToggleExpand = useCallback(() => {
     markAffordanceSeen();
-    resetIdle();
-    setOverlayLevel(prev => (prev === 0 ? 1 : 0));
-  }, [markAffordanceSeen, resetIdle]);
+    setOverlayLevel((prev) => (prev === 0 ? 1 : 0));
+  }, [markAffordanceSeen]);
 
   const handleShuffle = useCallback(() => {
     resetDealState();
@@ -286,13 +405,8 @@ export default function DealScreen() {
   // Allergy modal handlers
   // ---------------------------------------------------------------------------
 
-  const _openAllergyModal = useCallback(() => {
-    setTempAllergens(getExcludeAllergens());
-    setShowAllergyModal(true);
-  }, []);
-
   const toggleAllergen = (tag: AllergenTag) => {
-    setTempAllergens(prev => (prev.includes(tag) ? prev.filter(a => a !== tag) : [...prev, tag]));
+    setTempAllergens((prev) => (prev.includes(tag) ? prev.filter((a) => a !== tag) : [...prev, tag]));
   };
 
   const saveAllergens = useCallback(() => {
@@ -304,7 +418,6 @@ export default function DealScreen() {
       addToDealHistory(currentDeal.data.id);
       setTimeout(() => {
         const dealHistory = getDealHistory();
-
         if (currentDeal.type === 'drm') {
           const drmMeal = pickDrmMeal(tempAllergens, dealHistory);
           if (drmMeal) {
@@ -312,21 +425,22 @@ export default function DealScreen() {
             setWhyText(getRandomWhy(drmMeal));
             setCurrentDealId(drmMeal.id);
             setOverlayLevel(0);
-            setCardKey(k => k + 1);
+            setCardKey((k) => k + 1);
             return;
           }
         }
-
-        const next = pickNextRecipe(mode, tempAllergens, dealHistory, constraints);
-        if (next) {
-          setCurrentDeal({ type: 'recipe', data: next });
-          setWhyText(getRandomWhy(next));
-          setCurrentDealId(next.id);
-          setOverlayLevel(0);
-          setCardKey(k => k + 1);
-        } else {
-          setCurrentDeal(null);
-          setNoMoreRecipes(true);
+        if (mode) {
+          const recipe = pickNextRecipe(mode, tempAllergens, dealHistory, constraints);
+          if (recipe) {
+            setCurrentDeal({ type: 'recipe', data: recipe });
+            setWhyText(getRandomWhy(recipe));
+            setCurrentDealId(recipe.id);
+            setOverlayLevel(0);
+            setCardKey((k) => k + 1);
+          } else {
+            setCurrentDeal(null);
+            setNoMoreRecipes(true);
+          }
         }
       }, 50);
     }
@@ -382,14 +496,16 @@ export default function DealScreen() {
   }
 
   // ---------------------------------------------------------------------------
-  // Render: Main deal screen — full-bleed card
+  // Render: Main
   // ---------------------------------------------------------------------------
 
   const modeLabel = isValidMode ? mode : undefined;
+  const cloneMealForEnter = resumeMeal && pendingEnterRef.current ? resumeMeal : null;
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.cardWrapper, idleNudgeStyle]}>
+      {/* Underlying card content (fades in when entering from checklist) */}
+      <Animated.View style={[styles.cardWrapper, idleNudgeStyle, contentFadeStyle]}>
         {currentDeal && (
           <DecisionCard
             recipe={currentDeal.data}
@@ -408,6 +524,18 @@ export default function DealScreen() {
         )}
       </Animated.View>
 
+      {/* (NEW) Enter clone: checklist hero -> full screen hero */}
+      {showEnterClone && cloneMealForEnter && (
+        <Animated.View pointerEvents="none" style={enterCloneStyle}>
+          <Animated.Image
+            source={getImageSourceSafe(cloneMealForEnter as any)}
+            style={{ width: '100%', height: '100%' }}
+            resizeMode="cover"
+          />
+        </Animated.View>
+      )}
+
+      {/* Back button */}
       {overlayLevel === 0 && (
         <TouchableOpacity
           style={[styles.backButton, { top: insets.top + spacing.sm }]}
@@ -422,17 +550,12 @@ export default function DealScreen() {
       )}
 
       {/* Allergy Modal */}
-      <Modal
-        visible={showAllergyModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowAllergyModal(false)}
-      >
+      <Modal visible={showAllergyModal} animationType="slide" transparent onRequestClose={() => setShowAllergyModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHandle} />
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>I'm allergic to...</Text>
+              <Text style={styles.modalTitle}>I’m allergic to…</Text>
               <TouchableOpacity
                 style={styles.modalClose}
                 onPress={() => setShowAllergyModal(false)}
@@ -442,6 +565,7 @@ export default function DealScreen() {
                 <X size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
+
             <ScrollView style={styles.allergenList}>
               {ALL_ALLERGENS.map(({ tag, label }) => (
                 <TouchableOpacity
@@ -452,15 +576,14 @@ export default function DealScreen() {
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: tempAllergens.includes(tag) }}
                 >
-                  <View
-                    style={[styles.checkbox, tempAllergens.includes(tag) && styles.checkboxChecked]}
-                  >
+                  <View style={[styles.checkbox, tempAllergens.includes(tag) && styles.checkboxChecked]}>
                     {tempAllergens.includes(tag) && <Check size={16} color={colors.textInverse} />}
                   </View>
                   <Text style={styles.allergenLabel}>{label}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
+
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.saveButton}
@@ -477,6 +600,10 @@ export default function DealScreen() {
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   container: {
