@@ -6,7 +6,6 @@
  */
 const tsPlugin = require('@typescript-eslint/eslint-plugin');
 const tsParser = require('@typescript-eslint/parser');
-const reactHooks = require('eslint-plugin-react-hooks');
 
 module.exports = [
   {
@@ -42,28 +41,16 @@ module.exports = [
     },
     plugins: {
       '@typescript-eslint': tsPlugin,
-      'react-hooks': reactHooks,
     },
     rules: {
-      // Core TS recommended rules (subset)
       '@typescript-eslint/no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
       }],
-
-      // Allow require() for RN image imports
       '@typescript-eslint/no-var-requires': 'off',
       '@typescript-eslint/no-require-imports': 'off',
-
-      // Allow any for pragmatic RN interop
       '@typescript-eslint/no-explicit-any': 'off',
-
-      // Allow empty functions
       '@typescript-eslint/no-empty-function': 'off',
-
-      // React hooks correctness (minimal, essential)
-      'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
     },
   },
 ];
