@@ -8,6 +8,28 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
 
+// lib/state/persist.ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const KEY_HAS_SEEN_AFFORDANCE = 'ff:v1:hasSeenAffordance';
+
+export async function getHasSeenAffordance(): Promise<boolean> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_HAS_SEEN_AFFORDANCE);
+    return raw === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function setHasSeenAffordance(value: boolean): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEY_HAS_SEEN_AFFORDANCE, value ? 'true' : 'false');
+  } catch {
+    // no-op
+  }
+}
+
 // Versioned storage keys to allow future migrations
 const STORAGE_VERSION = 'v1';
 const KEYS = {
