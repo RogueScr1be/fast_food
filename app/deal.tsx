@@ -15,6 +15,7 @@
 import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
 import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import {
   View,
   Text,
@@ -101,7 +102,7 @@ export default function DealScreen() {
   const resumeId = typeof params.resume === 'string' ? params.resume : undefined;
 
   const insets = useSafeAreaInsets();
-  const { width: winW, height: winH } = useWindowDimensions();
+  const { width: windowW, height: windowH } = useWindowDimensions();
 
   const [currentDeal, setCurrentDeal] = useState<CurrentDeal>(null);
   const [whyText, setWhyText] = useState('');
@@ -357,14 +358,22 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
-    markAffordanceSeen();
-    resetIdle();
+  markAffordanceSeen();
+  resetIdle();
 
-    if (!currentDeal) return;
+  if (!currentDeal) return;
 
-    addToDealHistory(currentDeal.data.id);
-    router.push(`/checklist/${currentDeal.data.id}`);
-  }, [currentDeal, markAffordanceSeen, resetIdle]);
+  // Record “pending hero transition” so checklist can animate
+  const imageSource = getImageSourceSafe(currentDeal.data);
+  setPendingHeroTransition({
+    // Full-screen source rect (good enough; matches “full screen hero pulls back”)
+    sourceRect: { x: 0, y: 0, width: windowW, height: windowH },
+    imageSource,
+    destKey: `checklist:${currentDeal.data.id}`,
+  });
+
+  router.push(`/checklist/${currentDeal.data.id}`);
+}, [markAffordanceSeen, resetIdle, currentDeal, windowW, windowH]);
 
   const handlePass = useCallback(() => {
     markAffordanceSeen();
