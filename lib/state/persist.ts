@@ -5,7 +5,6 @@
  * Deal state (passCount, drmInserted, etc.) remains ephemeral and resets each session.
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
 
 // lib/state/persist.ts
@@ -189,27 +188,6 @@ export async function clearPrefs(): Promise<void> {
 /**
  * Check if user has seen the idle affordance. Default false.
  */
-export async function getHasSeenAffordance(): Promise<boolean> {
-  try {
-    const val = await AsyncStorage.getItem(KEYS.hasSeenAffordance);
-    return val === 'true';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Mark that user has seen (or interacted before) the idle affordance.
- * Once set, the affordance never fires again.
- */
-export async function setHasSeenAffordance(): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.hasSeenAffordance, 'true');
-  } catch {
-    // Silent — non-critical
-  }
-}
-
 /**
  * Export keys for testing purposes
  */
