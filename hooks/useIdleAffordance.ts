@@ -10,6 +10,7 @@
  */
 
 import { useRef, useCallback, useEffect } from 'react';
+import type { SharedValue } from 'react-native-reanimated';
 import {
   useSharedValue,
   withTiming,
@@ -26,8 +27,8 @@ export interface UseIdleAffordanceOptions {
 }
 
 export interface UseIdleAffordanceReturn {
-  nudgeX: ReturnType<typeof useSharedValue<number>>;
-  overlayLiftY: ReturnType<typeof useSharedValue<number>>;
+  nudgeX: SharedValue<number>;
+  overlayLiftY: SharedValue<number>;
   isIdle: boolean;
   resetIdle: () => void;
 }
@@ -38,6 +39,7 @@ const DEFAULT_NUDGE_DELAY_MS = 1500;
 const NUDGE_PX = idle.nudgePx; // 12
 const LIFT_PX = idle.liftPx; // 40
 
+// Keep these “pedagogical” timings (not physical UI response)
 const NUDGE_DURATION_MS = 600;
 const LIFT_DURATION_MS = 800;
 const RESET_DURATION_MS = 200;
@@ -51,8 +53,8 @@ export function useIdleAffordance(
     nudgeDelayMs = DEFAULT_NUDGE_DELAY_MS,
   } = options;
 
-  const nudgeX = useSharedValue(0);
-  const overlayLiftY = useSharedValue(0);
+  const nudgeX = useSharedValue<number>(0);
+  const overlayLiftY = useSharedValue<number>(0);
 
   const isIdleRef = useRef(false);
   const firedRef = useRef(false);
@@ -72,6 +74,7 @@ export function useIdleAffordance(
   }, []);
 
   const triggerStep2 = useCallback(() => {
+    // Horizontal “swipe affordance” pulse
     nudgeX.value = withSequence(
       withTiming(NUDGE_PX, {
         duration: NUDGE_DURATION_MS,
@@ -87,11 +90,13 @@ export function useIdleAffordance(
   const triggerStep1 = useCallback(() => {
     isIdleRef.current = true;
 
+    // Lift the glass overlay slightly
     overlayLiftY.value = withTiming(LIFT_PX, {
       duration: LIFT_DURATION_MS,
       easing: Easing.out(Easing.ease),
     });
 
+    // Schedule Step 2 after Step 1 has begun
     timer2Ref.current = setTimeout(() => {
       triggerStep2();
     }, nudgeDelayMs);
@@ -99,8 +104,8 @@ export function useIdleAffordance(
 
   const startSequence = useCallback(() => {
     if (firedRef.current) return;
-    clearTimers();
 
+    clearTimers();
     timer1Ref.current = setTimeout(() => {
       firedRef.current = true;
       triggerStep1();
@@ -114,6 +119,7 @@ export function useIdleAffordance(
     cancelAnimation(nudgeX);
     cancelAnimation(overlayLiftY);
 
+    // Snap back gently (do NOT restart timers)
     nudgeX.value = withTiming(0, {
       duration: RESET_DURATION_MS,
       easing: Easing.out(Easing.ease),
@@ -128,6 +134,7 @@ export function useIdleAffordance(
     if (enabled) {
       if (!firedRef.current) startSequence();
     } else {
+      // If disabled (seen already), guarantee everything is reset and quiet.
       clearTimers();
       isIdleRef.current = false;
 
