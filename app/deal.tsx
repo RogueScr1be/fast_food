@@ -14,6 +14,9 @@
 
 import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
 import { useIdleAffordance } from '@/hooks/useIdleAffordance';
+import { useFocusEffect } from '@react-navigation/native';
+import { consumePendingHeroTransition } from '@/lib/ui/heroTransition';
+import { Oak, whisper } from '@/lib/ui/motion';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import {
@@ -109,6 +112,27 @@ export default function DealScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [noMoreRecipes, setNoMoreRecipes] = useState(false);
 
+  // --- Checklist -> Deal expansion clone overlay ---
+  const [backClone, setBackClone] = useState<{
+    imageSource: any;
+    sourceRect: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+
+  const backCloneX = useSharedValue(0);
+  const backCloneY = useSharedValue(0);
+  const backCloneW = useSharedValue(0);
+  const backCloneH = useSharedValue(0);
+  const backCloneOpacity = useSharedValue(0);
+
+  const backCloneStyle = useAnimatedStyle(() => ({
+    position: 'absolute',
+    left: backCloneX.value,
+    top: backCloneY.value,
+    width: backCloneW.value,
+    height: backCloneH.value,
+    opacity: backCloneOpacity.value,
+  }));
+
   // Glass overlay level (controlled here, passed into DecisionCard)
   const [overlayLevel, setOverlayLevel] = useState<OverlayLevel>(0);
 
@@ -157,6 +181,42 @@ export default function DealScreen() {
     if (!resumeId) return null;
     return getAnyMealById(resumeId);
   }, [resumeId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Deal hero is full-screen: (0,0,w,h)
+      const pending = consumePendingHeroTransition(`deal:${getCurrentDealId?.() ?? ''}`) 
+        ?? consumePendingHeroTransition(`deal:${currentDeal?.data?.id ?? ''}`);
+
+      if (!pending) return;
+
+      setBackClone({ imageSource: pending.imageSource, sourceRect: pending.sourceRect });
+
+      // init at checklist hero rect
+      backCloneX.value = pending.sourceRect.x;
+      backCloneY.value = pending.sourceRect.y;
+      backCloneW.value = pending.sourceRect.width;
+      backCloneH.value = pending.sourceRect.height;
+      backCloneOpacity.value = 1;
+
+      // animate to full-screen
+      backCloneX.value = withSpring(0, Oak);
+      backCloneY.value = withSpring(0, Oak);
+      backCloneW.value = withSpring(windowW, Oak);
+      backCloneH.value = withSpring(windowH, Oak);
+
+      // fade out after settle so the real DecisionCard is what remains
+      const t = setTimeout(() => {
+        backCloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, finished => {
+          if (finished) {
+            runOnJS(setBackClone)(null);
+          }
+        });
+      }, 450);
+
+      return () => clearTimeout(t);
+    }, [currentDeal, windowW, windowH]),
+  );
 
   // Consume pending transition on mount if we’re returning from checklist
   useEffect(() => {
@@ -455,6 +515,16 @@ export default function DealScreen() {
       }, 50);
     }
   }, [tempAllergens, currentDeal, mode, constraints]);
+
+  {backClone && (
+    <Animated.View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Animated.Image
+        source={backClone.imageSource}
+        style={backCloneStyle}
+        resizeMode="cover"
+      />
+    </Animated.View>
+  )}
 
   // ---------------------------------------------------------------------------
   // Render: Loading
