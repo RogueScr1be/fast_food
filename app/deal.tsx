@@ -6,22 +6,18 @@
  * - Shows one recipe at a time (edge-to-edge hero image)
  * - Swipe-to-pass gestures handled by DecisionCard
  * - Glass overlay (level 0/1/2) managed as controlled state here
- * - Idle affordance: subtle nudge + glass lift after ~7 s of inactivity
+ * - Idle affordance: subtle nudge + glass lift after ~4 then 5.5s inactivity
  * - DRM insertion after 3 passes OR 45 seconds
  * - Accept → navigate to /checklist or /rescue (no LockedTransition)
  * - Allergy modal still available
  */
 
-import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
-import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
-  ActivityIndicator,
   Modal,
   ScrollView,
 } from 'react-native';
@@ -29,6 +25,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
+
+import { useIdleAffordance } from '@/hooks/useIdleAffordance';
+import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
   getSelectedMode,
@@ -48,7 +48,6 @@ import {
   DRM_TIME_THRESHOLD_MS,
 } from '../lib/state/ffSession';
 
-const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
 import {
   pickNextRecipe,
   pickDrmMeal,
@@ -58,8 +57,8 @@ import {
 import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
-import { useIdleAffordance } from '../hooks/useIdleAffordance';
-import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
+
+const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -124,35 +123,35 @@ export default function DealScreen() {
 
   const [affordanceEligible, setAffordanceEligible] = useState(false);
 
-useEffect(() => {
-  let mounted = true;
-  (async () => {
-    const seen = await getHasSeenAffordance();
-    if (!mounted) return;
-    setAffordanceEligible(!seen);
-  })();
-  return () => {
-    mounted = false;
-  };
-}, []);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const seen = await getHasSeenAffordance();
+      if (!mounted) return;
+      setAffordanceEligible(!seen);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const { nudgeX, overlayLiftY, resetIdle } = useIdleAffordance({
-  enabled: affordanceEligible,
-  liftDelayMs: 4000,
-  nudgeDelayMs: 1500,
-});
+    enabled: affordanceEligible,
+    liftDelayMs: 4000,
+    nudgeDelayMs: 1500,
+  });
 
   /** Mark affordance as seen + cancel. Called on any user interaction. */
   const markAffordanceSeen = useCallback(() => {
-  if (!affordanceEligible) return;
-  setAffordanceEligible(false);
-  void setHasSeenAffordance(true);
-}, [affordanceEligible]);
+    if (!affordanceEligible) return;
+    setAffordanceEligible(false);
+    void setHasSeenAffordance(true);
+  }, [affordanceEligible]);
 
   // Reset idle on new card (but don't mark seen — just cancel current timers)
   useEffect(() => {
     resetIdle();
-  }, [cardKey]);
+  }, [cardKey, resetIdle]);
 
   // Reanimated animated style for the idle nudge wrapper
   const idleNudgeStyle = useAnimatedStyle(() => ({
@@ -245,24 +244,24 @@ useEffect(() => {
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
-  markAffordanceSeen();
-  resetIdle();
-  // existing accept logic...
-}, [markAffordanceSeen, resetIdle]);
+    markAffordanceSeen();
+    resetIdle();
+    // existing accept logic...
+  }, [markAffordanceSeen, resetIdle]);
 
-const handlePass = useCallback(() => {
-  markAffordanceSeen();
-  resetIdle();
-  // existing pass logic...
-}, [markAffordanceSeen, resetIdle]);
+  const handlePass = useCallback(() => {
+    markAffordanceSeen();
+    resetIdle();
+    // existing pass logic...
+  }, [markAffordanceSeen, resetIdle]);
 
-const handleOverlayLevelChange = useCallback((lvl: 0|1|2) => {
-  markAffordanceSeen();
-  resetIdle();
-  setOverlayLevel(lvl);
-}, [markAffordanceSeen, resetIdle]);
+  const handleOverlayLevelChange = useCallback((lvl: 0|1|2) => {
+    markAffordanceSeen();
+    resetIdle();
+    setOverlayLevel(lvl);
+  }, [markAffordanceSeen, resetIdle]);
 
-// If you have any touch/press that might trigger without intent, do NOT call markAffordanceSeen there.
+  // If you have any touch/press that might trigger without intent, do NOT call markAffordanceSeen there.
 
   /** Legacy toggle for backward compat */
   const handleToggleExpand = useCallback(() => {
@@ -344,7 +343,7 @@ const handleOverlayLevelChange = useCallback((lvl: 0|1|2) => {
     return (
       <View style={styles.container}>
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.accentBlue} />
+          <Text style={styles.emptyTitle}>Loading…</Text>
         </View>
       </View>
     );
@@ -635,7 +634,7 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     padding: spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
+    paddingBottom: spacing.xl,
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
