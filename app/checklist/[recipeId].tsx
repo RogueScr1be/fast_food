@@ -257,14 +257,15 @@ export default function ChecklistScreen() {
     <View style={styles.container}>
       {/* Hero image header */}
       <ChecklistHero
-        imageSource={getImageSource(meal.imageKey)}
-        title={meal.name}
-        progressText={`${completedCount} of ${totalSteps} steps`}
-        meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
-        recipe={recipe}
-        onHeroReady={handleHeroReady}
-        onBack={handleBackToDeal}
-      />
+      imageSource={imageSource}
+      title={title}
+      progressText={progressText}
+      meta={meta}
+      onHeroReady={(rect: HeroRect) => {
+        heroRectRef.current = rect;
+      }}
+      onBack={handleBack}
+    />
 
       {/* Progress bar below hero */}
       <Animated.View style={contentAnimStyle}>
