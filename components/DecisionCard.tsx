@@ -53,7 +53,6 @@ import { getImageSourceSafe } from '../lib/seeds/images';
 import { WhyWhisper } from './WhyWhisper';
 import { GlassOverlay, OverlayLevel } from './GlassOverlay';
 import type { GlassOverlayRef } from './GlassOverlay';
-import { AllergyIndicator } from './AllergyIndicator';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -245,7 +244,6 @@ export function DecisionCard({
     mode: modeLabel,
     isRescue: variant === 'rescue',
   });
-  const allergenCount = recipe.allergens.length;
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;
 
@@ -366,12 +364,6 @@ export function DecisionCard({
                   )}
                 </View>
               </View>
-
-              {/* Allergy indicator */}
-              <AllergyIndicator
-                count={allergenCount}
-                style={{ bottom: COLLAPSED_GLASS_HEIGHT + spacing.sm }}
-              />
 
               {/* Glass overlay */}
               <GlassOverlay

@@ -9,7 +9,7 @@
  * - Idle affordance: subtle nudge + glass lift after ~7 s of inactivity
  * - DRM insertion after 3 passes OR 45 seconds
  * - Accept → navigate to /checklist or /rescue (no LockedTransition)
- * - Allergy modal still available (triggered from AllergyIndicator in future)
+ * - Allergy modal still available
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -300,7 +300,7 @@ export default function DealScreen() {
   }, [dealNextCard]);
 
   // ---------------------------------------------------------------------------
-  // Allergy modal handlers (kept for future AllergyIndicator onPress)
+  // Allergy modal handlers
   // ---------------------------------------------------------------------------
 
   const _openAllergyModal = useCallback(() => {
@@ -449,7 +449,7 @@ export default function DealScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Allergy Modal (kept; will be triggered from AllergyIndicator in future) */}
+      {/* Allergy Modal */}
       <Modal
         visible={showAllergyModal}
         animationType="slide"
