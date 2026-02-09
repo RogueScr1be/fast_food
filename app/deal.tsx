@@ -147,9 +147,8 @@ export default function DealScreen() {
   }, [affordanceEligible]);
 
   useEffect(() => {
-    resetIdle();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardKey]);
+  resetIdle();
+}, [cardKey, resetIdle]);
 
   const idleNudgeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: nudgeX.value }],
