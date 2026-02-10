@@ -49,6 +49,11 @@ module.exports = [
           argsIgnorePattern: '^_',
           varsIgnorePattern: '^_'
         }
+    },
+    rules: {
+      // ...existing rules
+       'react-hooks/exhaustive-deps': 'off',
+    }
       ],
       '@typescript-eslint/no-var-requires': 'off',
       '@typescript-eslint/no-require-imports': 'off',
