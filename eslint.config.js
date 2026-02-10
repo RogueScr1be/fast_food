@@ -4,6 +4,7 @@
  * Catches undefined variables and missing imports that cause
  * silent web crashes. Intentionally minimal.
  */
+const hooksPlugin = require('eslint-plugin-react-hooks');
 const tsPlugin = require('@typescript-eslint/eslint-plugin');
 const tsParser = require('@typescript-eslint/parser');
 
@@ -37,16 +38,17 @@ module.exports = [
       parserOptions: {
         ecmaFeatures: { jsx: true },
         sourceType: 'module',
-      },
-    },
+  },
     plugins: {
       '@typescript-eslint': tsPlugin,
+      'react-hooks': hooksPlugin,
     },
+
     rules: {
-      '@typescript-eslint/no-unused-vars': ['warn', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-      }],
+     ...,
+     'react-hooks/rules-of-hooks': 'error',
+     'react-hooks/exhaustive-deps': 'warn',
+    }
       '@typescript-eslint/no-var-requires': 'off',
       '@typescript-eslint/no-require-imports': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
