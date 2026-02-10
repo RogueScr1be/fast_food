@@ -8,7 +8,14 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  useWindowDimensions,
+} from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import Animated, {
   cancelAnimation,
@@ -49,6 +56,7 @@ export default function ChecklistScreen() {
   const [done, setDone] = useState<boolean[]>(() => steps.map(() => false));
   useEffect(() => {
     setDone(steps.map(() => false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const allDone = done.length > 0 && done.every(Boolean);
@@ -111,6 +119,8 @@ export default function ChecklistScreen() {
 
     // Wait for hero layout (heroRectRef) with a short polling loop
     let raf = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
     const startWhenReady = () => {
       const r = heroRectRef.current;
       if (!r) {
@@ -124,20 +134,16 @@ export default function ChecklistScreen() {
       cloneH.value = withSpring(r.height, oak);
 
       const settleMs = 450;
-      const t = setTimeout(() => {
+      settleTimer = setTimeout(() => {
         contentOpacity.value = withTiming(1, whisper);
         cloneOpacity.value = withTiming(
           0,
           { ...whisper, duration: 120 },
           (finished) => {
-            if (finished) {
-              runOnJS(setPending)(null);
-            }
+            if (finished) runOnJS(setPending)(null);
           },
         );
       }, settleMs);
-
-      return () => clearTimeout(t);
     };
 
     raf = requestAnimationFrame(startWhenReady);
@@ -150,9 +156,11 @@ export default function ChecklistScreen() {
       cancelAnimation(cloneOpacity);
       cancelAnimation(contentOpacity);
       if (raf) cancelAnimationFrame(raf);
+      if (settleTimer) clearTimeout(settleTimer);
       setPending(null);
     };
-  }, [id, cloneX, cloneY, cloneW, cloneH, cloneOpacity, contentOpacity]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // ---------------------------------------------------------------------------
   // Back to Deal (reverse clone expansion)
@@ -165,6 +173,7 @@ export default function ChecklistScreen() {
     }
 
     const r = heroRectRef.current;
+
     // If we don't have a rect yet, still exit deterministically.
     if (!r) {
       router.replace(`/deal?resume=${recipe.id}`);
