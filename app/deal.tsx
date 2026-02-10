@@ -1,23 +1,16 @@
 /**
  * Deal Screen — Full-Screen Editorial Card Experience
  *
- * Phase 1.3: Chrome-free, full-bleed card with glass overlay + idle affordance.
- *
- * - Shows one recipe at a time (edge-to-edge hero image)
- * - Swipe-to-pass gestures handled by DecisionCard
- * - Glass overlay (level 0/1/2) managed as controlled state here
- * - Idle affordance: staged silent onboarding (first session only)
+ * - Full-bleed hero card (DecisionCard)
+ * - Swipe-to-pass (disabled for Rescue)
+ * - Glass overlay (level 0/1/2)
+ * - Idle affordance (4s lift → +1.5s nudge) first-session only
  * - DRM insertion after 3 passes OR 45 seconds
- * - Accept → navigate to /checklist/[recipeId]
- * - Back chevron → /tonight (deterministic)
+ * - Accept → /checklist/[recipeId] (with hero transition)
+ * - Back chevron → /tonight (replace)
  */
 
-import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
-import { useIdleAffordance } from '@/hooks/useIdleAffordance';
-import { useFocusEffect } from '@react-navigation/native';
-import { consumePendingHeroTransition } from '@/lib/ui/heroTransition';
-import { Oak, whisper } from '@/lib/ui/motion';
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -31,12 +24,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  withSpring,
   cancelAnimation,
   runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
@@ -45,6 +38,7 @@ import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/
 import { oak, whisper } from '@/lib/ui/motion';
 import {
   consumePendingHeroTransition,
+  setPendingHeroTransition,
   type PendingHeroTransition,
 } from '@/lib/ui/heroTransition';
 
@@ -82,6 +76,8 @@ import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist'
 import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import { getImageSourceSafe } from '@/lib/seeds/images';
 
+const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
+
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
   { tag: 'dairy', label: 'Dairy' },
@@ -97,8 +93,6 @@ type CurrentDeal =
   | { type: 'drm'; data: DrmSeed }
   | null;
 
-const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
-
 export default function DealScreen() {
   const params = useLocalSearchParams<{ resume?: string }>();
   const resumeId = typeof params.resume === 'string' ? params.resume : undefined;
@@ -110,27 +104,6 @@ export default function DealScreen() {
   const [whyText, setWhyText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [noMoreRecipes, setNoMoreRecipes] = useState(false);
-
-  // --- Checklist -> Deal expansion clone overlay ---
-  const [backClone, setBackClone] = useState<{
-    imageSource: any;
-    sourceRect: { x: number; y: number; width: number; height: number };
-  } | null>(null);
-
-  const backCloneX = useSharedValue(0);
-  const backCloneY = useSharedValue(0);
-  const backCloneW = useSharedValue(0);
-  const backCloneH = useSharedValue(0);
-  const backCloneOpacity = useSharedValue(0);
-
-  const backCloneStyle = useAnimatedStyle(() => ({
-    position: 'absolute',
-    left: backCloneX.value,
-    top: backCloneY.value,
-    width: backCloneW.value,
-    height: backCloneH.value,
-    opacity: backCloneOpacity.value,
-  }));
 
   // Glass overlay level (controlled here, passed into DecisionCard)
   const [overlayLevel, setOverlayLevel] = useState<OverlayLevel>(0);
@@ -144,7 +117,7 @@ export default function DealScreen() {
   const drmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [drmTimerTriggered, setDrmTimerTriggered] = useState(false);
 
-  // Session ID guard (StrictMode + re-entry)
+  // Session init guard (React 18 StrictMode double-mount protection)
   const [sessionId] = useState(0);
   const lastInitSession = useRef(-1);
 
@@ -163,7 +136,7 @@ export default function DealScreen() {
   const isValidMode = mode === 'fancy' || mode === 'easy' || mode === 'cheap';
 
   // ---------------------------------------------------------------------------
-  // (NEW) Checklist → Deal “expand to full hero” transition
+  // Checklist → Deal “expand to full hero” transition (reverse path)
   // ---------------------------------------------------------------------------
 
   const pendingEnterRef = useRef<PendingHeroTransition | null>(null);
@@ -181,43 +154,6 @@ export default function DealScreen() {
     return getAnyMealById(resumeId);
   }, [resumeId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      // Deal hero is full-screen: (0,0,w,h)
-      const pending = consumePendingHeroTransition(`deal:${getCurrentDealId?.() ?? ''}`) 
-        ?? consumePendingHeroTransition(`deal:${currentDeal?.data?.id ?? ''}`);
-
-      if (!pending) return;
-
-      setBackClone({ imageSource: pending.imageSource, sourceRect: pending.sourceRect });
-
-      // init at checklist hero rect
-      backCloneX.value = pending.sourceRect.x;
-      backCloneY.value = pending.sourceRect.y;
-      backCloneW.value = pending.sourceRect.width;
-      backCloneH.value = pending.sourceRect.height;
-      backCloneOpacity.value = 1;
-
-      // animate to full-screen
-      backCloneX.value = withSpring(0, Oak);
-      backCloneY.value = withSpring(0, Oak);
-      backCloneW.value = withSpring(windowW, Oak);
-      backCloneH.value = withSpring(windowH, Oak);
-
-      // fade out after settle so the real DecisionCard is what remains
-      const t = setTimeout(() => {
-        backCloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, finished => {
-          if (finished) {
-            runOnJS(setBackClone)(null);
-          }
-        });
-      }, 450);
-
-      return () => clearTimeout(t);
-    }, [currentDeal, windowW, windowH]),
-  );
-
-  // Consume pending transition on mount if we’re returning from checklist
   useEffect(() => {
     if (!resumeId) return;
 
@@ -226,28 +162,24 @@ export default function DealScreen() {
 
     pendingEnterRef.current = pending;
 
-    // Initialize clone at source rect
+    // Init clone at the checklist hero rect
     enterX.value = pending.sourceRect.x;
     enterY.value = pending.sourceRect.y;
     enterW.value = pending.sourceRect.width;
     enterH.value = pending.sourceRect.height;
     enterOpacity.value = 1;
 
-    // Hide underlying content until the clone expands
+    // Hide underlying content until clone expands
     contentOpacity.value = 0;
-
     setShowEnterClone(true);
 
-    // Animate clone to full-screen (Oak), then fade it out (Whisper 120ms),
-    // while fading content in (Whisper).
+    // Expand to full-screen
     enterX.value = withSpring(0, oak);
     enterY.value = withSpring(0, oak);
-    enterW.value = withSpring(winW, oak);
-    enterH.value = withSpring(winH, oak);
+    enterW.value = withSpring(windowW, oak);
+    enterH.value = withSpring(windowH, oak);
 
-    // Settle delay mirrors checklist reverse-box quality
     const settleMs = 450;
-
     const t = setTimeout(() => {
       contentOpacity.value = withTiming(1, whisper);
       enterOpacity.value = withTiming(
@@ -273,7 +205,7 @@ export default function DealScreen() {
       setShowEnterClone(false);
       pendingEnterRef.current = null;
     };
-  }, [resumeId, winW, winH]);
+  }, [resumeId, windowW, windowH, enterX, enterY, enterW, enterH, enterOpacity, contentOpacity]);
 
   const enterCloneStyle = useAnimatedStyle(() => ({
     position: 'absolute',
@@ -389,7 +321,11 @@ export default function DealScreen() {
     // If we came back from checklist with a specific meal, show it.
     if (resumeMeal) {
       const isDrm = (resumeMeal as any).kind === 'drm' || (resumeMeal as any).type === 'drm';
-      setCurrentDeal(isDrm ? ({ type: 'drm', data: resumeMeal as DrmSeed } as CurrentDeal) : ({ type: 'recipe', data: resumeMeal as RecipeSeed } as CurrentDeal));
+      setCurrentDeal(
+        isDrm
+          ? ({ type: 'drm', data: resumeMeal as DrmSeed } as CurrentDeal)
+          : ({ type: 'recipe', data: resumeMeal as RecipeSeed } as CurrentDeal),
+      );
       setWhyText(getRandomWhy(resumeMeal as any));
       setCurrentDealId((resumeMeal as any).id);
       setOverlayLevel(0);
@@ -408,6 +344,7 @@ export default function DealScreen() {
     };
   }, [sessionId, dealNextCard, resumeMeal]);
 
+  // Sync local allergen display
   useEffect(() => {
     setLocalExcludeAllergens(getExcludeAllergens());
   }, [showAllergyModal]);
@@ -417,22 +354,21 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
-  markAffordanceSeen();
-  resetIdle();
+    markAffordanceSeen();
+    resetIdle();
 
-  if (!currentDeal) return;
+    if (!currentDeal) return;
 
-  // Record “pending hero transition” so checklist can animate
-  const imageSource = getImageSourceSafe(currentDeal.data);
-  setPendingHeroTransition({
-    // Full-screen source rect (good enough; matches “full screen hero pulls back”)
-    sourceRect: { x: 0, y: 0, width: windowW, height: windowH },
-    imageSource,
-    destKey: `checklist:${currentDeal.data.id}`,
-  });
+    // Seed the checklist “pull back into a box” transition.
+    // Deal hero is full-screen, so source rect is the full window.
+    setPendingHeroTransition({
+      sourceRect: { x: 0, y: 0, width: windowW, height: windowH },
+      imageSource: getImageSourceSafe(currentDeal.data),
+      destKey: `checklist:${currentDeal.data.id}`,
+    });
 
-  router.push(`/checklist/${currentDeal.data.id}`);
-}, [markAffordanceSeen, resetIdle, currentDeal, windowW, windowH]);
+    router.push(`/checklist/${currentDeal.data.id}`);
+  }, [markAffordanceSeen, resetIdle, currentDeal, windowW, windowH]);
 
   const handlePass = useCallback(() => {
     markAffordanceSeen();
@@ -475,7 +411,9 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const toggleAllergen = (tag: AllergenTag) => {
-    setTempAllergens((prev) => (prev.includes(tag) ? prev.filter((a) => a !== tag) : [...prev, tag]));
+    setTempAllergens((prev) =>
+      prev.includes(tag) ? prev.filter((a) => a !== tag) : [...prev, tag],
+    );
   };
 
   const saveAllergens = useCallback(() => {
@@ -514,16 +452,6 @@ export default function DealScreen() {
       }, 50);
     }
   }, [tempAllergens, currentDeal, mode, constraints]);
-
-  {backClone && (
-    <Animated.View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <Animated.Image
-        source={backClone.imageSource}
-        style={backCloneStyle}
-        resizeMode="cover"
-      />
-    </Animated.View>
-  )}
 
   // ---------------------------------------------------------------------------
   // Render: Loading
@@ -579,7 +507,6 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const modeLabel = isValidMode ? mode : undefined;
-  const cloneMealForEnter = resumeMeal && pendingEnterRef.current ? resumeMeal : null;
 
   return (
     <View style={styles.container}>
@@ -589,7 +516,7 @@ export default function DealScreen() {
           <DecisionCard
             recipe={currentDeal.data}
             whyText={whyText}
-            variant={currentDeal.type === 'drm' ? 'rescue' : 'default'}
+            variant={currentDeal.type === 'drm' ? 'rescue' : 'default'} // keep amber special state
             swipeDisabled={currentDeal.type === 'drm'}
             expanded={overlayLevel > 0}
             onToggleExpand={handleToggleExpand}
@@ -603,11 +530,11 @@ export default function DealScreen() {
         )}
       </Animated.View>
 
-      {/* (NEW) Enter clone: checklist hero -> full screen hero */}
-      {showEnterClone && cloneMealForEnter && (
+      {/* Enter clone: checklist hero -> full screen hero */}
+      {showEnterClone && resumeMeal && pendingEnterRef.current && (
         <Animated.View pointerEvents="none" style={enterCloneStyle}>
           <Animated.Image
-            source={getImageSourceSafe(cloneMealForEnter as any)}
+            source={getImageSourceSafe(resumeMeal as any)}
             style={{ width: '100%', height: '100%' }}
             resizeMode="cover"
           />
@@ -629,7 +556,12 @@ export default function DealScreen() {
       )}
 
       {/* Allergy Modal */}
-      <Modal visible={showAllergyModal} animationType="slide" transparent onRequestClose={() => setShowAllergyModal(false)}>
+      <Modal
+        visible={showAllergyModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowAllergyModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHandle} />
