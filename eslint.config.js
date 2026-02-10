@@ -1,12 +1,10 @@
 /**
  * ESLint flat config (v9+)
- *
- * Catches undefined variables and missing imports that cause
- * silent web crashes. Intentionally minimal.
+ * Minimal, RN-safe, Vercel-safe
  */
-const hooksPlugin = require('eslint-plugin-react-hooks');
 const tsPlugin = require('@typescript-eslint/eslint-plugin');
 const tsParser = require('@typescript-eslint/parser');
+const hooksPlugin = require('eslint-plugin-react-hooks');
 
 module.exports = [
   {
@@ -21,15 +19,14 @@ module.exports = [
       'babel.config.js',
       'jest.setup.js',
       'eslint.config.js',
-      // Legacy components not actively maintained
       'components/AnimatedCard.tsx',
       'components/ReceiptScanner.tsx',
       'components/LocationPicker.tsx',
       'components/PerformanceDebugger.tsx',
       'components/SuggestionChips.tsx',
       'components/GradientButton.tsx',
-      'app/components/**',
-    ],
+      'app/components/**'
+    ]
   },
   {
     files: ['**/*.ts', '**/*.tsx'],
@@ -37,22 +34,28 @@ module.exports = [
       parser: tsParser,
       parserOptions: {
         ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-  },
+        sourceType: 'module'
+      }
+    },
     plugins: {
       '@typescript-eslint': tsPlugin,
-      'react-hooks': hooksPlugin,
+      'react-hooks': hooksPlugin
     },
-
     rules: {
-     ...,
-     'react-hooks/rules-of-hooks': 'error',
-     'react-hooks/exhaustive-deps': 'warn',
-    }
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_'
+        }
+      ],
       '@typescript-eslint/no-var-requires': 'off',
       '@typescript-eslint/no-require-imports': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-empty-function': 'off',
-    },
-  },
+
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn'
+    }
+  }
 ];
