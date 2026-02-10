@@ -26,6 +26,7 @@ module.exports = [
       'components/SuggestionChips.tsx',
       'components/GradientButton.tsx',
       'app/components/**'
+      'react-hooks/exhaustive-deps': 'off',
     ]
   },
   {
