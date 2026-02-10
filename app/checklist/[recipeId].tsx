@@ -1,218 +1,231 @@
-// app/checklist/[recipeId].tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView, LayoutRectangle } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { View, StyleSheet, ScrollView } from 'react-native';
+import { useLocalSearchParams, router } from 'expo-router';
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  withSpring,
   cancelAnimation,
   runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
-import { ChevronLeft } from 'lucide-react-native';
 
-import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '@/lib/ui/theme';
+import { colors, spacing, radii } from '@/lib/ui/theme';
+import { oak, whisper } from '@/lib/ui/motion';
 import { getAnyMealById } from '@/lib/seeds';
 import { getImageSourceSafe } from '@/lib/seeds/images';
-import { consumePendingHeroTransition, setPendingHeroTransition } from '@/lib/ui/heroTransition';
-import { Oak, whisper } from '@/lib/ui/motion';
+import type { RecipeSeed } from '@/lib/seeds/types';
 
+import { ChecklistHero } from '@/components/ChecklistHero';
 import { ChecklistStep } from '@/components/ChecklistStep';
-import ChecklistHero from '@/components/ChecklistHero';
-import GreatJobOverlay from '@/components/GreatJobOverlay';
-import { recordCompletion } from '@/lib/state/feedbackLog';
+import { GreatJobOverlay } from '@/components/GreatJobOverlay';
 
-type Meal = ReturnType<typeof getAnyMealById>;
+import {
+  consumePendingHeroTransition,
+  setPendingHeroTransition,
+  type TransitionRect,
+} from '@/lib/ui/heroTransition';
 
-type HeroRect = { x: number; y: number; width: number; height: number };
+type Params = { recipeId?: string };
 
 export default function ChecklistScreen() {
-  const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
-  const id = recipeId ?? '';
+  const { recipeId: recipeIdRaw } = useLocalSearchParams<Params>();
+  const recipeId = typeof recipeIdRaw === 'string' ? recipeIdRaw : '';
 
-  const meal: Meal = useMemo(() => (id ? getAnyMealById(id) : null), [id]);
-  const [doneSet, setDoneSet] = useState<Set<number>>(new Set());
-  const [showGreatJob, setShowGreatJob] = useState(false);
+  const meal = useMemo(() => (recipeId ? getAnyMealById(recipeId) : null), [recipeId]);
+  const recipe = (meal && (meal as any).steps) ? (meal as RecipeSeed) : null;
 
-  // --- Reverse-box (Deal -> Checklist) overlay clone ---
-  const [heroRect, setHeroRect] = useState<HeroRect | null>(null);
-  const pendingRef = useRef<ReturnType<typeof consumePendingHeroTransition> | null>(null);
+  const imageSource = useMemo(() => {
+    if (!meal) return null;
+    return getImageSourceSafe(meal as any);
+  }, [meal]);
 
-  const cloneX = useSharedValue(0);
-  const cloneY = useSharedValue(0);
-  const cloneW = useSharedValue(0);
-  const cloneH = useSharedValue(0);
-  const cloneOpacity = useSharedValue(0);
+  // ---- Transition destination rect (the checklist hero image area) ----
+  const heroRectRef = useRef<TransitionRect | null>(null);
 
-  const cloneStyle = useAnimatedStyle(() => ({
+  const handleHeroReady = useCallback((rect: TransitionRect) => {
+    heroRectRef.current = rect;
+  }, []);
+
+  // ---- Reverse-box entrance (Deal -> Checklist) ----
+  const enterX = useSharedValue(0);
+  const enterY = useSharedValue(0);
+  const enterW = useSharedValue(0);
+  const enterH = useSharedValue(0);
+  const enterOpacity = useSharedValue(0);
+  const contentOpacity = useSharedValue(0);
+  const [showEnterClone, setShowEnterClone] = useState(false);
+
+  const runEnterClone = useCallback(
+    (t: { sourceRect: TransitionRect; imageSource: any }) => {
+      // Start clone at full-screen rect (source)
+      enterX.value = t.sourceRect.x;
+      enterY.value = t.sourceRect.y;
+      enterW.value = t.sourceRect.w;
+      enterH.value = t.sourceRect.h;
+      enterOpacity.value = 1;
+      contentOpacity.value = 0;
+      setShowEnterClone(true);
+
+      // Wait until we have a destination hero rect, then animate into it.
+      const tryStart = () => {
+        const dest = heroRectRef.current;
+        if (!dest) {
+          requestAnimationFrame(tryStart);
+          return;
+        }
+
+        // Animate clone into hero rect
+        enterX.value = withSpring(dest.x, oak);
+        enterY.value = withSpring(dest.y, oak);
+        enterW.value = withSpring(dest.w, oak);
+        enterH.value = withSpring(dest.h, oak);
+
+        // Fade content in after settle, then fade clone out quickly
+        contentOpacity.value = withDelay(450, withTiming(1, whisper));
+        enterOpacity.value = withDelay(
+          450,
+          withTiming(0, { ...whisper, duration: 120 }, (finished) => {
+            if (finished) runOnJS(setShowEnterClone)(false);
+          }),
+        );
+      };
+
+      tryStart();
+    },
+    [contentOpacity, enterH, enterOpacity, enterW, enterX, enterY],
+  );
+
+  useEffect(() => {
+    if (!recipeId || !imageSource) return;
+
+    // Consume pending "checklist:<id>" transition, if present
+    const transition = consumePendingHeroTransition(`checklist:${recipeId}`);
+    if (!transition) {
+      contentOpacity.value = 1;
+      return;
+    }
+
+    runEnterClone({ sourceRect: transition.sourceRect, imageSource: transition.imageSource });
+  }, [recipeId, imageSource, runEnterClone, contentOpacity]);
+
+  const enterCloneStyle = useAnimatedStyle(() => ({
     position: 'absolute',
-    left: cloneX.value,
-    top: cloneY.value,
-    width: cloneW.value,
-    height: cloneH.value,
-    opacity: cloneOpacity.value,
-    borderRadius: withTiming(0, { duration: 0 }),
+    left: enterX.value,
+    top: enterY.value,
+    width: enterW.value,
+    height: enterH.value,
+    borderRadius: radii.xl,
+    overflow: 'hidden',
+    opacity: enterOpacity.value,
   }));
 
+  const contentStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+  }));
+
+  // ---- Back transition (Checklist -> Deal) ----
+  const handleBackToDeal = useCallback(() => {
+    // If we have a hero rect, animate it back out to full-screen in Deal.
+    const rect = heroRectRef.current;
+    if (rect && imageSource) {
+      setPendingHeroTransition({
+        sourceRect: rect,
+        imageSource,
+        destKey: `deal:${recipeId}`,
+      });
+    }
+    router.replace(`/deal?resume=${encodeURIComponent(recipeId)}`);
+  }, [recipeId, imageSource]);
+
+  // ---- Checklist completion UX ----
+  const [completed, setCompleted] = useState<Set<number>>(() => new Set());
+  const [showGreatJob, setShowGreatJob] = useState(false);
+
+  const steps = useMemo(() => {
+    const raw = (recipe?.steps ?? []) as string[];
+    return raw.filter(Boolean);
+  }, [recipe]);
+
+  const allComplete = steps.length > 0 && completed.size === steps.length;
+
   useEffect(() => {
-    if (!id) return;
-    // consume once per mount
-    pendingRef.current = consumePendingHeroTransition(`checklist:${id}`);
-  }, [id]);
-
-  // When heroRect becomes available, run the pull-back animation if we have pending
-  useEffect(() => {
-    const pending = pendingRef.current;
-    if (!pending || !heroRect) return;
-
-    // init clone at sourceRect
-    cloneX.value = pending.sourceRect.x;
-    cloneY.value = pending.sourceRect.y;
-    cloneW.value = pending.sourceRect.width;
-    cloneH.value = pending.sourceRect.height;
-    cloneOpacity.value = 1;
-
-    // animate into hero rect using Oak spring “weight”
-    cloneX.value = withSpring(heroRect.x, Oak);
-    cloneY.value = withSpring(heroRect.y, Oak);
-    cloneW.value = withSpring(heroRect.width, Oak);
-    cloneH.value = withSpring(heroRect.height, Oak);
-
-    // fade out after settle (matches your earlier “settle then fade” approach)
-    const t = setTimeout(() => {
-      cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 });
-    }, 450);
-
-    return () => clearTimeout(t);
-  }, [heroRect]);
-
-  const onHeroReady = useCallback((rect: HeroRect) => {
-    setHeroRect(rect);
-  }, []);
-
-  if (!meal) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Meal not found</Text>
-        <TouchableOpacity onPress={() => router.replace('/tonight')} style={styles.backPill}>
-          <Text style={styles.backPillText}>Back to Tonight</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const steps = meal.steps ?? [];
-  const allComplete = steps.length > 0 && doneSet.size === steps.length;
-
-  // Great Job: edge trigger only
-  useEffect(() => {
-    if (allComplete) setShowGreatJob(true);
+    if (allComplete) {
+      // Delay slightly so the last checkbox feedback lands first
+      const t = setTimeout(() => setShowGreatJob(true), 250);
+      return () => clearTimeout(t);
+    }
+    return;
   }, [allComplete]);
 
-  const toggleStep = useCallback((idx: number) => {
-    setDoneSet(prev => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  }, []);
-
-  const handleDone = useCallback(async () => {
-    await recordCompletion(meal.id);
-    router.replace('/tonight');
-  }, [meal.id]);
-
-  const imageSource = getImageSourceSafe(meal);
+  if (!recipe || !meal || !imageSource) {
+    // If route param is invalid, go back deterministically
+    useEffect(() => {
+      router.replace('/tonight');
+    }, []);
+    return <View style={styles.container} />;
+  }
 
   return (
     <View style={styles.container}>
-      {/* Clone overlay (renders on top of everything) */}
-      <Animated.View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <Animated.Image source={imageSource} style={cloneStyle} resizeMode="cover" />
+      {showEnterClone && (
+        <Animated.Image
+          source={imageSource}
+          style={enterCloneStyle as any}
+          resizeMode="cover"
+        />
+      )}
+
+      <Animated.View style={[styles.content, contentStyle]}>
+        <ChecklistHero
+          imageSource={imageSource}
+          title={meal.title}
+          progressText={`${Math.min(completed.size, steps.length)}/${steps.length}`}
+          meta={(meal as any).meta ?? ''}
+          onHeroReady={handleHeroReady}
+          onBack={handleBackToDeal}
+        />
+
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {steps.map((s, idx) => (
+            <ChecklistStep
+              key={`${recipeId}:${idx}`}
+              index={idx}
+              text={s}
+              checked={completed.has(idx)}
+              onToggle={() => {
+                setCompleted((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(idx)) next.delete(idx);
+                  else next.add(idx);
+                  return next;
+                });
+              }}
+            />
+          ))}
+        </ScrollView>
       </Animated.View>
 
-      <ChecklistHero
-        imageSource={imageSource}
-        title={meal.title}
-        progressText={`${doneSet.size}/${steps.length}`}
-        meta={meal.meta ?? ''}
-        onHeroReady={onHeroReady}
-       onBack={() => {
-         if (!heroRect) {
-           router.back();
-           return;
-         }
-
-         // Set pending transition: checklist hero banner -> full-screen Deal hero
-         setPendingHeroTransition({
-           sourceRect: heroRect,
-           imageSource,
-           destKey: `deal:${meal.id}`,
-         });
-
-         router.back();
-       }}
-
-      <ScrollView contentContainerStyle={styles.content}>
-        {steps.map((s, i) => (
-          <ChecklistStep
-            key={`${meal.id}-step-${i}`}
-            index={i}
-            text={s}
-            checked={doneSet.has(i)}
-            onToggle={() => toggleStep(i)}
-          />
-        ))}
-      </ScrollView>
-
-      <View style={styles.footer}>
-        <TouchableOpacity
-          disabled={!allComplete}
-          onPress={handleDone}
-          style={[styles.doneButton, !allComplete && styles.doneButtonDisabled]}
-          accessibilityRole="button"
-          accessibilityLabel="Done"
-        >
-          <Text style={[styles.doneText, !allComplete && styles.doneTextDisabled]}>DONE</Text>
-        </TouchableOpacity>
-      </View>
-
-      <GreatJobOverlay
-        visible={showGreatJob}
-        onDismiss={() => setShowGreatJob(false)}
-      />
+      {showGreatJob && (
+        <GreatJobOverlay
+          onDismiss={() => {
+            // Clean exit after completion
+            setShowGreatJob(false);
+            router.replace('/tonight');
+          }}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  title: { fontSize: typography.xl, fontWeight: typography.bold, padding: spacing.lg, color: colors.textPrimary },
-  backPill: { marginLeft: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radii.xl, backgroundColor: colors.accentBlue },
-  backPillText: { color: colors.textInverse, fontWeight: typography.bold },
-
-  content: { padding: spacing.lg, paddingBottom: 120 },
-  footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    padding: spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
-    backgroundColor: 'rgba(255,255,255,0.98)',
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+  content: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
   },
-  doneButton: {
-    height: MIN_TOUCH_TARGET + 6,
-    borderRadius: radii.md,
-    backgroundColor: colors.accentBlue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  doneButtonDisabled: { backgroundColor: colors.surfaceMuted },
-  doneText: { fontSize: typography.base, fontWeight: typography.bold, color: colors.textInverse, letterSpacing: 1 },
-  doneTextDisabled: { color: colors.textMuted },
 });
