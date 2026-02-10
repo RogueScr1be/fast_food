@@ -7,6 +7,7 @@
  * - Deterministic back: Back goes to /deal?resume=<id> (not router.back()).
  */
 
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -45,7 +46,7 @@ export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<Params>();
   const id = typeof recipeId === 'string' ? recipeId : '';
 
-  const { width: winW, height: winH } = useWindowDimensions();
+  const { width: _winW, height: _winH } = useWindowDimensions();
 
   const recipe = useMemo(() => (id ? getRecipeById(id) : null), [id]);
   const imageSource = useMemo(() => (recipe ? getImageSourceSafe(recipe) : null), [recipe]);
@@ -53,10 +54,10 @@ export default function ChecklistScreen() {
   // Steps state
   const steps = recipe?.steps ?? [];
   const [done, setDone] = useState<boolean[]>(() => steps.map(() => false));
+
   useEffect(() => {
     setDone(steps.map(() => false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id]); // reset on recipe change
 
   const allDone = done.length > 0 && done.every(Boolean);
   const [showGreatJob, setShowGreatJob] = useState(false);
@@ -116,7 +117,6 @@ export default function ChecklistScreen() {
     // Hide content until clone lands
     contentOpacity.value = 0;
 
-    // Wait for hero layout (heroRectRef) with a short polling loop
     let raf = 0;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,15 +148,20 @@ export default function ChecklistScreen() {
     raf = requestAnimationFrame(startWhenReady);
 
     return () => {
+      if (raf) cancelAnimationFrame(raf);
+      if (settleTimer) clearTimeout(settleTimer);
+
       cancelAnimation(cloneX);
       cancelAnimation(cloneY);
       cancelAnimation(cloneW);
       cancelAnimation(cloneH);
       cancelAnimation(cloneOpacity);
       cancelAnimation(contentOpacity);
-      if (raf) cancelAnimationFrame(raf);
-      if (settleTimer) clearTimeout(settleTimer);
+
       setPending(null);
+      // restore opacity in case we navigated away mid-animation
+      contentOpacity.value = 1;
+      cloneOpacity.value = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -172,8 +177,6 @@ export default function ChecklistScreen() {
     }
 
     const r = heroRectRef.current;
-
-    // If we don't have a rect yet, still exit deterministically.
     if (!r) {
       router.replace(`/deal?resume=${recipe.id}`);
       return;
@@ -240,7 +243,7 @@ export default function ChecklistScreen() {
               key={`${recipe.id}:${idx}`}
               index={idx}
               text={step}
-              isDone={!!done[idx]}
+              completed={!!done[idx]}
               onToggle={() => {
                 setDone((prev) => {
                   const next = [...prev];
