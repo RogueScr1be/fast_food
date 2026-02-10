@@ -18,7 +18,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import { consumePendingHeroTransition } from '@/lib/ui/heroTransition';
 import { Oak, whisper } from '@/lib/ui/motion';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import {
   View,
   Text,
