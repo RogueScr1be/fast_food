@@ -7,6 +7,10 @@ function key(k: string) {
   return `${KEY_PREFIX}${k}`;
 }
 
+function safeArray(x: unknown): unknown[] {
+  return Array.isArray(x) ? x : [];
+}
+
 async function getJson<T>(k: string, fallback: T): Promise<T> {
   try {
     const raw = await AsyncStorage.getItem(key(k));
