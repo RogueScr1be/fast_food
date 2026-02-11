@@ -35,7 +35,7 @@ import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
-import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
+import { consumePendingHeroTransition, setPendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
@@ -43,6 +43,33 @@ import { GreatJobOverlay } from '../../components/GreatJobOverlay';
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
   const meal = recipeId ? getAnyMealById(recipeId) : null;
+
+  // Store hero rect so Back can expand it into Deal
+  const heroRectRef = useRef<HeroRect | null>(null);
+
+  const handleBackToDeal = useCallback(() => {
+  if (!meal) {
+    router.replace('/deal');
+    return;
+  }
+
+  const src = heroRectRef.current;
+
+  // If we don't have a rect yet, still exit deterministically.
+  if (!src) {
+    router.replace({ pathname: '/deal', params: { resume: meal.id } });
+    return;
+  }
+
+  // Seed Checklist hero -> Deal full-screen transition
+  setPendingHeroTransition({
+    sourceRect: { x: src.x, y: src.y, width: src.width, height: src.height },
+    imageSource: getImageSource(meal.imageKey),
+    destKey: `deal:${meal.id}`,
+  });
+
+  router.replace({ pathname: '/deal', params: { resume: meal.id } });
+}, [meal]);
 
   // Track completed steps by index
   const [completedIndices, setCompletedIndices] = useState<Set<number>>(new Set());
@@ -103,9 +130,14 @@ export default function ChecklistScreen() {
   }, [cloneOpacity, contentOpacity]);
 
   const handleHeroReady = useCallback((rect: HeroRect) => {
+    heroRectRef.current = rect; // <-- add this line
+
     if (!transition || destReceivedRef.current) return;
     destReceivedRef.current = true;
     if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+
+    // ...rest of your existing animation code...
+  }, [transition, /* keep your existing deps */]);
 
     // Animate clone from full-screen → hero rect (Oak spring)
     cloneX.value = withSpring(rect.x, oak);
@@ -240,12 +272,9 @@ export default function ChecklistScreen() {
     <View style={styles.container}>
       {/* Hero image header */}
       <ChecklistHero
-        imageSource={getImageSource(meal.imageKey)}
-        title={meal.name}
-        progressText={`${completedCount} of ${totalSteps} steps`}
-        meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
-        onBack={handleBack}
-        onHeroReady={transition ? handleHeroReady : undefined}
+        // ...your existing props...
+        onHeroReady={handleHeroReady}
+        onBack={handleBackToDeal}
       />
 
       {/* Progress bar below hero */}
