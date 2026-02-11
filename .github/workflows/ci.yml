@@ -56,8 +56,8 @@ jobs:
           fi
           echo "PASS: No secret patterns found"
 
-      - name: Run tests
-        run: npm test
+      - name: Run release test suite (Decision-OS)
+        run: npm test -- lib/decision-os/__tests__ --runInBand
 
       - name: Lint
         run: npm run lint
