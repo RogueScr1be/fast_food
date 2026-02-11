@@ -880,3 +880,19 @@ export async function makeDecision(input: ArbiterInput): Promise<ArbiterResult> 
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Compatibility re-exports for test and runtime import path `lib/decision-os/arbiter`
+// The primary Arbiter v2 implementation lives in `lib/decision-os/arbiter/index.ts`.
+// ---------------------------------------------------------------------------
+export {
+  decide,
+  isExecutable,
+  isRejectionImmune,
+  getTasteSafetyScore,
+  satisfiesConstraints,
+  sortCandidates,
+  buildContextFromIntent,
+  passesTimePressureGate,
+  calculateTimePressure,
+} from './arbiter/index';

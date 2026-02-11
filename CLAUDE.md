@@ -32,6 +32,7 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - `healthz.json` must include commit provenance: `buildSha` from `VERCEL_GIT_COMMIT_SHA` or `GITHUB_SHA`, fallback `local`.
 - If CI fails on invariants/tests, use the exact failing assertion + stack trace as the contract. Do not guess; patch only the proven failure.
 - Invariant validators must never throw in runtime paths; they return `{ valid, errors }`. Tests must assert on returned errors, not exceptions.
+- If tests reference exported functions/constants that don’t exist, treat it as a broken internal contract: restore exports via re-exports first, only re-implement if no source exists.
 
 ## Design Constitution Compliance
 

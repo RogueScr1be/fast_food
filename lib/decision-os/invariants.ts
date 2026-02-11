@@ -97,6 +97,41 @@ export type ValidationResult = {
   errors: ValidationError[];
 };
 
+export const DECISION_RESPONSE_ALLOWED_FIELDS = new Set([
+  'decision',
+  'drmRecommended',
+  'reason',
+  'autopilot',
+]);
+
+export const DRM_RESPONSE_ALLOWED_FIELDS = new Set([
+  'drmActivated',
+  'reason',
+  'decision',
+]);
+
+export const FEEDBACK_RESPONSE_ALLOWED_FIELDS = new Set([
+  'recorded',
+  'drmRequired',
+  'sessionId',
+]);
+
+export const RECEIPT_RESPONSE_ALLOWED_FIELDS = new Set([
+  'receiptImportId',
+  'status',
+]);
+
+export const HEALTHZ_RESPONSE_ALLOWED_FIELDS = new Set(['ok']);
+
+export const INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS = new Set([
+  'ok',
+  'counters',
+  'last_flush_at',
+  'db_flush_ok',
+]);
+
+export const ERROR_RESPONSE_ALLOWED_FIELDS = new Set(['error']);
+
 function toValidationResult(errors: ValidationError[]): ValidationResult {
   return {
     valid: errors.length === 0,
@@ -109,6 +144,26 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function pushUnknownFieldErrors(
+  obj: Record<string, unknown>,
+  allowedFields: Set<string>,
+  errors: ValidationError[],
+  context: string
+): void {
+  for (const key of Object.keys(obj)) {
+    if (!allowedFields.has(key)) {
+      errors.push({
+        field: key,
+        message: `INVARIANT VIOLATION: Unknown field '${key}' in ${context}`,
+      });
+    }
+  }
 }
 
 /**
@@ -133,15 +188,7 @@ export function validateDecisionResponse(response: unknown): ValidationResult {
   
   const resp = response as Record<string, unknown>;
 
-  const allowedFields = new Set(['drmRecommended', 'decision', 'autopilot', 'reason']);
-  for (const key of Object.keys(resp)) {
-    if (!allowedFields.has(key)) {
-      errors.push({
-        field: key,
-        message: `INVARIANT VIOLATION: '${key}' is not an allowed decision response field`,
-      });
-    }
-  }
+  pushUnknownFieldErrors(resp, DECISION_RESPONSE_ALLOWED_FIELDS, errors, 'decision response');
   
   // Check drmRecommended is boolean
   if (typeof resp.drmRecommended !== 'boolean') {
@@ -278,7 +325,7 @@ export function validateSingleAction(action: unknown): void {
 export function validateDrmResponse(response: unknown): ValidationResult {
   const errors: ValidationError[] = [];
 
-  if (typeof response !== 'object' || response === null) {
+  if (!isPlainObject(response)) {
     errors.push({
       field: 'response',
       message: 'INVARIANT VIOLATION: DRM response must be an object',
@@ -286,17 +333,14 @@ export function validateDrmResponse(response: unknown): ValidationResult {
     return toValidationResult(errors);
   }
   
-  const resp = response as Record<string, unknown>;
-
-  const allowedFields = new Set(['drmActivated', 'reason', 'decision', 'exhausted', 'rescue']);
-  for (const key of Object.keys(resp)) {
-    if (!allowedFields.has(key)) {
-      errors.push({
-        field: key,
-        message: `INVARIANT VIOLATION: '${key}' is not an allowed DRM response field`,
-      });
-    }
-  }
+  const resp = response;
+  // `exhausted` and `rescue` are accepted runtime fields for backward compatibility.
+  const drmRuntimeAllowedFields = new Set([
+    ...DRM_RESPONSE_ALLOWED_FIELDS,
+    'exhausted',
+    'rescue',
+  ]);
+  pushUnknownFieldErrors(resp, drmRuntimeAllowedFields, errors, 'DRM response');
 
   if (typeof resp.drmActivated !== 'boolean') {
     errors.push({
@@ -305,8 +349,8 @@ export function validateDrmResponse(response: unknown): ValidationResult {
     });
   }
   
-  // Check exhausted is boolean
-  if (typeof resp.exhausted !== 'boolean') {
+  // `exhausted` is optional in API boundary contract, but type-checked when present.
+  if ('exhausted' in resp && typeof resp.exhausted !== 'boolean') {
     errors.push({
       field: 'exhausted',
       message: 'INVARIANT VIOLATION: exhausted must be a boolean',
@@ -438,4 +482,295 @@ export function validateSingleRescue(rescue: unknown): void {
  */
 export function validateRescuePayload(payload: unknown): void {
   assertNoArraysDeep(payload, 'rescue_payload');
+}
+
+// =============================================================================
+// GENERIC ERROR RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate canonical error shape used by API routes.
+ * Expected shape: { error: string }
+ */
+export function validateErrorResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  if (!isPlainObject(response)) {
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: error response must be an object',
+    });
+    return toValidationResult(errors);
+  }
+
+  pushUnknownFieldErrors(response, ERROR_RESPONSE_ALLOWED_FIELDS, errors, 'error response');
+
+  if (typeof response.error !== 'string' || !response.error.trim()) {
+    errors.push({
+      field: 'error',
+      message: 'INVARIANT VIOLATION: error must be a non-empty string',
+    });
+  }
+
+  return toValidationResult(errors);
+}
+
+// =============================================================================
+// FEEDBACK RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate feedback API response.
+ * Canonical success shape: { recorded: true }
+ */
+export function validateFeedbackResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  if (!isPlainObject(response)) {
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: feedback response must be an object',
+    });
+    return toValidationResult(errors);
+  }
+
+  pushUnknownFieldErrors(response, FEEDBACK_RESPONSE_ALLOWED_FIELDS, errors, 'feedback response');
+
+  if (typeof response.recorded !== 'boolean') {
+    errors.push({
+      field: 'recorded',
+      message: 'INVARIANT VIOLATION: recorded must be a boolean',
+    });
+  } else if (response.recorded !== true) {
+    errors.push({
+      field: 'recorded',
+      message: 'INVARIANT VIOLATION: recorded must be true for successful feedback writes',
+    });
+  }
+
+  if ('drmRequired' in response && typeof response.drmRequired !== 'boolean') {
+    errors.push({
+      field: 'drmRequired',
+      message: 'INVARIANT VIOLATION: drmRequired must be a boolean',
+    });
+  }
+
+  if ('sessionId' in response && typeof response.sessionId !== 'string') {
+    errors.push({
+      field: 'sessionId',
+      message: 'INVARIANT VIOLATION: sessionId must be a string',
+    });
+  }
+
+  return toValidationResult(errors);
+}
+
+// =============================================================================
+// RECEIPT RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate receipt import API response.
+ * Canonical success shape: { receiptImportId: string, status: 'received'|'parsed'|'failed' }
+ */
+export function validateReceiptImportResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  if (!isPlainObject(response)) {
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: receipt response must be an object',
+    });
+    return toValidationResult(errors);
+  }
+
+  pushUnknownFieldErrors(response, RECEIPT_RESPONSE_ALLOWED_FIELDS, errors, 'receipt response');
+
+  if (typeof response.receiptImportId !== 'string') {
+    errors.push({
+      field: 'receiptImportId',
+      message: 'INVARIANT VIOLATION: receiptImportId must be a string',
+    });
+  }
+
+  const allowedStatuses = new Set(['received', 'parsed', 'failed']);
+  if (typeof response.status !== 'string' || !allowedStatuses.has(response.status)) {
+    errors.push({
+      field: 'status',
+      message: "INVARIANT VIOLATION: status must be one of 'received' | 'parsed' | 'failed'",
+    });
+  }
+
+  return toValidationResult(errors);
+}
+
+// =============================================================================
+// HEALTHZ RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate health endpoint response.
+ * Required: { ok: boolean }
+ * Optional provenance fields: buildSha, buildTime, vercelEnv, gitRef.
+ */
+export function validateHealthzResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  if (!isPlainObject(response)) {
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: healthz response must be an object',
+    });
+    return toValidationResult(errors);
+  }
+
+  const healthzRuntimeAllowed = new Set([
+    ...HEALTHZ_RESPONSE_ALLOWED_FIELDS,
+    'buildSha',
+    'buildTime',
+    'vercelEnv',
+    'gitRef',
+  ]);
+  pushUnknownFieldErrors(response, healthzRuntimeAllowed, errors, 'healthz response');
+
+  if (!('ok' in response)) {
+    errors.push({
+      field: 'ok',
+      message: 'INVARIANT VIOLATION: ok is required',
+    });
+  } else if (typeof response.ok !== 'boolean') {
+    errors.push({
+      field: 'ok',
+      message: 'INVARIANT VIOLATION: ok must be a boolean',
+    });
+  }
+
+  if ('buildSha' in response && typeof response.buildSha !== 'string') {
+    errors.push({
+      field: 'buildSha',
+      message: 'INVARIANT VIOLATION: buildSha must be a string',
+    });
+  }
+
+  if ('buildTime' in response) {
+    if (typeof response.buildTime !== 'string') {
+      errors.push({
+        field: 'buildTime',
+        message: 'INVARIANT VIOLATION: buildTime must be a string',
+      });
+    } else if (Number.isNaN(Date.parse(response.buildTime))) {
+      errors.push({
+        field: 'buildTime',
+        message: 'INVARIANT VIOLATION: buildTime must be a valid ISO date string',
+      });
+    }
+  }
+
+  if ('vercelEnv' in response && typeof response.vercelEnv !== 'string') {
+    errors.push({
+      field: 'vercelEnv',
+      message: 'INVARIANT VIOLATION: vercelEnv must be a string',
+    });
+  }
+
+  if ('gitRef' in response && typeof response.gitRef !== 'string') {
+    errors.push({
+      field: 'gitRef',
+      message: 'INVARIANT VIOLATION: gitRef must be a string',
+    });
+  }
+
+  return toValidationResult(errors);
+}
+
+// =============================================================================
+// INTERNAL METRICS RESPONSE VALIDATION
+// =============================================================================
+
+/**
+ * Validate internal metrics response shape.
+ * Required keys: ok, counters, last_flush_at, db_flush_ok.
+ */
+export function validateInternalMetricsResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
+  if (!isPlainObject(response)) {
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: internal metrics response must be an object',
+    });
+    return toValidationResult(errors);
+  }
+
+  pushUnknownFieldErrors(
+    response,
+    INTERNAL_METRICS_RESPONSE_ALLOWED_FIELDS,
+    errors,
+    'internal metrics response'
+  );
+
+  if (!('ok' in response)) {
+    errors.push({
+      field: 'ok',
+      message: 'INVARIANT VIOLATION: ok is required',
+    });
+  } else if (typeof response.ok !== 'boolean') {
+    errors.push({
+      field: 'ok',
+      message: 'INVARIANT VIOLATION: ok must be a boolean',
+    });
+  }
+
+  if (!('counters' in response)) {
+    errors.push({
+      field: 'counters',
+      message: 'INVARIANT VIOLATION: counters is required',
+    });
+  } else if (!isPlainObject(response.counters)) {
+    errors.push({
+      field: 'counters',
+      message: 'INVARIANT VIOLATION: counters must be an object',
+    });
+  } else {
+    for (const [key, value] of Object.entries(response.counters)) {
+      if (typeof value !== 'number') {
+        errors.push({
+          field: `counters.${key}`,
+          message: 'INVARIANT VIOLATION: counters values must be numbers',
+        });
+      }
+    }
+  }
+
+  if (!('last_flush_at' in response)) {
+    errors.push({
+      field: 'last_flush_at',
+      message: 'INVARIANT VIOLATION: last_flush_at is required',
+    });
+  } else if (
+    response.last_flush_at !== null &&
+    typeof response.last_flush_at !== 'string'
+  ) {
+    errors.push({
+      field: 'last_flush_at',
+      message: 'INVARIANT VIOLATION: last_flush_at must be a string or null',
+    });
+  }
+
+  if (!('db_flush_ok' in response)) {
+    errors.push({
+      field: 'db_flush_ok',
+      message: 'INVARIANT VIOLATION: db_flush_ok is required',
+    });
+  } else if (
+    response.db_flush_ok !== null &&
+    typeof response.db_flush_ok !== 'boolean'
+  ) {
+    errors.push({
+      field: 'db_flush_ok',
+      message: 'INVARIANT VIOLATION: db_flush_ok must be a boolean or null',
+    });
+  }
+
+  return toValidationResult(errors);
 }

@@ -57,8 +57,14 @@ export const WEIGHT_MAX = 2;
  * @returns True if after 8pm
  */
 export function isAfter8pm(isoTimestamp: string): boolean {
+  // Read hour component from the ISO payload, not host-local timezone.
+  const hourMatch = isoTimestamp.match(/T(\d{2}):\d{2}:\d{2}/);
+  if (hourMatch) {
+    return Number.parseInt(hourMatch[1], 10) >= STRESS_HOUR_THRESHOLD;
+  }
+
   const date = new Date(isoTimestamp);
-  return date.getHours() >= STRESS_HOUR_THRESHOLD;
+  return date.getUTCHours() >= STRESS_HOUR_THRESHOLD;
 }
 
 /**

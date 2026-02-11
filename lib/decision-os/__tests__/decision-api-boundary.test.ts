@@ -127,8 +127,7 @@ describe('API INVARIANT: One decision only', () => {
       drmRecommended: false,
     };
     
-    const errors = assertNoArraysDeep(response);
-    expect(errors.length).toBeGreaterThan(0);
+    expect(() => assertNoArraysDeep(response)).toThrow('INVARIANT VIOLATION');
   });
 });
 
