@@ -30,6 +30,7 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - If we use `expo export -p web`, assume static hosting. Any `/api/*` expectation must be backed by explicit serverless/functions deployment or an external backend URL. Never assume API routes exist.
 - For static web deploys, the deploy health gate is `/healthz.json` generated during build. Do not gate web deploy readiness on `/api/healthz`.
 - `healthz.json` must include commit provenance: `buildSha` from `VERCEL_GIT_COMMIT_SHA` or `GITHUB_SHA`, fallback `local`.
+- If CI fails on invariants/tests, use the exact failing assertion + stack trace as the contract. Do not guess; patch only the proven failure.
 
 ## Design Constitution Compliance
 
