@@ -136,7 +136,6 @@ export default function ChecklistScreen() {
     destReceivedRef.current = true;
     if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
-    // ...rest of your existing animation code...
   }, [transition, /* keep your existing deps */]);
 
     // Animate clone from full-screen → hero rect (Oak spring)
