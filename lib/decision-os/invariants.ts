@@ -87,6 +87,30 @@ export class InvariantViolationError extends Error {
 // RESPONSE VALIDATION
 // =============================================================================
 
+export type ValidationError = {
+  field: string;
+  message: string;
+};
+
+export type ValidationResult = {
+  valid: boolean;
+  errors: ValidationError[];
+};
+
+function toValidationResult(errors: ValidationError[]): ValidationResult {
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 /**
  * Validate a decision response for all invariants
  * - No arrays anywhere
@@ -94,40 +118,85 @@ export class InvariantViolationError extends Error {
  * - drmRecommended is boolean
  * 
  * @param response - Response to validate
- * @throws InvariantViolationError on violation
+ * @returns validation result with aggregated errors
  */
-export function validateDecisionResponse(response: unknown): void {
+export function validateDecisionResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
   if (typeof response !== 'object' || response === null) {
-    throw new InvariantViolationError(
-      'INVARIANT VIOLATION: Response must be an object'
-    );
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: Response must be an object',
+    });
+    return toValidationResult(errors);
   }
   
   const resp = response as Record<string, unknown>;
+
+  const allowedFields = new Set(['drmRecommended', 'decision', 'autopilot', 'reason']);
+  for (const key of Object.keys(resp)) {
+    if (!allowedFields.has(key)) {
+      errors.push({
+        field: key,
+        message: `INVARIANT VIOLATION: '${key}' is not an allowed decision response field`,
+      });
+    }
+  }
   
   // Check drmRecommended is boolean
   if (typeof resp.drmRecommended !== 'boolean') {
-    throw new InvariantViolationError(
-      'INVARIANT VIOLATION: drmRecommended must be a boolean'
-    );
+    errors.push({
+      field: 'drmRecommended',
+      message: 'INVARIANT VIOLATION: drmRecommended must be a boolean',
+    });
   }
   
   // Check decision is object or null, not array
-  if (resp.decision !== null) {
+  if (!('decision' in resp)) {
+    errors.push({
+      field: 'decision',
+      message: 'INVARIANT VIOLATION: decision must be an object or null',
+    });
+  } else if (resp.decision !== null) {
     if (Array.isArray(resp.decision)) {
-      throw new InvariantViolationError(
-        'INVARIANT VIOLATION: decision must be a single object, not an array'
-      );
+      errors.push({
+        field: 'decision',
+        message: 'INVARIANT VIOLATION: decision must be a single object, not an array',
+      });
     }
     if (typeof resp.decision !== 'object') {
-      throw new InvariantViolationError(
-        'INVARIANT VIOLATION: decision must be an object or null'
-      );
+      errors.push({
+        field: 'decision',
+        message: 'INVARIANT VIOLATION: decision must be an object or null',
+      });
     }
+  }
+
+  if ('autopilot' in resp && typeof resp.autopilot !== 'boolean') {
+    errors.push({
+      field: 'autopilot',
+      message: 'INVARIANT VIOLATION: autopilot must be a boolean',
+    });
+  }
+
+  if ('reason' in resp && typeof resp.reason !== 'string') {
+    errors.push({
+      field: 'reason',
+      message: 'INVARIANT VIOLATION: reason must be a string',
+    });
   }
   
   // Deep check for arrays anywhere in the response
-  assertNoArraysDeep(response, 'response payload');
+  try {
+    assertNoArraysDeep(response, 'response payload');
+  } catch (error) {
+    errors.push({
+      field: 'response',
+      message: errorMessage(error),
+    });
+  }
+
+  return toValidationResult(errors);
 }
 
 /**
@@ -204,43 +273,93 @@ export function validateSingleAction(action: unknown): void {
  * - drmEventId required when rescue present
  * 
  * @param response - Response to validate
- * @throws InvariantViolationError on violation
+ * @returns validation result with aggregated errors
  */
-export function validateDrmResponse(response: unknown): void {
+export function validateDrmResponse(response: unknown): ValidationResult {
+  const errors: ValidationError[] = [];
+
   if (typeof response !== 'object' || response === null) {
-    throw new InvariantViolationError(
-      'INVARIANT VIOLATION: DRM response must be an object'
-    );
+    errors.push({
+      field: 'response',
+      message: 'INVARIANT VIOLATION: DRM response must be an object',
+    });
+    return toValidationResult(errors);
   }
   
   const resp = response as Record<string, unknown>;
+
+  const allowedFields = new Set(['drmActivated', 'reason', 'decision', 'exhausted', 'rescue']);
+  for (const key of Object.keys(resp)) {
+    if (!allowedFields.has(key)) {
+      errors.push({
+        field: key,
+        message: `INVARIANT VIOLATION: '${key}' is not an allowed DRM response field`,
+      });
+    }
+  }
+
+  if (typeof resp.drmActivated !== 'boolean') {
+    errors.push({
+      field: 'drmActivated',
+      message: 'INVARIANT VIOLATION: drmActivated must be a boolean',
+    });
+  }
   
   // Check exhausted is boolean
   if (typeof resp.exhausted !== 'boolean') {
-    throw new InvariantViolationError(
-      'INVARIANT VIOLATION: exhausted must be a boolean'
-    );
+    errors.push({
+      field: 'exhausted',
+      message: 'INVARIANT VIOLATION: exhausted must be a boolean',
+    });
+  }
+
+  if ('reason' in resp && typeof resp.reason !== 'string') {
+    errors.push({
+      field: 'reason',
+      message: 'INVARIANT VIOLATION: reason must be a string',
+    });
   }
   
-  // Check rescue is object or null, not array
-  if (resp.rescue !== null) {
+  // Check decision is object or null, not array
+  if ('decision' in resp && resp.decision !== null) {
+    if (Array.isArray(resp.decision)) {
+      errors.push({
+        field: 'decision',
+        message: 'INVARIANT VIOLATION: decision must be a single object, not an array',
+      });
+    } else if (typeof resp.decision !== 'object') {
+      errors.push({
+        field: 'decision',
+        message: 'INVARIANT VIOLATION: decision must be an object or null',
+      });
+    }
+  }
+
+  // Validate legacy rescue shape when present
+  if ('rescue' in resp && resp.rescue !== null && resp.rescue !== undefined) {
     if (Array.isArray(resp.rescue)) {
-      throw new InvariantViolationError(
-        'INVARIANT VIOLATION: rescue must be a single object, not an array'
-      );
+      errors.push({
+        field: 'rescue',
+        message: 'INVARIANT VIOLATION: rescue must be a single object, not an array',
+      });
+    } else if (typeof resp.rescue !== 'object') {
+      errors.push({
+        field: 'rescue',
+        message: 'INVARIANT VIOLATION: rescue must be an object or null',
+      });
+    } else {
+      try {
+        validateSingleRescue(resp.rescue);
+      } catch (error) {
+        errors.push({
+          field: 'rescue',
+          message: errorMessage(error),
+        });
+      }
     }
-    if (typeof resp.rescue !== 'object') {
-      throw new InvariantViolationError(
-        'INVARIANT VIOLATION: rescue must be an object or null'
-      );
-    }
-    
-    // When rescue is present, validate it
-    validateSingleRescue(resp.rescue);
   }
   
-  // Deep check for arrays anywhere in the response
-  assertNoArraysDeep(response, 'DRM response payload');
+  return toValidationResult(errors);
 }
 
 /**

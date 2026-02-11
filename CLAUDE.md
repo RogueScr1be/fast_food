@@ -31,6 +31,7 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - For static web deploys, the deploy health gate is `/healthz.json` generated during build. Do not gate web deploy readiness on `/api/healthz`.
 - `healthz.json` must include commit provenance: `buildSha` from `VERCEL_GIT_COMMIT_SHA` or `GITHUB_SHA`, fallback `local`.
 - If CI fails on invariants/tests, use the exact failing assertion + stack trace as the contract. Do not guess; patch only the proven failure.
+- Invariant validators must never throw in runtime paths; they return `{ valid, errors }`. Tests must assert on returned errors, not exceptions.
 
 ## Design Constitution Compliance
 
