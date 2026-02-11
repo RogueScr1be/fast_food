@@ -45,10 +45,14 @@ jobs:
           
           echo "Checking for leaked secret patterns..."
           # Exclude README, docs, and example files from pattern check
-          if grep -r --include="*.ts" --include="*.tsx" --include="*.js" \
-               -E "(supabase\.co.*(anon|service_role)|eyJ[A-Za-z0-9_-]{20,})" \
-               --exclude-dir=node_modules --exclude-dir=.git . 2>/dev/null | \
-               grep -v "example" | grep -v "placeholder" | grep -v "YOUR_" | head -1; then
+          MATCH=$(
+            grep -r --include="*.ts" --include="*.tsx" --include="*.js" \
+              -E "(supabase\.co.*(anon|service_role)|eyJ[A-Za-z0-9_-]{20,})" \
+              --exclude-dir=node_modules --exclude-dir=.git . 2>/dev/null | \
+              grep -v "example" | grep -v "placeholder" | grep -v "YOUR_" | head -1 || true
+          )
+          if [ -n "$MATCH" ]; then
+            echo "$MATCH"
             echo "FAIL: Possible secret pattern found in source files"
             exit 1
           fi
