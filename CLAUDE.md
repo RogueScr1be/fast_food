@@ -108,7 +108,7 @@ enforced by TWO build gates:
 2. **`npm run lint`** (ESLint) — catches unused imports/vars that indicate
    stale code.
 
-Both run in the Vercel build command: `npm run lint && npm run build:sanity && expo export -p web`.
+Both run in the Vercel build command: `npm run lint && npm run build:sanity && npm run build:web`.
 
 **Smoke-tested:** a file with bare `useEffect()` and no import is caught
 by tsc as `TS2304` and blocks the build.
@@ -443,7 +443,7 @@ npx expo export -p web
 All four must pass before merging to main.
 
 Vercel build runs all three code gates in sequence:
-`npm run lint && npm run build:sanity && expo export -p web`
+`npm run lint && npm run build:sanity && npm run build:web`
 
 ### Pre-Merge Smoke Checklist (run mentally or on device)
 
