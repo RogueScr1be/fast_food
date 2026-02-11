@@ -62,6 +62,19 @@ import { useIdleAffordance } from '../hooks/useIdleAffordance';
 import { getImageSource } from '../lib/seeds/images';
 import { setPendingHeroTransition } from '../lib/ui/heroTransition';
 import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
+import { router, useLocalSearchParams } from 'expo-router';
+
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+
+import { consumePendingHeroTransition } from '../lib/ui/heroTransition';
+import { oak, whisper } from '../lib/ui/motion';
 
 // All allergens for the modal
 const ALL_ALLERGENS: { tag: AllergenTag; label: string }[] = [
@@ -273,6 +286,83 @@ export default function DealScreen() {
     });
   }, [currentDeal, markAffordanceSeen, dealScreenW, dealScreenH]);
 
+    const { resume } = useLocalSearchParams<{ resume?: string }>();
+    const resumeId = typeof resume === 'string' ? resume : undefined;
+
+    // Checklist -> Deal expand clone
+    const pendingEnterRef = useRef<PendingHeroTransition | null>(null);
+    const [showEnterClone, setShowEnterClone] = useState(false);
+
+    const enterX = useSharedValue(0);
+    const enterY = useSharedValue(0);
+    const enterW = useSharedValue(0);
+    const enterH = useSharedValue(0);
+    const enterOpacity = useSharedValue(0);
+    const contentOpacity = useSharedValue(1);
+
+    useEffect(() => {
+      if (!resumeId) return;
+
+      const p = consumePendingHeroTransition(`deal:${resumeId}`);
+      if (!p) return;
+
+      pendingEnterRef.current = p;
+
+      // init clone at checklist hero rect
+      enterX.value = p.sourceRect.x;
+      enterY.value = p.sourceRect.y;
+      enterW.value = p.sourceRect.width;
+      enterH.value = p.sourceRect.height;
+      enterOpacity.value = 1;
+
+      // hide real content until clone expands
+      contentOpacity.value = 0;
+      setShowEnterClone(true);
+
+      // animate to full screen
+      enterX.value = withSpring(0, oak);
+      enterY.value = withSpring(0, oak);
+      enterW.value = withSpring(dealScreenW, oak);
+      enterH.value = withSpring(dealScreenH, oak);
+
+      const t = setTimeout(() => {
+        contentOpacity.value = withTiming(1, whisper);
+        enterOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
+          if (finished) {
+            runOnJS(setShowEnterClone)(false);
+            pendingEnterRef.current = null;
+          }
+        });
+      }, 450);
+
+      return () => {
+        clearTimeout(t);
+        cancelAnimation(enterX);
+        cancelAnimation(enterY);
+        cancelAnimation(enterW);
+        cancelAnimation(enterH);
+        cancelAnimation(enterOpacity);
+        cancelAnimation(contentOpacity);
+        setShowEnterClone(false);
+        pendingEnterRef.current = null;
+      };
+    }, [resumeId, dealScreenW, dealScreenH]);
+
+    const enterCloneStyle = useAnimatedStyle(() => ({
+      position: 'absolute',
+      left: enterX.value,
+      top: enterY.value,
+      width: enterW.value,
+      height: enterH.value,
+      opacity: enterOpacity.value,
+      borderRadius: 0,
+      overflow: 'hidden',
+    }));
+
+    const contentFadeStyle = useAnimatedStyle(() => ({
+      opacity: contentOpacity.value,
+    }));
+
   /** Overlay level change from glass handle drag */
   const handleOverlayLevelChange = useCallback((level: OverlayLevel) => {
     markAffordanceSeen();
@@ -413,7 +503,7 @@ export default function DealScreen() {
   return (
     <View style={styles.container}>
       {/* Idle-nudge wrapper (Reanimated) around the card */}
-      <Animated.View style={[styles.cardWrapper, idleNudgeStyle]}>
+      <Animated.View style={[styles.cardWrapper, contentFadeStyle, idleNudgeStyle]}>
         {currentDeal && (
           <DecisionCard
             recipe={currentDeal.data}
@@ -431,6 +521,18 @@ export default function DealScreen() {
           />
         )}
       </Animated.View>
+
+      {showEnterClone && pendingEnterRef.current && (
+        <Animated.View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Animated.View style={enterCloneStyle}>
+            <Animated.Image
+              source={pendingEnterRef.current.imageSource}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+            />
+          </Animated.View>
+        </Animated.View>
+      )}
 
       {/* ── Back button (glass, top-left, only at level 0) ────────── */}
       {overlayLevel === 0 && (
