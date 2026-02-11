@@ -87,7 +87,7 @@ The old `staging-legacy.yml` workflow has been replaced by the new architecture.
 | `migrate_staging` | Runs database migrations on staging |
 | `schema_gate` | Verifies DB schema matches required structure |
 | `deploy_staging` | Deploys to Vercel staging |
-| `healthz_gate` | Verifies `/api/healthz` returns 200 |
+| `healthz_gate` | Verifies `/healthz.json` returns 200 |
 | `metrics_gate` | Verifies runtime_metrics_daily table is healthy |
 | `alerts_gate` | Checks durable metrics for alert thresholds |
 | `auth_required_gate` | Verifies endpoints return 401 WITHOUT token |
@@ -174,7 +174,7 @@ This gate runs BEFORE deployment to catch schema drift early.
 
 #### 2. Healthz Gate
 
-After deployment, the pipeline calls `GET /api/healthz` and fails if:
+After deployment, the pipeline calls `GET /healthz.json` and fails if:
 - Response is not 200
 - This checks: DATABASE_URL exists, SUPABASE_JWT_SECRET exists, Postgres is reachable
 

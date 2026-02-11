@@ -31,7 +31,15 @@ function getMigrationFiles(migrationsDir: string = MIGRATIONS_DIR): MigrationFil
   const files = fs.readdirSync(migrationsDir);
   
   return files
-    .filter(f => f.endsWith('.sql'))
+    // Canonical migration stream uses single-file SQL migrations.
+    // Ignore reversible pair artifacts (`*.up.sql` / `*.down.sql`) to avoid
+    // duplicate order numbers from legacy bootstrap files.
+    .filter(
+      f =>
+        f.endsWith('.sql') &&
+        !f.endsWith('.up.sql') &&
+        !f.endsWith('.down.sql')
+    )
     .map(f => ({
       name: f,
       path: path.join(migrationsDir, f),

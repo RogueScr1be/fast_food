@@ -1,14 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "buildCommand": "npm run lint && npm run build:sanity && expo export -p web",
+  "buildCommand": "npm run lint && npm run build:sanity && npm run build:web",
   "outputDirectory": "dist",
   "env": {
     "NODE_ENV": "production"
   },
   "rewrites": [
     {
-      "source": "/:path((?!.*\\.).*)",
+      "source": "/:path((?!api/)(?!.*\\.).*)",
       "destination": "/"
     }
   ]

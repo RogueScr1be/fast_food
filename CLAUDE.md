@@ -26,6 +26,14 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - Do NOT introduce medical/nutrition claims. This app is not medical advice.
 - Allergies are HARD constraints. Never violate.
 - If you are uncertain: stop and ask. No silent assumptions.
+- Before any work, run `pwd && ls -la` and locate uploaded artifacts via `find . -maxdepth 4 -name '*.zip'`. Never assume `/mnt/data` exists; verify mount + writable path first.
+- If we use `expo export -p web`, assume static hosting. Any `/api/*` expectation must be backed by explicit serverless/functions deployment or an external backend URL. Never assume API routes exist.
+- For static web deploys, the deploy health gate is `/healthz.json` generated during build. Do not gate web deploy readiness on `/api/healthz`.
+- `healthz.json` must include commit provenance: `buildSha` from `VERCEL_GIT_COMMIT_SHA` or `GITHUB_SHA`, fallback `local`.
+- If CI fails on invariants/tests, use the exact failing assertion + stack trace as the contract. Do not guess; patch only the proven failure.
+- Invariant validators must never throw in runtime paths; they return `{ valid, errors }`. Tests must assert on returned errors, not exceptions.
+- If tests reference exported functions/constants that don’t exist, treat it as a broken internal contract: restore exports via re-exports first, only re-implement if no source exists.
+- Release CI must reflect the shipping surface area. Legacy suites run in a separate non-blocking lane until rehabilitated.
 
 ## Design Constitution Compliance
 
@@ -104,7 +112,7 @@ enforced by TWO build gates:
 2. **`npm run lint`** (ESLint) — catches unused imports/vars that indicate
    stale code.
 
-Both run in the Vercel build command: `npm run lint && npm run build:sanity && expo export -p web`.
+Both run in the Vercel build command: `npm run lint && npm run build:sanity && npm run build:web`.
 
 **Smoke-tested:** a file with bare `useEffect()` and no import is caught
 by tsc as `TS2304` and blocks the build.
@@ -439,7 +447,7 @@ npx expo export -p web
 All four must pass before merging to main.
 
 Vercel build runs all three code gates in sequence:
-`npm run lint && npm run build:sanity && expo export -p web`
+`npm run lint && npm run build:sanity && npm run build:web`
 
 ### Pre-Merge Smoke Checklist (run mentally or on device)
 

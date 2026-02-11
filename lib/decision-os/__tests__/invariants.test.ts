@@ -107,6 +107,7 @@ describe('validateDecisionResponse', () => {
       const result = validateDecisionResponse(response);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.field === 'drmRecommended')).toBe(true);
+      expect(result.errors.some(e => e.field === 'drmRecommended' && e.message.includes('boolean'))).toBe(true);
     });
 
     it('fails when decision is missing', () => {
@@ -170,14 +171,14 @@ describe('validateDecisionResponse', () => {
 describe('validateDrmResponse', () => {
   describe('valid responses', () => {
     it('passes with drmActivated: true', () => {
-      const response = { drmActivated: true };
+      const response = { drmActivated: true, exhausted: false };
       const result = validateDrmResponse(response);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
     it('passes with drmActivated: false', () => {
-      const response = { drmActivated: false };
+      const response = { drmActivated: false, exhausted: false };
       const result = validateDrmResponse(response);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -186,6 +187,7 @@ describe('validateDrmResponse', () => {
     it('passes with full Phase 2 response (drmActivated + reason + decision)', () => {
       const response = {
         drmActivated: true,
+        exhausted: false,
         reason: 'explicit_done',
         decision: {
           decision_id: 'drm-123',
@@ -210,13 +212,13 @@ describe('validateDrmResponse', () => {
     });
 
     it('passes with reason but no decision', () => {
-      const response = { drmActivated: true, reason: 'time_threshold' };
+      const response = { drmActivated: true, exhausted: false, reason: 'time_threshold' };
       const result = validateDrmResponse(response);
       expect(result.valid).toBe(true);
     });
 
     it('passes with decision as null', () => {
-      const response = { drmActivated: true, reason: 'explicit_done', decision: null };
+      const response = { drmActivated: true, exhausted: false, reason: 'explicit_done', decision: null };
       const result = validateDrmResponse(response);
       expect(result.valid).toBe(true);
     });

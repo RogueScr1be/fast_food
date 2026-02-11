@@ -16,7 +16,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fastfood",
+      "bundleIdentifier": "com.fastfood.zeroui",
       "requireFullScreen": true,
       "infoPlist": {
         "UIRequiresFullScreen": true,
@@ -56,6 +56,12 @@
       "expo-notifications"
     ],
     "scheme": "fast-food",
-    "platforms": ["ios", "android", "web"]
+    "platforms": ["ios", "android", "web"],
+    "extra": {
+      "eas": {
+        "projectId": "26890a3f-bd10-4761-97fa-d545d6426817"
+      }
+    },
+    "owner": "roguescr1be"
   }
 }

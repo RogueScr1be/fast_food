@@ -8,7 +8,7 @@
  * PREFLIGHT: Decodes JWT and fails fast if token expires within 5 minutes.
  * 
  * Endpoints tested (WITH token):
- * a) GET /api/healthz -> must be 200 and ok:true
+ * a) GET /healthz.json -> must be 200 and ok:true
  * b) POST /api/decision-os/decision -> MUST be 200 with canonical shape
  * c) POST /api/decision-os/receipt/import -> MUST be 200 with canonical shape
  * d) POST /api/decision-os/feedback -> MUST be 200 with { recorded: true }
@@ -102,11 +102,11 @@ function getHeaders(): Record<string, string> {
 }
 
 /**
- * a) GET /api/healthz -> must be 200 and ok:true
+ * a) GET /healthz.json -> must be 200 and ok:true
  */
 async function testHealthz(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/healthz`);
+    const response = await fetch(`${STAGING_URL}/healthz.json`);
     if (response.status !== 200) return false;
     
     const data = await response.json();
