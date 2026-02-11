@@ -115,7 +115,6 @@ export default function ChecklistScreen() {
       cancelAnimation(cloneOpacity);
       cancelAnimation(contentOpacity);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleHeroReady = useCallback(

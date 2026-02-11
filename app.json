@@ -16,7 +16,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fastfood",
+      "bundleIdentifier": "com.fastfood.zeroui",
       "requireFullScreen": true,
       "infoPlist": {
         "UIRequiresFullScreen": true,

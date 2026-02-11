@@ -57,6 +57,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build sanity check
         run: npm run build:sanity
 

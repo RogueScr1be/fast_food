@@ -48,7 +48,7 @@ jobs:
           echo "Waiting for alias propagation..."
           sleep 10
           echo "Checking healthz..."
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/api/healthz")
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/healthz.json")
           if [ "$RESPONSE" == "200" ]; then
             echo "PASS healthz_check"
           else

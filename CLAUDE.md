@@ -26,6 +26,10 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - Do NOT introduce medical/nutrition claims. This app is not medical advice.
 - Allergies are HARD constraints. Never violate.
 - If you are uncertain: stop and ask. No silent assumptions.
+- Before any work, run `pwd && ls -la` and locate uploaded artifacts via `find . -maxdepth 4 -name '*.zip'`. Never assume `/mnt/data` exists; verify mount + writable path first.
+- If we use `expo export -p web`, assume static hosting. Any `/api/*` expectation must be backed by explicit serverless/functions deployment or an external backend URL. Never assume API routes exist.
+- For static web deploys, the deploy health gate is `/healthz.json` generated during build. Do not gate web deploy readiness on `/api/healthz`.
+- `healthz.json` must include commit provenance: `buildSha` from `VERCEL_GIT_COMMIT_SHA` or `GITHUB_SHA`, fallback `local`.
 
 ## Design Constitution Compliance
 

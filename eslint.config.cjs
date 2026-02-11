@@ -17,6 +17,8 @@ module.exports = [
       'app/contexts/**',
       'app/hooks/**',
       '**/__tests__/**',
+      'components/AnimatedCard.tsx',
+      'components/ReceiptScanner.tsx',
     ],
   },
   {

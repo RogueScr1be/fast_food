@@ -6,7 +6,7 @@
  * Prints only PASS/FAIL per step - no tokens, headers, or response bodies.
  * 
  * Endpoints tested:
- * a) GET /api/healthz -> must be 200 and ok:true
+ * a) GET /healthz.json -> must be 200 and ok:true
  * b) POST /api/decision-os/decision -> 200 canonical OR 401 unauthorized
  * c) POST /api/decision-os/receipt/import -> 200 canonical OR 401 unauthorized
  * d) POST /api/decision-os/feedback -> 200 canonical OR 401 unauthorized
@@ -47,11 +47,11 @@ function getHeaders(): Record<string, string> {
 }
 
 /**
- * a) GET /api/healthz -> must be 200 and ok:true
+ * a) GET /healthz.json -> must be 200 and ok:true
  */
 async function testHealthz(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/healthz`);
+    const response = await fetch(`${STAGING_URL}/healthz.json`);
     if (response.status !== 200) return false;
     
     const data = await response.json();
