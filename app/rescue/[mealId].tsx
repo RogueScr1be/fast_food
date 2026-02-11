@@ -36,6 +36,7 @@ import { ChecklistHero, type HeroRect } from '../../components/ChecklistHero';
 import { getImageSource } from '../../lib/seeds/images';
 import { resetDealState } from '../../lib/state/ffSession';
 import { recordCompletion } from '../../lib/state/feedbackLog';
+import { setPendingHeroTransition } from '@/lib/ui/heroTransition';
 import { consumePendingHeroTransition, type PendingHeroTransition } from '../../lib/ui/heroTransition';
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -78,6 +79,7 @@ export default function RescueChecklistScreen() {
   );
   const [showClone, setShowClone] = useState(transition !== null);
   const mountedRef = useRef(true);
+  const heroRectRef = useRef<HeroRect | null>(null);
   const destReceivedRef = useRef(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -108,6 +110,19 @@ export default function RescueChecklistScreen() {
       cancelAnimation(contentOpacity);
     };
   }, []);
+
+  const handleBackToDeal = useCallback(() => {
+  const src = heroRectRef.current;
+
+  if (src) {
+    setPendingHeroTransition({
+      destKey: `deal:${mealId}`,
+      sourceRect: src,
+    });
+  }
+
+  router.replace({ pathname: '/deal', params: { resume: mealId } });
+}, [mealId]);
 
   const fadeOutClone = useCallback(() => {
     // 120ms fade (tighter than standard whisper 180ms for snappy finish)
@@ -262,7 +277,7 @@ export default function RescueChecklistScreen() {
         progressText={`${completedCount} of ${totalSteps} steps`}
         meta={`${meal.estimatedTime} · ${meal.ingredients.length} ingredients`}
         isRescue
-        onBack={handleBack}
+        onBack={handleBackToDeal}
         onHeroReady={transition ? handleHeroReady : undefined}
       />
 

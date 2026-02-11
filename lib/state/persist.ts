@@ -1,194 +1,81 @@
-/**
- * Fast Food Preferences Persistence
- * 
- * Lightweight AsyncStorage wrapper for persisting user preferences across app restarts.
- * Deal state (passCount, drmInserted, etc.) remains ephemeral and resets each session.
- */
-
+// lib/state/persist.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
 
-// Versioned storage keys to allow future migrations
-const STORAGE_VERSION = 'v1';
-const KEYS = {
-  selectedMode: `ff:${STORAGE_VERSION}:selectedMode`,
-  constraints: `ff:${STORAGE_VERSION}:constraints`,
-  excludeAllergens: `ff:${STORAGE_VERSION}:excludeAllergens`,
-  hasSeenAffordance: `ff:${STORAGE_VERSION}:hasSeenAffordance`,
-} as const;
+const KEY_PREFIX = 'ff:v1:';
 
-/**
- * User preferences that persist across app restarts
- */
-export interface Prefs {
-  selectedMode: Mode | null;
-  constraints: ConstraintTag[];
-  excludeAllergens: AllergenTag[];
+function key(k: string) {
+  return `${KEY_PREFIX}${k}`;
 }
 
-// Valid values for validation
-const VALID_MODES: Mode[] = ['fancy', 'easy', 'cheap'];
-const VALID_ALLERGENS: AllergenTag[] = ['dairy', 'nuts', 'gluten', 'eggs', 'soy', 'shellfish'];
-const VALID_CONSTRAINTS: ConstraintTag[] = ['no_oven', 'kid_safe', '15_min', 'vegetarian', 'no_dairy'];
+function safeArray(x: unknown): unknown[] {
+  return Array.isArray(x) ? x : [];
+}
 
-/**
- * Default preferences (used when storage is empty or invalid)
- */
-export const DEFAULT_PREFS: Prefs = {
-  selectedMode: null,
-  constraints: [],
-  excludeAllergens: [],
+async function getJson<T>(k: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key(k));
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function setJson(k: string, value: unknown): Promise<void> {
+  await AsyncStorage.setItem(key(k), JSON.stringify(value));
+}
+
+// -----------------------------------------------------------------------------
+// Idle affordance (silent onboarding)
+// -----------------------------------------------------------------------------
+const HAS_SEEN_AFFORDANCE = 'hasSeenAffordance';
+
+export async function getHasSeenAffordance(): Promise<boolean> {
+  return getJson<boolean>(HAS_SEEN_AFFORDANCE, false);
+}
+
+export async function setHasSeenAffordance(v: boolean): Promise<void> {
+  await setJson(HAS_SEEN_AFFORDANCE, v);
+}
+
+// -----------------------------------------------------------------------------
+// Phase 3.1 feedback (kept intact if you’re still using it)
+// -----------------------------------------------------------------------------
+export type FeedbackRating = -1 | 0 | 1;
+
+export type FeedbackEntry = {
+  mealId: string;
+  rating: FeedbackRating;
+  timestamp: number;
+  // optional metadata for future learning loop
+  mode?: 'fancy' | 'easy' | 'cheap';
+  isRescue?: boolean;
+  source?: string;
 };
 
-/**
- * Validate and filter mode value
- */
-function validateMode(value: unknown): Mode | null {
-  if (typeof value === 'string' && VALID_MODES.includes(value as Mode)) {
-    return value as Mode;
-  }
-  return null;
+const LAST_COMPLETED = 'lastCompleted';
+const FEEDBACK_LOG = 'feedbackLog';
+
+export async function getLastCompleted(): Promise<{ mealId: string; completedAt: number } | null> {
+  return getJson<{ mealId: string; completedAt: number } | null>(LAST_COMPLETED, null);
 }
 
-/**
- * Validate and filter allergen tags (drops unknown values)
- */
-function validateAllergens(value: unknown): AllergenTag[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is AllergenTag => 
-    typeof v === 'string' && VALID_ALLERGENS.includes(v as AllergenTag)
-  );
+export async function setLastCompleted(mealId: string, completedAt: number): Promise<void> {
+  await setJson(LAST_COMPLETED, { mealId, completedAt });
 }
 
-/**
- * Validate and filter constraint tags (drops unknown values)
- */
-function validateConstraints(value: unknown): ConstraintTag[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is ConstraintTag => 
-    typeof v === 'string' && VALID_CONSTRAINTS.includes(v as ConstraintTag)
-  );
+export async function clearLastCompleted(): Promise<void> {
+  await AsyncStorage.removeItem(key(LAST_COMPLETED));
 }
 
-/**
- * Load persisted preferences from AsyncStorage.
- * Returns defaults on any error or missing data.
- * Never throws.
- */
-export async function loadPrefs(): Promise<Prefs> {
-  try {
-    const [modeJson, constraintsJson, allergensJson] = await Promise.all([
-      AsyncStorage.getItem(KEYS.selectedMode),
-      AsyncStorage.getItem(KEYS.constraints),
-      AsyncStorage.getItem(KEYS.excludeAllergens),
-    ]);
-
-    // Parse and validate each field
-    const selectedMode = modeJson !== null 
-      ? validateMode(JSON.parse(modeJson)) 
-      : null;
-    
-    const constraints = constraintsJson !== null 
-      ? validateConstraints(JSON.parse(constraintsJson)) 
-      : [];
-    
-    const excludeAllergens = allergensJson !== null 
-      ? validateAllergens(JSON.parse(allergensJson)) 
-      : [];
-
-    return {
-      selectedMode,
-      constraints,
-      excludeAllergens,
-    };
-  } catch (error) {
-    // Log but don't throw - return defaults
-    console.warn('[persist] Failed to load preferences:', error);
-    return { ...DEFAULT_PREFS };
-  }
+export async function getFeedbackLog(): Promise<FeedbackEntry[]> {
+  return getJson<FeedbackEntry[]>(FEEDBACK_LOG, []);
 }
 
-/**
- * Save preferences to AsyncStorage.
- * Partial updates supported - only saves provided fields.
- * Never throws.
- */
-export async function savePrefs(prefs: Partial<Prefs>): Promise<void> {
-  try {
-    const updates: Promise<void>[] = [];
-
-    if (prefs.selectedMode !== undefined) {
-      updates.push(
-        AsyncStorage.setItem(KEYS.selectedMode, JSON.stringify(prefs.selectedMode))
-      );
-    }
-
-    if (prefs.constraints !== undefined) {
-      updates.push(
-        AsyncStorage.setItem(KEYS.constraints, JSON.stringify(prefs.constraints))
-      );
-    }
-
-    if (prefs.excludeAllergens !== undefined) {
-      updates.push(
-        AsyncStorage.setItem(KEYS.excludeAllergens, JSON.stringify(prefs.excludeAllergens))
-      );
-    }
-
-    await Promise.all(updates);
-  } catch (error) {
-    // Log but don't throw
-    console.warn('[persist] Failed to save preferences:', error);
-  }
+export async function appendFeedback(entry: FeedbackEntry): Promise<void> {
+  const log = await getFeedbackLog();
+  // idempotent by mealId (one rating per meal)
+  if (log.some(e => e.mealId === entry.mealId)) return;
+  log.push(entry);
+  await setJson(FEEDBACK_LOG, log);
 }
-
-/**
- * Clear all persisted preferences.
- * Used by "Reset All" flow.
- * Never throws.
- */
-export async function clearPrefs(): Promise<void> {
-  try {
-    await AsyncStorage.multiRemove([
-      KEYS.selectedMode,
-      KEYS.constraints,
-      KEYS.excludeAllergens,
-    ]);
-  } catch (error) {
-    // Log but don't throw
-    console.warn('[persist] Failed to clear preferences:', error);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Affordance flag (first-run onboarding)
-// ---------------------------------------------------------------------------
-
-/**
- * Check if user has seen the idle affordance. Default false.
- */
-export async function getHasSeenAffordance(): Promise<boolean> {
-  try {
-    const val = await AsyncStorage.getItem(KEYS.hasSeenAffordance);
-    return val === 'true';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Mark that user has seen (or interacted before) the idle affordance.
- * Once set, the affordance never fires again.
- */
-export async function setHasSeenAffordance(): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.hasSeenAffordance, 'true');
-  } catch {
-    // Silent — non-critical
-  }
-}
-
-/**
- * Export keys for testing purposes
- */
-export const STORAGE_KEYS = KEYS;
