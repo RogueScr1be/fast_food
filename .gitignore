@@ -24,6 +24,7 @@ Thumbs.db
 # Build outputs
 dist/
 .expo/
+.vercel/
 web-build/
 
 # Environment files

@@ -165,6 +165,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Static deploy health gate (/healthz.json)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsS "${STAGING_URL}/healthz.json" | tee /tmp/healthz.json
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/tmp/healthz.json','utf8'));if(p.ok!==true){process.exit(1)}"
+
       - name: Run staging healthcheck
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}

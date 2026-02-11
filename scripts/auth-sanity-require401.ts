@@ -6,7 +6,7 @@
  * This prevents silent auth bypass bugs.
  * 
  * Endpoints tested (WITHOUT token):
- * a) GET /api/healthz -> must be 200 and ok:true (public endpoint)
+ * a) GET /healthz.json -> must be 200 and ok:true (public endpoint)
  * b) POST /api/decision-os/decision -> MUST be 401 { error:'unauthorized' }
  * c) POST /api/decision-os/receipt/import -> MUST be 401 { error:'unauthorized' }
  * d) POST /api/decision-os/feedback -> MUST be 401 { error:'unauthorized' }
@@ -43,11 +43,11 @@ function getHeaders(): Record<string, string> {
 }
 
 /**
- * a) GET /api/healthz -> must be 200 and ok:true (public endpoint)
+ * a) GET /healthz.json -> must be 200 and ok:true (public endpoint)
  */
 async function testHealthz(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/healthz`);
+    const response = await fetch(`${STAGING_URL}/healthz.json`);
     if (response.status !== 200) return false;
     
     const data = await response.json();

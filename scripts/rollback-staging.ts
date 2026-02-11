@@ -75,11 +75,11 @@ function isValidDeploymentUrl(url: string): boolean {
 }
 
 /**
- * Check if deployment is healthy by hitting /api/healthz
+ * Check if deployment is healthy by hitting /healthz.json
  */
 async function checkHealthz(deploymentUrl: string): Promise<boolean> {
   try {
-    const healthzUrl = `${deploymentUrl}/api/healthz`;
+    const healthzUrl = `${deploymentUrl}/healthz.json`;
     const response = await fetch(healthzUrl, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },

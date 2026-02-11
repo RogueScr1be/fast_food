@@ -356,8 +356,8 @@ jobs:
 
       - name: Check healthz endpoint
         run: |
-          echo "Checking ${{ secrets.STAGING_URL }}/api/healthz"
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/api/healthz")
+          echo "Checking ${{ secrets.STAGING_URL }}/healthz.json"
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/healthz.json")
           if [ "$RESPONSE" != "200" ]; then
             echo "Healthz check failed with status: $RESPONSE"
             exit 1
