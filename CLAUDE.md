@@ -35,6 +35,7 @@ Fast Food is a **local-first** dinner decision app built with Expo/React Native:
 - If tests reference exported functions/constants that don’t exist, treat it as a broken internal contract: restore exports via re-exports first, only re-implement if no source exists.
 - Release CI must reflect the shipping surface area. Legacy suites run in a separate non-blocking lane until rehabilitated.
 - Release blockers are only required checks in the active CI contract plus manual device validation. Non-required legacy/autopilot smoke failures do not block TestFlight unless they indicate a confirmed product regression.
+- EAS iOS credential provisioning is an interactive secret flow; if automation lacks readable stdin or Apple credentials, stop, record the exact prompt reached, and hand off a deterministic one-command manual step.
 
 ## Design Constitution Compliance
 

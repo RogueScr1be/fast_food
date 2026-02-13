@@ -26,8 +26,7 @@
         "EXPO_PUBLIC_APP_VARIANT": "preview",
         "EXPO_PUBLIC_FF_MVP_ENABLED": "true",
         "EXPO_PUBLIC_FF_QA_ENABLED": "true"
-      },
-      "channel": "preview"
+      }
     },
     "production": {
       "distribution": "store",
@@ -39,7 +38,6 @@
         "EXPO_PUBLIC_FF_MVP_ENABLED": "true",
         "EXPO_PUBLIC_FF_QA_ENABLED": "false"
       },
-      "channel": "production",
       "autoIncrement": true
     }
   },

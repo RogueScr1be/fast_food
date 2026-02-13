@@ -35,6 +35,7 @@
       },
       "infoPlist": {
         "UIRequiresFullScreen": true,
+        "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": ["background-fetch", "remote-notification"],
         "NSCameraUsageDescription": "This app uses the camera to scan grocery receipts for meal plan optimization.",
         "NSMicrophoneUsageDescription": "This app uses the microphone for voice commands to create meal plans.",
