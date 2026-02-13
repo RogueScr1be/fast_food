@@ -3,6 +3,8 @@
     "name": "Fast Food",
     "slug": "fast-food",
     "version": "1.0.0",
+    "description": "Fast Food helps households make one executable dinner decision with minimal friction.",
+    "privacyPolicyUrl": "https://fast-food.vercel.app/privacy",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -18,6 +20,19 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.fastfood.zeroui",
       "requireFullScreen": true,
+      "privacyManifests": {
+        "NSPrivacyTracking": false,
+        "NSPrivacyTrackingDomains": [],
+        "NSPrivacyCollectedDataTypes": [],
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          }
+        ]
+      },
       "infoPlist": {
         "UIRequiresFullScreen": true,
         "UIBackgroundModes": ["background-fetch", "remote-notification"],
