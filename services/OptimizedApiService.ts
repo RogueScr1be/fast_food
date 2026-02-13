@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 interface UserProfile {
   id?: number;
   adults: number;
@@ -45,16 +43,20 @@ class OptimizedApiService {
   }
 
   private getDefaultBaseUrl(): string {
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        return window.location.origin;
-      }
-      return 'http://localhost:8081';
-    } else if (Platform.OS === 'android') {
-      return 'http://10.0.2.2:8081';
-    } else {
-      return 'http://localhost:8081';
+    const configuredFallback = process.env.EXPO_PUBLIC_API_FALLBACK_URL;
+    if (configuredFallback) {
+      return configuredFallback;
     }
+
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.location?.origin === 'string' &&
+      window.location.origin.startsWith('https://')
+    ) {
+      return window.location.origin;
+    }
+
+    return 'https://fast-food.vercel.app';
   }
 
   private getCacheKey(endpoint: string, options?: RequestInit): string {

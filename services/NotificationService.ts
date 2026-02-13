@@ -50,23 +50,8 @@ class NotificationService {
         return { status: finalStatus };
       }
 
-      // Configure notification channel for Android
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('meal-reminders', {
-          name: 'Meal Reminders',
-          importance: Notifications.AndroidImportance.HIGH,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF6B35',
-          sound: 'default',
-        });
-
-        await Notifications.setNotificationChannelAsync('grocery-reminders', {
-          name: 'Grocery Reminders',
-          importance: Notifications.AndroidImportance.DEFAULT,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF6B35',
-        });
-      }
+      // Configure push channels where supported; ignore unsupported platforms.
+      await this.configureNotificationChannels();
 
       return { status: finalStatus };
     } catch (error) {
@@ -98,6 +83,27 @@ class NotificationService {
     } catch (error) {
       console.error('Error scheduling notification:', error);
       return null;
+    }
+  }
+
+  private async configureNotificationChannels(): Promise<void> {
+    try {
+      await Notifications.setNotificationChannelAsync('meal-reminders', {
+        name: 'Meal Reminders',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF6B35',
+        sound: 'default',
+      });
+
+      await Notifications.setNotificationChannelAsync('grocery-reminders', {
+        name: 'Grocery Reminders',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF6B35',
+      });
+    } catch {
+      // No-op for platforms that do not expose notification channels.
     }
   }
 

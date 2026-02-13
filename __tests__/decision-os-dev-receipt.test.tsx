@@ -92,7 +92,6 @@ describe('Dev-Only Gate', () => {
   test('in test environment, dev indicator renders when IS_DEV_MODE is true', async () => {
     // Skip this test if not in dev mode
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -110,7 +109,6 @@ describe('Dev-Only Gate', () => {
   
   test('dev receipt trigger is a pressable element in dev mode', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -133,7 +131,6 @@ describe('Dev-Only Gate', () => {
 describe('Receipt Upload', () => {
   test('upload calls endpoint exactly once on success', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -218,7 +215,6 @@ describe('Receipt Upload', () => {
   
   test('user cancellation does not call endpoint', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -280,7 +276,6 @@ describe('Receipt Upload', () => {
 describe('No List Components', () => {
   test('screen does not render FlatList, SectionList, or ScrollView with items', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -301,7 +296,6 @@ describe('No List Components', () => {
   
   test('toast shows single message, not a list', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -378,7 +372,6 @@ describe('No List Components', () => {
 describe('Toast Feedback', () => {
   test('shows "Receipt captured." on success', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -429,7 +422,6 @@ describe('Toast Feedback', () => {
   
   test('shows "Receipt failed." on API error', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     
@@ -480,7 +472,6 @@ describe('Toast Feedback', () => {
   
   test('shows "Receipt failed." on permission denied', async () => {
     if (!IS_DEV_MODE) {
-      console.log('Skipping: Not in dev mode');
       return;
     }
     

@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 /**
  * API Service with Authentication Support
  * 
@@ -74,19 +72,22 @@ class ApiService {
   }
 
   private getDefaultBaseUrl(): string {
-    if (Platform.OS === 'web') {
-      // For web development, use current origin for API routes
-      if (typeof window !== 'undefined') {
-        return window.location.origin;
-      }
-      return 'http://localhost:8081';
-    } else if (Platform.OS === 'android') {
-      // Android emulator uses 10.0.2.2 to access host machine
-      return 'http://10.0.2.2:8081';
-    } else {
-      // iOS simulator can use localhost
-      return 'http://localhost:8081';
+    const configuredFallback = process.env.EXPO_PUBLIC_API_FALLBACK_URL;
+    if (configuredFallback) {
+      return configuredFallback;
     }
+
+    // Prefer same-origin for HTTPS web deployments.
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.location?.origin === 'string' &&
+      window.location.origin.startsWith('https://')
+    ) {
+      return window.location.origin;
+    }
+
+    // Production-safe default for clients missing explicit API env.
+    return 'https://fast-food.vercel.app';
   }
 
   /**

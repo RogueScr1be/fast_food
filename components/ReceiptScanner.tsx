@@ -350,7 +350,7 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({
                   </TouchableOpacity>
                 </Animated.View>
 
-                <View style={styles.placeholder} />
+                <View style={styles.controlSpacer} />
               </View>
             </CameraView>
           </>
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: '#FF6B35',
   },
-  placeholder: {
+  controlSpacer: {
     width: 48,
   },
   processingContainer: {
