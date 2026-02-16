@@ -4,7 +4,7 @@
  * - Full-bleed hero card (DecisionCard)
  * - Swipe-to-pass (disabled for Rescue)
  * - Glass overlay (level 0/1/2)
- * - Idle affordance (4s lift → +1.5s nudge) first-session only
+ * - Idle affordance (2s lift → +1s nudge) once per app session
  * - DRM insertion after 3 passes OR 45 seconds
  * - Accept → /checklist/[recipeId] (with hero transition)
  * - Back chevron → /tonight (replace)
@@ -71,7 +71,10 @@ import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 import { DecisionCard } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
 
-import { getHasSeenAffordance, setHasSeenAffordance } from '@/lib/state/persist';
+import {
+  getIdleAffordanceSessionState,
+  setIdleAffordanceShownThisSession,
+} from '@/lib/state/persist';
 import { useIdleAffordance } from '@/hooks/useIdleAffordance';
 import { getImageSourceSafe } from '@/lib/seeds/images';
 
@@ -226,34 +229,48 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const [affordanceEligible, setAffordanceEligible] = useState(false);
+  const affordanceStartedRef = useRef(false);
+  const affordanceEligibleRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const seen = await getHasSeenAffordance();
+      const { shownThisSession } = await getIdleAffordanceSessionState();
       if (!mounted) return;
-      setAffordanceEligible(!seen);
+      setAffordanceEligible(!shownThisSession);
     })();
     return () => {
       mounted = false;
     };
   }, []);
 
-  const { nudgeX, overlayLiftY, resetIdle } = useIdleAffordance({
-    enabled: affordanceEligible,
-    liftDelayMs: 4000,
-    nudgeDelayMs: 1500,
-  });
-
-  const markAffordanceSeen = useCallback(() => {
-    if (!affordanceEligible) return;
-    setAffordanceEligible(false);
-    void setHasSeenAffordance(true);
+  useEffect(() => {
+    affordanceEligibleRef.current = affordanceEligible;
   }, [affordanceEligible]);
+
+  const markAffordanceShownThisSession = useCallback(() => {
+    affordanceStartedRef.current = true;
+    void setIdleAffordanceShownThisSession(true);
+  }, []);
+
+  const finalizeAffordanceIfStarted = useCallback(() => {
+    if (!affordanceStartedRef.current) return;
+    if (!affordanceEligibleRef.current) return;
+    setAffordanceEligible(false);
+  }, []);
+
+  const { nudgeX, overlayLiftY, resetIdle, restartIdle } = useIdleAffordance({
+    enabled: affordanceEligible,
+    liftDelayMs: 2000,
+    nudgeDelayMs: 1000,
+    onLiftStart: markAffordanceShownThisSession,
+    onSequenceComplete: finalizeAffordanceIfStarted,
+  });
 
   useEffect(() => {
     resetIdle();
-  }, [cardKey, resetIdle]);
+    if (affordanceEligibleRef.current) restartIdle();
+  }, [cardKey, resetIdle, restartIdle]);
 
   const idleNudgeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: nudgeX.value }],
@@ -353,7 +370,7 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const handleAccept = useCallback(() => {
-    markAffordanceSeen();
+    finalizeAffordanceIfStarted();
     resetIdle();
 
     if (!currentDeal) return;
@@ -367,30 +384,30 @@ export default function DealScreen() {
     });
 
     router.push(`/checklist/${currentDeal.data.id}`);
-  }, [markAffordanceSeen, resetIdle, currentDeal, windowW, windowH]);
+  }, [finalizeAffordanceIfStarted, resetIdle, currentDeal, windowW, windowH]);
 
   const handlePass = useCallback(() => {
-    markAffordanceSeen();
+    finalizeAffordanceIfStarted();
     resetIdle();
 
     if (!currentDeal) return;
     addToDealHistory(currentDeal.data.id);
     dealNextCard();
-  }, [currentDeal, markAffordanceSeen, resetIdle, dealNextCard]);
+  }, [currentDeal, finalizeAffordanceIfStarted, resetIdle, dealNextCard]);
 
   const handleOverlayLevelChange = useCallback(
     (lvl: 0 | 1 | 2) => {
-      markAffordanceSeen();
+      finalizeAffordanceIfStarted();
       resetIdle();
       setOverlayLevel(lvl);
     },
-    [markAffordanceSeen, resetIdle],
+    [finalizeAffordanceIfStarted, resetIdle],
   );
 
   const handleToggleExpand = useCallback(() => {
-    markAffordanceSeen();
+    finalizeAffordanceIfStarted();
     setOverlayLevel((prev) => (prev === 0 ? 1 : 0));
-  }, [markAffordanceSeen]);
+  }, [finalizeAffordanceIfStarted]);
 
   const handleShuffle = useCallback(() => {
     resetDealState();

@@ -7,10 +7,6 @@ function key(k: string) {
   return `${KEY_PREFIX}${k}`;
 }
 
-function safeArray(x: unknown): unknown[] {
-  return Array.isArray(x) ? x : [];
-}
-
 async function getJson<T>(k: string, fallback: T): Promise<T> {
   try {
     const raw = await AsyncStorage.getItem(key(k));
@@ -28,14 +24,50 @@ async function setJson(k: string, value: unknown): Promise<void> {
 // -----------------------------------------------------------------------------
 // Idle affordance (silent onboarding)
 // -----------------------------------------------------------------------------
-const HAS_SEEN_AFFORDANCE = 'hasSeenAffordance';
+const IDLE_AFFORDANCE_SHOWN_THIS_SESSION = 'idleAffordanceShownThisSession';
+let idleAffordanceSessionBootstrapped = false;
 
+async function bootstrapIdleAffordanceSession(): Promise<void> {
+  if (idleAffordanceSessionBootstrapped) return;
+  idleAffordanceSessionBootstrapped = true;
+  try {
+    await setJson(IDLE_AFFORDANCE_SHOWN_THIS_SESSION, false);
+  } catch {
+    // Ignore storage failures; caller gets safe fallback values.
+  }
+}
+
+export type IdleAffordanceSessionState = {
+  shownThisSession: boolean;
+};
+
+export async function getIdleAffordanceSessionState(): Promise<IdleAffordanceSessionState> {
+  try {
+    await bootstrapIdleAffordanceSession();
+    const shownThisSession = await getJson<boolean>(IDLE_AFFORDANCE_SHOWN_THIS_SESSION, false);
+    return { shownThisSession };
+  } catch {
+    return { shownThisSession: false };
+  }
+}
+
+export async function setIdleAffordanceShownThisSession(v: boolean): Promise<void> {
+  try {
+    await bootstrapIdleAffordanceSession();
+    await setJson(IDLE_AFFORDANCE_SHOWN_THIS_SESSION, v);
+  } catch {
+    // No-op on persistence errors; avoid bubbling failures into UI flow.
+  }
+}
+
+// Backward compatibility for existing callers.
 export async function getHasSeenAffordance(): Promise<boolean> {
-  return getJson<boolean>(HAS_SEEN_AFFORDANCE, false);
+  const { shownThisSession } = await getIdleAffordanceSessionState();
+  return shownThisSession;
 }
 
 export async function setHasSeenAffordance(v: boolean): Promise<void> {
-  await setJson(HAS_SEEN_AFFORDANCE, v);
+  await setIdleAffordanceShownThisSession(v);
 }
 
 // -----------------------------------------------------------------------------
