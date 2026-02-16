@@ -81,7 +81,10 @@ import {
   type PendingHeroTransition,
 } from '../lib/ui/heroTransition';
 
-import { getHasSeenAffordance, setHasSeenAffordance } from '../lib/state/persist';
+import {
+  getIdleAffordanceSessionState,
+  setIdleAffordanceShownThisSession,
+} from '../lib/state/persist';
 
 const ALL_MODES: ('fancy' | 'easy' | 'cheap')[] = ['fancy', 'easy', 'cheap'];
 
@@ -233,32 +236,46 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const [affordanceEligible, setAffordanceEligible] = useState(false);
+  const affordanceStartedRef = useRef(false);
+  const affordanceEligibleRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
-    getHasSeenAffordance().then((seen) => {
-      if (alive && !seen) setAffordanceEligible(true);
+    getIdleAffordanceSessionState().then(({ shownThisSession }) => {
+      if (alive && !shownThisSession) setAffordanceEligible(true);
     });
     return () => {
       alive = false;
     };
   }, []);
 
-  const { nudgeX, overlayLiftY, resetIdle } = useIdleAffordance({
-    enabled: affordanceEligible && !isLoading && !noMoreRecipes && currentDeal !== null,
-  });
+  useEffect(() => {
+    affordanceEligibleRef.current = affordanceEligible;
+  }, [affordanceEligible]);
 
-  const markAffordanceSeen = useCallback(() => {
-    if (affordanceEligible) {
-      setAffordanceEligible(false);
-      setHasSeenAffordance();
-    }
-    resetIdle();
-  }, [affordanceEligible, resetIdle]);
+  const markAffordanceShownThisSession = useCallback(() => {
+    affordanceStartedRef.current = true;
+    void setIdleAffordanceShownThisSession(true);
+  }, []);
+
+  const finalizeAffordanceIfStarted = useCallback(() => {
+    if (!affordanceStartedRef.current) return;
+    if (!affordanceEligibleRef.current) return;
+    setAffordanceEligible(false);
+  }, []);
+
+  const { nudgeX, overlayLiftY, resetIdle, restartIdle } = useIdleAffordance({
+    enabled: affordanceEligible && !isLoading && !noMoreRecipes && currentDeal !== null,
+    liftDelayMs: 2000,
+    nudgeDelayMs: 1000,
+    onLiftStart: markAffordanceShownThisSession,
+    onSequenceComplete: finalizeAffordanceIfStarted,
+  });
 
   useEffect(() => {
     resetIdle();
-  }, [cardKey, resetIdle]);
+    if (affordanceEligibleRef.current) restartIdle();
+  }, [cardKey, resetIdle, restartIdle]);
 
   const idleNudgeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: nudgeX.value }],
@@ -358,17 +375,19 @@ export default function DealScreen() {
 
   const handlePass = useCallback(
     (_direction: PassDirection) => {
-      markAffordanceSeen();
+      finalizeAffordanceIfStarted();
+      resetIdle();
       if (currentDeal) addToDealHistory(currentDeal.data.id);
       incrementPassCount();
       setTimeout(() => dealNextCard(), 50);
     },
-    [currentDeal, dealNextCard, markAffordanceSeen],
+    [currentDeal, dealNextCard, finalizeAffordanceIfStarted, resetIdle],
   );
 
   const handleAccept = useCallback(() => {
     if (!currentDeal) return;
-    markAffordanceSeen();
+    finalizeAffordanceIfStarted();
+    resetIdle();
 
     const destKey = `checklist:${currentDeal.data.id}`;
 
@@ -382,20 +401,22 @@ export default function DealScreen() {
       pathname: '/checklist/[recipeId]',
       params: { recipeId: currentDeal.data.id },
     });
-  }, [currentDeal, markAffordanceSeen, dealScreenW, dealScreenH]);
+  }, [currentDeal, finalizeAffordanceIfStarted, resetIdle, dealScreenW, dealScreenH]);
 
   const handleOverlayLevelChange = useCallback(
     (level: OverlayLevel) => {
-      markAffordanceSeen();
+      finalizeAffordanceIfStarted();
+      resetIdle();
       setOverlayLevel(level);
     },
-    [markAffordanceSeen],
+    [finalizeAffordanceIfStarted, resetIdle],
   );
 
   const handleToggleExpand = useCallback(() => {
-    markAffordanceSeen();
+    finalizeAffordanceIfStarted();
+    resetIdle();
     setOverlayLevel((prev) => (prev === 0 ? 1 : 0));
-  }, [markAffordanceSeen]);
+  }, [finalizeAffordanceIfStarted, resetIdle]);
 
   const handleShuffle = useCallback(() => {
     resetDealState();
