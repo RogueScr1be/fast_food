@@ -9,6 +9,8 @@ import {
   loadPrefs,
   savePrefs,
   clearPrefs,
+  getHapticsEnabled,
+  setHapticsEnabled,
   DEFAULT_PREFS,
   STORAGE_KEYS,
   type Prefs,
@@ -201,6 +203,7 @@ describe('Persistence Layer (persist.ts)', () => {
         STORAGE_KEYS.selectedMode,
         STORAGE_KEYS.constraints,
         STORAGE_KEYS.excludeAllergens,
+        STORAGE_KEYS.hapticsEnabled,
       ]);
     });
 
@@ -209,6 +212,33 @@ describe('Persistence Layer (persist.ts)', () => {
       
       // Should not throw
       await expect(clearPrefs()).resolves.not.toThrow();
+    });
+  });
+
+  describe('haptics preference', () => {
+    it('defaults to enabled when storage is empty', async () => {
+      mockedAsyncStorage.getItem.mockResolvedValue(null);
+      await expect(getHapticsEnabled()).resolves.toBe(true);
+    });
+
+    it('round-trips persisted haptics preference', async () => {
+      await setHapticsEnabled(false);
+
+      mockedAsyncStorage.getItem.mockImplementation(async (key) => {
+        if (key === STORAGE_KEYS.hapticsEnabled) return JSON.stringify(false);
+        return null;
+      });
+
+      await expect(getHapticsEnabled()).resolves.toBe(false);
+      expect(mockedAsyncStorage.setItem).toHaveBeenCalledWith(
+        STORAGE_KEYS.hapticsEnabled,
+        JSON.stringify(false),
+      );
+    });
+
+    it('returns safe fallback true on storage failure', async () => {
+      mockedAsyncStorage.getItem.mockRejectedValue(new Error('Storage unavailable'));
+      await expect(getHapticsEnabled()).resolves.toBe(true);
     });
   });
 });

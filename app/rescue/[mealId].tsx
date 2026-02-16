@@ -40,6 +40,7 @@ import { consumePendingHeroTransition, type PendingHeroTransition } from '../../
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
+import { hapticImpactMedium, hapticSuccess } from '../../lib/ui/haptics';
 
 /**
  * Fallback steps for DRM meals without defined steps.
@@ -199,6 +200,7 @@ export default function RescueChecklistScreen() {
       } else {
         newSet.add(index);
         if (newSet.size === totalSteps && totalSteps > 0) {
+          void hapticImpactMedium();
           setShowGreatJob(true);
         }
       }
@@ -210,6 +212,7 @@ export default function RescueChecklistScreen() {
    * Handle Done - reset deal state and go back to Tonight
    */
   const handleDone = useCallback(() => {
+    void hapticSuccess();
     if (mealId) recordCompletion(mealId);
     resetDealState();
     router.replace('/tonight');

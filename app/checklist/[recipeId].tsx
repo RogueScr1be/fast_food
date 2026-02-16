@@ -49,6 +49,7 @@ import {
 import { ThinProgressBar } from '../../components/ThinProgressBar';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { GreatJobOverlay } from '../../components/GreatJobOverlay';
+import { hapticImpactMedium, hapticSuccess } from '../../lib/ui/haptics';
 
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
@@ -204,6 +205,7 @@ export default function ChecklistScreen() {
         } else {
           next.add(index);
           if (next.size === totalSteps && totalSteps > 0) {
+            void hapticImpactMedium();
             setShowGreatJob(true);
           }
         }
@@ -214,6 +216,7 @@ export default function ChecklistScreen() {
   );
 
   const handleDone = useCallback(() => {
+    void hapticSuccess();
     if (recipeId) recordCompletion(recipeId);
     resetDealState();
     router.replace('/tonight');

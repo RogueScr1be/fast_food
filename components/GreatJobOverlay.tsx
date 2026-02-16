@@ -10,7 +10,8 @@
  */
 
 import React, { useEffect, useRef, useCallback } from 'react';
-import { Pressable, Text, StyleSheet } from 'react-native';
+import { Pressable, Text, StyleSheet, Platform, View } from 'react-native';
+import { BlurView } from 'expo-blur';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -19,7 +20,11 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { colors, typography } from '../lib/ui/theme';
-import { whisper } from '../lib/ui/motion';
+import {
+  whisper,
+  getShouldReduceMotion,
+  getReducedMotionDuration,
+} from '../lib/ui/motion';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,9 +54,13 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
   const wasVisible = useRef(false);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const reduceMotionRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    getShouldReduceMotion().then((value) => {
+      if (mountedRef.current) reduceMotionRef.current = value;
+    });
     return () => {
       mountedRef.current = false;
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
@@ -60,10 +69,14 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
 
   const doDismiss = useCallback(() => {
     // Fade out (Whisper)
-    overlayOpacity.value = withTiming(0, whisper);
+    const dismissDuration = getReducedMotionDuration(
+      whisper.duration,
+      reduceMotionRef.current,
+    );
+    overlayOpacity.value = withTiming(0, { ...whisper, duration: dismissDuration });
     dismissTimer.current = setTimeout(() => {
       if (mountedRef.current) onDismiss();
-    }, whisper.duration + 30);
+    }, dismissDuration + 30);
   }, [onDismiss, overlayOpacity]);
 
   // Edge detection: only animate on false → true
@@ -74,18 +87,25 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
       cancelAnimation(overlayOpacity);
       cancelAnimation(revealWidth);
 
-      overlayOpacity.value = withTiming(1, whisper); // fade in
-      revealWidth.value = 0;
-      revealWidth.value = withTiming(1, {
-        duration: REVEAL_DURATION,
-        easing: Easing.out(Easing.ease),
-      });
+      const reduceMotion = reduceMotionRef.current;
+      const fadeInDuration = getReducedMotionDuration(whisper.duration, reduceMotion);
+      overlayOpacity.value = withTiming(1, { ...whisper, duration: fadeInDuration });
+
+      if (reduceMotion) {
+        revealWidth.value = 1;
+      } else {
+        revealWidth.value = 0;
+        revealWidth.value = withTiming(1, {
+          duration: REVEAL_DURATION,
+          easing: Easing.out(Easing.ease),
+        });
+      }
 
       // Auto-dismiss after reveal + hold
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
       dismissTimer.current = setTimeout(() => {
         if (mountedRef.current) doDismiss();
-      }, REVEAL_DURATION + HOLD_DURATION);
+      }, (reduceMotion ? fadeInDuration : REVEAL_DURATION) + HOLD_DURATION);
     }
 
     if (!visible) {
@@ -120,6 +140,14 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
 
   return (
     <Animated.View style={[styles.overlay, overlayStyle]}>
+      {Platform.OS === 'ios' ? (
+        <>
+          <BlurView intensity={25} tint="light" style={StyleSheet.absoluteFill} />
+          <View style={styles.iosTint} pointerEvents="none" />
+        </>
+      ) : (
+        <View style={styles.androidTint} pointerEvents="none" />
+      )}
       <Pressable style={styles.pressable} onPress={handleTap}>
         {/* Clip container: reveals text left to right */}
         <Animated.View style={[styles.clipContainer, clipStyle]}>
@@ -139,10 +167,17 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(250, 250, 250, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 200,
+  },
+  iosTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(248, 249, 252, 0.62)',
+  },
+  androidTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(245, 247, 251, 0.92)',
   },
   pressable: {
     ...StyleSheet.absoluteFillObject,
