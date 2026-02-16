@@ -135,6 +135,17 @@ export function getReducedMotionDuration(durationMs: number, reduceMotion: boole
   return Math.max(60, Math.round(durationMs * 0.35));
 }
 
+/**
+ * Clamp "first visible response" timing so feedback feels immediate.
+ * Keeps reduced-motion parity while preserving calm motion.
+ */
+export function getPerceivedResponseDuration(
+  durationMs: number,
+  reduceMotion: boolean,
+): number {
+  return Math.min(120, getReducedMotionDuration(durationMs, reduceMotion));
+}
+
 /** Test helper: clear memoized reduced-motion state. */
 export function __resetReducedMotionCacheForTest(): void {
   reduceMotionCache = null;

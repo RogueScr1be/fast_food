@@ -9,7 +9,7 @@
  * Session persistence is handled by the caller (deal.tsx).
  */
 
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import {
   useSharedValue,
   withTiming,
@@ -86,8 +86,7 @@ export function useIdleAffordance(
   const timer1Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer3Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [motionReady, setMotionReady] = useState(false);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  const reduceMotionRef = useRef(false);
 
   const clearTimers = useCallback(() => {
     if (timer1Ref.current) {
@@ -109,7 +108,7 @@ export function useIdleAffordance(
     isIdleRef.current = true;
     onLiftStart?.();
 
-    if (reduceMotion) {
+    if (reduceMotionRef.current) {
       if (onSequenceComplete) {
         timer3Ref.current = setTimeout(onSequenceComplete, nudgeDelayMs);
       }
@@ -141,7 +140,7 @@ export function useIdleAffordance(
         }, NUDGE_DURATION * 2);
       }
     }, nudgeDelayMs);
-  }, [nudgeX, overlayLiftY, nudgeDelayMs, onLiftStart, onSequenceComplete, reduceMotion]);
+  }, [nudgeX, overlayLiftY, nudgeDelayMs, onLiftStart, onSequenceComplete]);
 
   /** Start the staged sequence (one-shot) */
   const startSequence = useCallback(() => {
@@ -157,11 +156,11 @@ export function useIdleAffordance(
   const resetIdle = useCallback(() => {
     clearTimers();
     isIdleRef.current = false;
-    const resetDuration = getReducedMotionDuration(RESET_DURATION, reduceMotion);
+    const resetDuration = getReducedMotionDuration(RESET_DURATION, reduceMotionRef.current);
     nudgeX.value = withTiming(0, { ...whisper, duration: resetDuration });
     overlayLiftY.value = withTiming(0, { ...whisper, duration: resetDuration });
     // Do NOT restart — one-shot. Once reset, it's done.
-  }, [clearTimers, nudgeX, overlayLiftY, reduceMotion]);
+  }, [clearTimers, nudgeX, overlayLiftY]);
 
   const restartIdle = useCallback(() => {
     if (!enabled || firedRef.current) return;
@@ -172,10 +171,7 @@ export function useIdleAffordance(
     let alive = true;
     getShouldReduceMotion()
       .then((value) => {
-        if (alive) setReduceMotion(value);
-      })
-      .finally(() => {
-        if (alive) setMotionReady(true);
+        if (alive) reduceMotionRef.current = value;
       });
 
     return () => {
@@ -185,8 +181,6 @@ export function useIdleAffordance(
 
   // Lifecycle: start sequence when enabled, clear on disable/unmount
   useEffect(() => {
-    if (!motionReady) return clearTimers;
-
     if (enabled && !firedRef.current) {
       startSequence();
     } else if (!enabled) {
@@ -196,7 +190,7 @@ export function useIdleAffordance(
       overlayLiftY.value = 0;
     }
     return clearTimers;
-  }, [enabled, startSequence, clearTimers, nudgeX, overlayLiftY, motionReady]);
+  }, [enabled, startSequence, clearTimers, nudgeX, overlayLiftY]);
 
   return {
     nudgeX,

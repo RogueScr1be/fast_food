@@ -40,7 +40,12 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import { oak, whisper } from '../lib/ui/motion';
+import {
+  oak,
+  whisper,
+  getShouldReduceMotion,
+  getReducedMotionDuration,
+} from '../lib/ui/motion';
 import { hapticImpactLight, hapticImpactMedium } from '../lib/ui/haptics';
 
 import {
@@ -117,6 +122,7 @@ export default function DealScreen() {
   const [whyText, setWhyText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [noMoreRecipes, setNoMoreRecipes] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
 
   // Glass overlay level (controlled here, passed into DecisionCard)
   const [overlayLevel, setOverlayLevel] = useState<OverlayLevel>(0);
@@ -170,6 +176,7 @@ export default function DealScreen() {
   const enterH = useSharedValue(0);
   const enterOpacity = useSharedValue(0);
   const contentOpacity = useSharedValue(1);
+  const contentScale = useSharedValue(1);
 
   useEffect(() => {
     if (!resumeId) return;
@@ -188,6 +195,7 @@ export default function DealScreen() {
 
     // hide real content until clone expands
     contentOpacity.value = 0;
+    contentScale.value = 1;
     setShowEnterClone(true);
 
     // animate to full screen
@@ -214,10 +222,11 @@ export default function DealScreen() {
       cancelAnimation(enterH);
       cancelAnimation(enterOpacity);
       cancelAnimation(contentOpacity);
+      cancelAnimation(contentScale);
       setShowEnterClone(false);
       pendingEnterRef.current = null;
     };
-  }, [resumeId, dealScreenW, dealScreenH, enterX, enterY, enterW, enterH, enterOpacity, contentOpacity]);
+  }, [resumeId, dealScreenW, dealScreenH, enterX, enterY, enterW, enterH, enterOpacity, contentOpacity, contentScale]);
 
   const enterCloneStyle = useAnimatedStyle(() => ({
     position: 'absolute',
@@ -232,6 +241,7 @@ export default function DealScreen() {
 
   const contentFadeStyle = useAnimatedStyle(() => ({
     opacity: contentOpacity.value,
+    transform: [{ scale: contentScale.value }],
   }));
 
   // ---------------------------------------------------------------------------
@@ -244,6 +254,9 @@ export default function DealScreen() {
 
   useEffect(() => {
     let alive = true;
+    getShouldReduceMotion().then((enabled) => {
+      if (alive) setReduceMotion(enabled);
+    });
     getIdleAffordanceSessionState().then(({ shownThisSession }) => {
       if (alive && !shownThisSession) setAffordanceEligible(true);
     });
@@ -251,6 +264,15 @@ export default function DealScreen() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentDeal) return;
+    const settleDuration = getReducedMotionDuration(150, reduceMotion);
+    contentScale.value = reduceMotion ? 1 : 0.992;
+    contentOpacity.value = reduceMotion ? 1 : 0.9;
+    contentScale.value = withTiming(1, { ...whisper, duration: settleDuration });
+    contentOpacity.value = withTiming(1, { ...whisper, duration: settleDuration });
+  }, [currentDeal?.data.id, reduceMotion, contentScale, contentOpacity, currentDeal]);
 
   useEffect(() => {
     affordanceEligibleRef.current = affordanceEligible;
@@ -553,6 +575,7 @@ export default function DealScreen() {
   // ---------------------------------------------------------------------------
 
   const modeLabel = isValidMode ? mode : undefined;
+  const seenCount = getDealHistory().length;
 
   return (
     <View style={styles.container}>
@@ -601,6 +624,12 @@ export default function DealScreen() {
         >
           <ChevronLeft size={20} color={colors.glassText} />
         </TouchableOpacity>
+      )}
+
+      {overlayLevel === 0 && (
+        <View style={[styles.momentumPill, { top: insets.top + spacing.sm, right: spacing.md }]}>
+          <Text style={styles.momentumPillText}>{seenCount} seen tonight</Text>
+        </View>
       )}
 
       {/* Allergy Modal */}
@@ -682,6 +711,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 50,
+  },
+  momentumPill: {
+    position: 'absolute',
+    borderRadius: radii.full,
+    backgroundColor: 'rgba(25, 25, 25, 0.35)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    minHeight: 28,
+    justifyContent: 'center',
+    zIndex: 50,
+  },
+  momentumPillText: {
+    color: colors.glassText,
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+    letterSpacing: 0.2,
   },
   centered: {
     flex: 1,

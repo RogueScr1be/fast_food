@@ -31,10 +31,16 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { router } from 'expo-router';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Utensils, User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import { whisper, getShouldReduceMotion, getReducedMotionDuration } from '../lib/ui/motion';
+import {
+  whisper,
+  getShouldReduceMotion,
+  getReducedMotionDuration,
+  getPerceivedResponseDuration,
+} from '../lib/ui/motion';
 import { hapticSelection } from '../lib/ui/haptics';
 import {
   setSelectedMode,
@@ -261,7 +267,7 @@ export default function TonightScreen() {
     router.push('/deal');
 
     // Fade clone + scrim out; cleanup via completion callback (no setTimeout)
-    const fadeOutDuration = getReducedMotionDuration(FADE_OUT_DURATION, reduceMotion);
+    const fadeOutDuration = getPerceivedResponseDuration(FADE_OUT_DURATION, reduceMotion);
     cloneOpacity.value = withTiming(0, { ...whisper, duration: fadeOutDuration }, (finished) => {
       if (finished) {
         runOnJS(cleanup)();
@@ -320,7 +326,10 @@ export default function TonightScreen() {
           cloneRadius.value = withTiming(0, timingConfig);
           scrimOpacity.value = withTiming(1, {
             ...whisper,
-            duration: Math.round(timingConfig.duration * 0.6),
+            duration: getPerceivedResponseDuration(
+              Math.round(timingConfig.duration * 0.6),
+              reduceMotion,
+            ),
           });
         },
       );
@@ -384,6 +393,29 @@ export default function TonightScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Hybrid hero-glass (top identity and bottom CTA stage only) */}
+      <View pointerEvents="none" style={styles.heroGlassTop}>
+        {Platform.OS === 'ios' ? (
+          <>
+            <BlurView intensity={18} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={styles.heroGlassTopTintIOS} />
+          </>
+        ) : (
+          <View style={styles.heroGlassTopTintFallback} />
+        )}
+      </View>
+
+      <View pointerEvents="none" style={styles.heroGlassBottom}>
+        {Platform.OS === 'ios' ? (
+          <>
+            <BlurView intensity={22} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={styles.heroGlassBottomTintIOS} />
+          </>
+        ) : (
+          <View style={styles.heroGlassBottomTintFallback} />
+        )}
+      </View>
+
       {/* Background depth wrapper — sinks during clone expansion */}
       <Animated.View style={[styles.bgDepthWrapper, bgDepthStyle]}>
       {/* Header: icon — FAST FOOD — profile */}
@@ -418,27 +450,27 @@ export default function TonightScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.feedbackOptions}>
-            <TouchableOpacity
-              style={styles.feedbackOption}
+            <Pressable
+              style={({ pressed }) => [styles.feedbackOption, pressed && styles.feedbackOptionPressed]}
               onPress={() => handleFeedback(-1)}
               accessibilityLabel="Not great"
             >
               <Frown size={28} color={colors.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.feedbackOption}
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.feedbackOption, pressed && styles.feedbackOptionPressed]}
               onPress={() => handleFeedback(0)}
               accessibilityLabel="It was fine"
             >
               <Meh size={28} color={colors.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.feedbackOption}
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.feedbackOption, pressed && styles.feedbackOptionPressed]}
               onPress={() => handleFeedback(1)}
               accessibilityLabel="Loved it"
             >
               <Smile size={28} color={colors.textMuted} />
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       )}
@@ -457,10 +489,9 @@ export default function TonightScreen() {
       </View>
 
       {/* Allergy link */}
-      <TouchableOpacity
-        style={styles.allergyButton}
+      <Pressable
+        style={({ pressed }) => [styles.allergyButton, pressed && styles.allergyButtonPressed]}
         onPress={openAllergyModal}
-        activeOpacity={0.6}
         accessibilityRole="button"
         accessibilityLabel="I'm allergic"
       >
@@ -470,7 +501,7 @@ export default function TonightScreen() {
             ? `Avoiding ${excludeAllergens.length} allergen${excludeAllergens.length > 1 ? 's' : ''}`
             : "I'm allergic"}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
 
       {/* CTA — extends to bottom safe area with scrim */}
       <LinearGradient
@@ -581,6 +612,40 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  heroGlassTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 160,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  heroGlassTopTintIOS: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.tonightHeroGlassTintIOS,
+  },
+  heroGlassTopTintFallback: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.tonightHeroGlassTintFallback,
+  },
+  heroGlassBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 170,
+    zIndex: 0,
+    overflow: 'hidden',
+  },
+  heroGlassBottomTintIOS: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.tonightCtaGlassTintIOS,
+  },
+  heroGlassBottomTintFallback: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.tonightCtaGlassTintFallback,
   },
   header: {
     flexDirection: 'row',
@@ -700,6 +765,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  feedbackOptionPressed: {
+    transform: [{ scale: 0.96 }],
+    opacity: 0.88,
+  },
 
   // Allergy link
   allergyButton: {
@@ -708,6 +777,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: spacing.md,
     gap: spacing.xs,
+  },
+  allergyButtonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.99 }],
   },
   allergyButtonText: {
     fontSize: typography.sm,
