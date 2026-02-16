@@ -13,6 +13,7 @@
  *      if none fits.
  */
 
+import { AccessibilityInfo } from 'react-native';
 import { Easing } from 'react-native-reanimated';
 
 // ---------------------------------------------------------------------------
@@ -96,3 +97,46 @@ export const heroEase = Easing.bezier(0.25, 0.1, 0.25, 1);
 
 export type SpringProfile = typeof latex | typeof vellum | typeof oak;
 export type TimingProfile = typeof whisper | typeof whisperSlow;
+
+// ---------------------------------------------------------------------------
+// Accessibility (Reduced Motion)
+// ---------------------------------------------------------------------------
+
+let reduceMotionCache: boolean | null = null;
+let reduceMotionPromise: Promise<boolean> | null = null;
+
+/**
+ * Read OS reduced-motion preference (cached for app session).
+ * Safe fallback is false if the query fails.
+ */
+export async function getShouldReduceMotion(): Promise<boolean> {
+  if (reduceMotionCache !== null) return reduceMotionCache;
+  if (reduceMotionPromise) return reduceMotionPromise;
+
+  reduceMotionPromise = AccessibilityInfo.isReduceMotionEnabled()
+    .then((enabled) => {
+      reduceMotionCache = enabled === true;
+      return reduceMotionCache;
+    })
+    .catch(() => {
+      reduceMotionCache = false;
+      return false;
+    })
+    .finally(() => {
+      reduceMotionPromise = null;
+    });
+
+  return reduceMotionPromise;
+}
+
+/** Scale animation duration down for reduced-motion mode. */
+export function getReducedMotionDuration(durationMs: number, reduceMotion: boolean): number {
+  if (!reduceMotion) return durationMs;
+  return Math.max(60, Math.round(durationMs * 0.35));
+}
+
+/** Test helper: clear memoized reduced-motion state. */
+export function __resetReducedMotionCacheForTest(): void {
+  reduceMotionCache = null;
+  reduceMotionPromise = null;
+}

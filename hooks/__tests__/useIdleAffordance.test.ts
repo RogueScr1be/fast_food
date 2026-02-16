@@ -23,8 +23,17 @@ jest.mock('react-native-reanimated', () => {
   };
 });
 
+jest.mock('../../lib/ui/motion', () => ({
+  __esModule: true,
+  whisper: { duration: 180, easing: 'ease' },
+  getShouldReduceMotion: jest.fn().mockResolvedValue(false),
+  getReducedMotionDuration: (durationMs: number, reduceMotion: boolean) =>
+    (reduceMotion ? Math.max(60, Math.round(durationMs * 0.35)) : durationMs),
+}));
+
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
+import { getShouldReduceMotion } from '../../lib/ui/motion';
 import {
   useIdleAffordance,
   STEP1_DELAY_MS,
@@ -58,6 +67,8 @@ describe('useIdleAffordance (staged, one-shot)', () => {
   it('Step 1: lifts glass after STEP1_DELAY_MS', () => {
     const { result } = renderHook(() => useIdleAffordance());
 
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
+
     TestRenderer.act(() => { jest.advanceTimersByTime(STEP1_DELAY_MS - 100); });
     expect(result.current.overlayLiftY.value).toBe(0);
 
@@ -69,6 +80,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('Step 2: nudges card after STEP1 + STEP2 delay', () => {
     const { result } = renderHook(() => useIdleAffordance());
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 50);
@@ -80,6 +92,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('does not fire when enabled=false', () => {
     const { result } = renderHook(() => useIdleAffordance({ enabled: false }));
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 1000);
@@ -90,6 +103,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('resetIdle cancels and resets values to 0', () => {
     const { result } = renderHook(() => useIdleAffordance());
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     // Let Step 1 fire
     TestRenderer.act(() => { jest.advanceTimersByTime(STEP1_DELAY_MS + 50); });
@@ -103,6 +117,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('one-shot: does not re-fire after reset', () => {
     const { result } = renderHook(() => useIdleAffordance());
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     // Let it fire
     TestRenderer.act(() => { jest.advanceTimersByTime(STEP1_DELAY_MS + 50); });
@@ -127,6 +142,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
   it('calls onLiftStart exactly once when Step 1 begins', () => {
     const onLiftStart = jest.fn();
     renderHook(() => useIdleAffordance({ onLiftStart }));
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => { jest.advanceTimersByTime(STEP1_DELAY_MS + 50); });
     expect(onLiftStart).toHaveBeenCalledTimes(1);
@@ -135,6 +151,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
   it('calls onSequenceComplete once after nudge returns to rest', () => {
     const onSequenceComplete = jest.fn();
     renderHook(() => useIdleAffordance({ onSequenceComplete }));
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 1_300);
@@ -144,6 +161,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('restartIdle re-arms sequence before first fire', () => {
     const { result } = renderHook(() => useIdleAffordance());
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS - 500);
@@ -159,6 +177,7 @@ describe('useIdleAffordance (staged, one-shot)', () => {
 
   it('restartIdle does not re-arm once one-shot has fired', () => {
     const { result } = renderHook(() => useIdleAffordance());
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
 
     TestRenderer.act(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS + 50);
@@ -168,5 +187,24 @@ describe('useIdleAffordance (staged, one-shot)', () => {
     });
 
     expect(result.current.overlayLiftY.value).toBe(0);
+  });
+
+  it('reduced motion path skips lift/nudge but still runs callbacks', () => {
+    (getShouldReduceMotion as jest.Mock).mockResolvedValueOnce(true);
+    const onLiftStart = jest.fn();
+    const onSequenceComplete = jest.fn();
+    const { result } = renderHook(() =>
+      useIdleAffordance({ onLiftStart, onSequenceComplete }),
+    );
+
+    TestRenderer.act(() => { jest.runOnlyPendingTimers(); });
+    TestRenderer.act(() => {
+      jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 50);
+    });
+
+    expect(result.current.overlayLiftY.value).toBe(0);
+    expect(result.current.nudgeX.value).toBe(0);
+    expect(onLiftStart).toHaveBeenCalledTimes(1);
+    expect(onSequenceComplete).toHaveBeenCalledTimes(1);
   });
 });

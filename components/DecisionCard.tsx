@@ -25,7 +25,7 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
+  Pressable,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -375,20 +375,20 @@ export function DecisionCard({
                 collapsedHeight={COLLAPSED_GLASS_HEIGHT}
                 stickyContent={
                   <View style={styles.stickyWrapper}>
-                    <TouchableOpacity
-                      style={[
+                    <Pressable
+                      style={({ pressed }) => [
                         styles.acceptButton,
                         { backgroundColor: ACCEPT_BG[variant] },
+                        pressed && styles.acceptButtonPressed,
                       ]}
                       onPress={onAccept}
-                      activeOpacity={0.8}
                       accessibilityRole="button"
                       accessibilityLabel="Let's do this"
                     >
                       <Text style={styles.acceptButtonText}>
                         Let's do this
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   </View>
                 }
               >
@@ -514,6 +514,10 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  acceptButtonPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.95,
   },
   acceptButtonText: {
     fontSize: typography.lg,

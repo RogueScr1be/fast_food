@@ -14,6 +14,7 @@ const KEYS = {
   selectedMode: `ff:${STORAGE_VERSION}:selectedMode`,
   constraints: `ff:${STORAGE_VERSION}:constraints`,
   excludeAllergens: `ff:${STORAGE_VERSION}:excludeAllergens`,
+  hapticsEnabled: `ff:${STORAGE_VERSION}:hapticsEnabled`,
   hasSeenAffordance: `ff:${STORAGE_VERSION}:hasSeenAffordance`,
   idleAffordanceShownThisSession: `ff:${STORAGE_VERSION}:idleAffordanceShownThisSession`,
 } as const;
@@ -154,10 +155,35 @@ export async function clearPrefs(): Promise<void> {
       KEYS.selectedMode,
       KEYS.constraints,
       KEYS.excludeAllergens,
+      KEYS.hapticsEnabled,
     ]);
   } catch (error) {
     // Log but don't throw
     console.warn('[persist] Failed to clear preferences:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Haptics preference
+// ---------------------------------------------------------------------------
+
+/** Returns whether haptics are enabled. Safe fallback is true. */
+export async function getHapticsEnabled(): Promise<boolean> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.hapticsEnabled);
+    if (raw === null) return true;
+    return JSON.parse(raw) !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** Persist haptics preference. Storage failures are ignored. */
+export async function setHapticsEnabled(enabled: boolean): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.hapticsEnabled, JSON.stringify(enabled));
+  } catch {
+    // No-op on persistence failure.
   }
 }
 

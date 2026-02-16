@@ -19,7 +19,7 @@
  */
 
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ViewStyle, TextStyle } from 'react-native';
+import { Pressable, Text, StyleSheet, ViewStyle, TextStyle } from 'react-native';
 import { colors, spacing, radii, typography, shadows, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 
 const BUTTON_HEIGHT = MIN_TOUCH_TARGET + 8; // 56px
@@ -88,18 +88,20 @@ export function PrimaryButton({
   ].filter(Boolean) as TextStyle[];
 
   return (
-    <TouchableOpacity
-      style={buttonStyle}
+    <Pressable
+      style={({ pressed }) => [
+        ...buttonStyle,
+        !disabled && pressed && styles.buttonPressed,
+      ]}
       onPress={onPress}
       disabled={disabled}
-      activeOpacity={0.8}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel || label}
       accessibilityState={{ disabled }}
     >
       {icon}
       <Text style={textStyle}>{label}</Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -122,6 +124,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.mutedLight,
     shadowOpacity: 0,
     elevation: 0,
+  },
+  buttonPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.95,
   },
   text: {
     fontSize: typography.lg,

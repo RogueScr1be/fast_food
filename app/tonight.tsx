@@ -12,6 +12,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Platform,
   SafeAreaView,
   Modal,
@@ -33,7 +34,8 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Utensils, User, AlertCircle, X, Check, Frown, Meh, Smile } from 'lucide-react-native';
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
-import { whisper } from '../lib/ui/motion';
+import { whisper, getShouldReduceMotion, getReducedMotionDuration } from '../lib/ui/motion';
+import { hapticSelection } from '../lib/ui/haptics';
 import {
   setSelectedMode,
   getSelectedMode,
@@ -119,6 +121,7 @@ export default function TonightScreen() {
   const [excludeAllergens, setExcludeAllergensLocal] = useState<AllergenTag[]>(getExcludeAllergens());
   const [showAllergyModal, setShowAllergyModal] = useState(false);
   const [tempAllergens, setTempAllergens] = useState<AllergenTag[]>([]);
+  const [reduceMotion, setReduceMotion] = useState(false);
 
   // -----------------------------------------------------------------------
   // Feedback prompt (delayed, 4h+ after meal completion)
@@ -128,6 +131,9 @@ export default function TonightScreen() {
 
   useEffect(() => {
     let alive = true;
+    getShouldReduceMotion().then((enabled) => {
+      if (alive) setReduceMotion(enabled);
+    });
     checkFeedbackEligibility().then(mealId => {
       if (alive && mealId) setFeedbackMealId(mealId);
     });
@@ -255,13 +261,14 @@ export default function TonightScreen() {
     router.push('/deal');
 
     // Fade clone + scrim out; cleanup via completion callback (no setTimeout)
-    cloneOpacity.value = withTiming(0, { ...whisper, duration: FADE_OUT_DURATION }, (finished) => {
+    const fadeOutDuration = getReducedMotionDuration(FADE_OUT_DURATION, reduceMotion);
+    cloneOpacity.value = withTiming(0, { ...whisper, duration: fadeOutDuration }, (finished) => {
       if (finished) {
         runOnJS(cleanup)();
       }
     });
-    scrimOpacity.value = withTiming(0, { ...whisper, duration: FADE_OUT_DURATION });
-  }, [cloneOpacity, scrimOpacity, cleanup]);
+    scrimOpacity.value = withTiming(0, { ...whisper, duration: fadeOutDuration });
+  }, [cloneOpacity, scrimOpacity, cleanup, reduceMotion]);
 
   const measureAndTransition = useCallback(
     (mode: Mode) => {
@@ -294,7 +301,7 @@ export default function TonightScreen() {
           // nav timing requires deterministic duration. Interruptible via
           // cancelAnimation + finished===false callback.
           const timingConfig = {
-            duration: EXPAND_DURATION,
+            duration: getReducedMotionDuration(EXPAND_DURATION, reduceMotion),
             easing: Easing.bezier(0.25, 0.1, 0.25, 1),
           };
 
@@ -311,11 +318,14 @@ export default function TonightScreen() {
           });
           cloneH.value = withTiming(SCREEN_HEIGHT, timingConfig);
           cloneRadius.value = withTiming(0, timingConfig);
-          scrimOpacity.value = withTiming(1, { ...whisper, duration: Math.round(EXPAND_DURATION * 0.6) });
+          scrimOpacity.value = withTiming(1, {
+            ...whisper,
+            duration: Math.round(timingConfig.duration * 0.6),
+          });
         },
       );
     },
-    [cloneX, cloneY, cloneW, cloneH, cloneRadius, cloneOpacity, scrimOpacity, doNavigate],
+    [cloneX, cloneY, cloneW, cloneH, cloneRadius, cloneOpacity, scrimOpacity, doNavigate, reduceMotion],
   );
 
   // -----------------------------------------------------------------------
@@ -325,6 +335,7 @@ export default function TonightScreen() {
   const handleModeSelect = useCallback(
     (mode: Mode) => {
       if (isTransitioning.current) return;
+      void hapticSelection();
       isTransitioning.current = true;
       setSelectedModeLocal(mode);
       setSelectedMode(mode);
@@ -336,6 +347,7 @@ export default function TonightScreen() {
 
   const handleChoose = useCallback(() => {
     if (isTransitioning.current) return;
+    void hapticSelection();
     // Always uniform random — never reuse prior selection
     const modeToUse = ALL_MODES[Math.floor(Math.random() * ALL_MODES.length)];
     setSelectedModeLocal(modeToUse);
@@ -343,7 +355,7 @@ export default function TonightScreen() {
     resetTonight();
     isTransitioning.current = true;
     measureAndTransition(modeToUse);
-  }, [selectedModeLocal, measureAndTransition]);
+  }, [measureAndTransition]);
 
   // -----------------------------------------------------------------------
   // Allergy modal
@@ -469,16 +481,15 @@ export default function TonightScreen() {
       />
       <View style={[styles.ctaSection, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
         <View style={styles.ctaOuter}>
-          <TouchableOpacity
-            style={styles.ctaButton}
+          <Pressable
+            style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaButtonPressed]}
             onPress={handleChoose}
-            activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel="Choose for me"
           >
             <View style={styles.modeHighlight} />
             <Text style={styles.ctaLabel}>CHOOSE FOR ME</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
 
@@ -740,6 +751,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 6,
+  },
+  ctaButtonPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.95,
   },
   ctaLabel: {
     fontSize: typography['2xl'],

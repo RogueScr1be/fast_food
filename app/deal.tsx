@@ -19,12 +19,14 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Image as RNImage,
   Platform,
   ActivityIndicator,
   Modal,
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
@@ -39,6 +41,7 @@ import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
 
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import { oak, whisper } from '../lib/ui/motion';
+import { hapticImpactLight, hapticImpactMedium } from '../lib/ui/haptics';
 
 import {
   getSelectedMode,
@@ -281,6 +284,20 @@ export default function DealScreen() {
     transform: [{ translateX: nudgeX.value }],
   }));
 
+  const prefetchDealImage = useCallback((deal: Exclude<CurrentDeal, null>) => {
+    try {
+      const source = getImageSource(deal.data.imageKey);
+      const resolved = RNImage.resolveAssetSource(source);
+      const uri = resolved?.uri;
+      if (!uri) return;
+      void ExpoImage.prefetch(uri).catch(() => {
+        // Best-effort only; rendering must never block on prefetch.
+      });
+    } catch {
+      // Ignore prefetch failures.
+    }
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Deal logic
   // ---------------------------------------------------------------------------
@@ -296,6 +313,7 @@ export default function DealScreen() {
     if (triggerDrm) {
       const drmMeal = pickDrmMeal(excludeAllergens, dealHistory);
       if (drmMeal) {
+        prefetchDealImage({ type: 'drm', data: drmMeal });
         setCurrentDeal({ type: 'drm', data: drmMeal });
         setWhyText(getRandomWhy(drmMeal));
         setCurrentDealId(drmMeal.id);
@@ -315,6 +333,7 @@ export default function DealScreen() {
     if (!recipe && excludeAllergens.length > 0) recipe = pickNextRecipe(mode, [], dealHistory, []);
 
     if (recipe) {
+      prefetchDealImage({ type: 'recipe', data: recipe });
       setCurrentDeal({ type: 'recipe', data: recipe });
       setWhyText(getRandomWhy(recipe));
       setCurrentDealId(recipe.id);
@@ -327,7 +346,7 @@ export default function DealScreen() {
 
     setIsLoading(false);
     setCardKey((k) => k + 1);
-  }, [mode, constraints, drmTimerTriggered]);
+  }, [mode, constraints, drmTimerTriggered, prefetchDealImage]);
 
   // Init session: if resumeMeal exists, show it immediately; else deal next
   useEffect(() => {
@@ -375,6 +394,7 @@ export default function DealScreen() {
 
   const handlePass = useCallback(
     (_direction: PassDirection) => {
+      void hapticImpactLight();
       finalizeAffordanceIfStarted();
       resetIdle();
       if (currentDeal) addToDealHistory(currentDeal.data.id);
@@ -386,6 +406,7 @@ export default function DealScreen() {
 
   const handleAccept = useCallback(() => {
     if (!currentDeal) return;
+    void hapticImpactMedium();
     finalizeAffordanceIfStarted();
     resetIdle();
 
@@ -452,6 +473,7 @@ export default function DealScreen() {
         if (currentDeal.type === 'drm') {
           const drmMeal = pickDrmMeal(tempAllergens, dealHistory);
           if (drmMeal) {
+            prefetchDealImage({ type: 'drm', data: drmMeal });
             setCurrentDeal({ type: 'drm', data: drmMeal });
             setWhyText(getRandomWhy(drmMeal));
             setCurrentDealId(drmMeal.id);
@@ -463,6 +485,7 @@ export default function DealScreen() {
 
         const recipe = pickNextRecipe(mode, tempAllergens, dealHistory, constraints);
         if (recipe) {
+          prefetchDealImage({ type: 'recipe', data: recipe });
           setCurrentDeal({ type: 'recipe', data: recipe });
           setWhyText(getRandomWhy(recipe));
           setCurrentDealId(recipe.id);
@@ -474,7 +497,7 @@ export default function DealScreen() {
         }
       }, 50);
     }
-  }, [tempAllergens, currentDeal, mode, constraints]);
+  }, [tempAllergens, currentDeal, mode, constraints, prefetchDealImage]);
 
   // ---------------------------------------------------------------------------
   // Render: Loading
