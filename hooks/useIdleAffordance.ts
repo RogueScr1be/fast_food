@@ -1,16 +1,12 @@
 /**
  * useIdleAffordance — Silent Onboarding via Staged Motion
  *
- * Phase C: Two-step affordance sequence, first-session only.
+ * Step 1 (default 2s idle):  Glass overlay lifts slightly (teaches panel)
+ * Step 2 (+default 1s):      Card nudges horizontally (teaches swipe)
  *
- * Step 1 (4s idle):  Glass overlay lifts slightly (teaches panel)
- * Step 2 (+1.5s):    Card nudges horizontally (teaches swipe)
- *
- * One-shot: fires once per eligibility period, never loops.
- * Any user interaction cancels + resets values to 0.
- *
- * The hook does NOT manage persistence (hasSeenAffordance).
- * The caller (deal.tsx) controls `enabled` based on persisted state.
+ * One-shot per eligibility period. No looping.
+ * resetIdle() cancels timers and snaps values to rest.
+ * Session persistence is handled by the caller (deal.tsx).
  */
 
 import { useRef, useCallback, useEffect } from 'react';
@@ -28,15 +24,16 @@ import { whisper } from '../lib/ui/motion';
 // ---------------------------------------------------------------------------
 
 /** Time before glass lift (Step 1) */
-export const STEP1_DELAY_MS = 4000;
+export const STEP1_DELAY_MS = 2000;
 /** Additional time before card nudge (Step 2) */
-export const STEP2_DELAY_MS = 1500;
+export const STEP2_DELAY_MS = 1000;
 
-export const NUDGE_PX = idle.nudgePx;  // 12
-export const LIFT_PX = idle.liftPx;    // 40
+export const NUDGE_PX = idle.nudgePx; // 12
+export const LIFT_PX = idle.liftPx; // 40
 
-const NUDGE_DURATION = 600;  // Exception: pedagogical timing, not UI response
-const LIFT_DURATION = 800;   // Exception: pedagogical timing, not UI response
+const NUDGE_DURATION = 600; // Exception: pedagogical timing, not UI response
+const LIFT_DURATION = 800; // Exception: pedagogical timing, not UI response
+const RESET_DURATION = 200;
 
 // Keep old export name for test compatibility
 export const IDLE_THRESHOLD_MS = STEP1_DELAY_MS;
@@ -48,6 +45,10 @@ export const IDLE_THRESHOLD_MS = STEP1_DELAY_MS;
 export interface UseIdleAffordanceOptions {
   /** Enable / disable. When false, timers are cleared and values snap to 0. */
   enabled?: boolean;
+  liftDelayMs?: number;
+  nudgeDelayMs?: number;
+  onLiftStart?: () => void;
+  onSequenceComplete?: () => void;
 }
 
 export interface UseIdleAffordanceReturn {
@@ -56,6 +57,7 @@ export interface UseIdleAffordanceReturn {
   isIdle: boolean;
   /** Cancel timers + reset values. Call on any user interaction. */
   resetIdle: () => void;
+  restartIdle: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +67,13 @@ export interface UseIdleAffordanceReturn {
 export function useIdleAffordance(
   options: UseIdleAffordanceOptions = {},
 ): UseIdleAffordanceReturn {
-  const { enabled = true } = options;
+  const {
+    enabled = true,
+    liftDelayMs = STEP1_DELAY_MS,
+    nudgeDelayMs = STEP2_DELAY_MS,
+    onLiftStart,
+    onSequenceComplete,
+  } = options;
 
   const nudgeX = useSharedValue(0);
   const overlayLiftY = useSharedValue(0);
@@ -73,15 +81,28 @@ export function useIdleAffordance(
   const firedRef = useRef(false); // one-shot guard for this mount cycle
   const timer1Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timer2Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timer3Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimers = useCallback(() => {
-    if (timer1Ref.current) { clearTimeout(timer1Ref.current); timer1Ref.current = null; }
-    if (timer2Ref.current) { clearTimeout(timer2Ref.current); timer2Ref.current = null; }
+    if (timer1Ref.current) {
+      clearTimeout(timer1Ref.current);
+      timer1Ref.current = null;
+    }
+    if (timer2Ref.current) {
+      clearTimeout(timer2Ref.current);
+      timer2Ref.current = null;
+    }
+    if (timer3Ref.current) {
+      clearTimeout(timer3Ref.current);
+      timer3Ref.current = null;
+    }
   }, []);
 
   /** Step 1: lift glass overlay */
   const triggerStep1 = useCallback(() => {
     isIdleRef.current = true;
+    onLiftStart?.();
+
     overlayLiftY.value = withTiming(LIFT_PX, {
       duration: LIFT_DURATION,
       easing: Easing.out(Easing.ease),
@@ -100,8 +121,14 @@ export function useIdleAffordance(
           easing: Easing.inOut(Easing.ease),
         }),
       );
-    }, STEP2_DELAY_MS);
-  }, [nudgeX, overlayLiftY]);
+
+      if (onSequenceComplete) {
+        timer3Ref.current = setTimeout(() => {
+          onSequenceComplete();
+        }, NUDGE_DURATION * 2);
+      }
+    }, nudgeDelayMs);
+  }, [nudgeX, overlayLiftY, nudgeDelayMs, onLiftStart, onSequenceComplete]);
 
   /** Start the staged sequence (one-shot) */
   const startSequence = useCallback(() => {
@@ -110,17 +137,22 @@ export function useIdleAffordance(
     timer1Ref.current = setTimeout(() => {
       firedRef.current = true;
       triggerStep1();
-    }, STEP1_DELAY_MS);
-  }, [clearTimers, triggerStep1]);
+    }, liftDelayMs);
+  }, [clearTimers, triggerStep1, liftDelayMs]);
 
   /** Reset: cancel everything, snap values to 0 */
   const resetIdle = useCallback(() => {
     clearTimers();
     isIdleRef.current = false;
-    nudgeX.value = withTiming(0, whisper);
-    overlayLiftY.value = withTiming(0, whisper);
+    nudgeX.value = withTiming(0, { ...whisper, duration: RESET_DURATION });
+    overlayLiftY.value = withTiming(0, { ...whisper, duration: RESET_DURATION });
     // Do NOT restart — one-shot. Once reset, it's done.
   }, [clearTimers, nudgeX, overlayLiftY]);
+
+  const restartIdle = useCallback(() => {
+    if (!enabled || firedRef.current) return;
+    startSequence();
+  }, [enabled, startSequence]);
 
   // Lifecycle: start sequence when enabled, clear on disable/unmount
   useEffect(() => {
@@ -140,6 +172,7 @@ export function useIdleAffordance(
     overlayLiftY,
     isIdle: isIdleRef.current,
     resetIdle,
+    restartIdle,
   };
 }
 

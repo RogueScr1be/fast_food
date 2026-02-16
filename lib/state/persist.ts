@@ -15,6 +15,7 @@ const KEYS = {
   constraints: `ff:${STORAGE_VERSION}:constraints`,
   excludeAllergens: `ff:${STORAGE_VERSION}:excludeAllergens`,
   hasSeenAffordance: `ff:${STORAGE_VERSION}:hasSeenAffordance`,
+  idleAffordanceShownThisSession: `ff:${STORAGE_VERSION}:idleAffordanceShownThisSession`,
 } as const;
 
 /**
@@ -164,16 +165,48 @@ export async function clearPrefs(): Promise<void> {
 // Affordance flag (first-run onboarding)
 // ---------------------------------------------------------------------------
 
+let idleAffordanceSessionBootstrapped = false;
+
+export type IdleAffordanceSessionState = {
+  shownThisSession: boolean;
+};
+
+async function bootstrapIdleAffordanceSession(): Promise<void> {
+  if (idleAffordanceSessionBootstrapped) return;
+  idleAffordanceSessionBootstrapped = true;
+  try {
+    await AsyncStorage.setItem(KEYS.idleAffordanceShownThisSession, JSON.stringify(false));
+  } catch {
+    // Ignore storage failures; callers use safe fallbacks.
+  }
+}
+
+export async function getIdleAffordanceSessionState(): Promise<IdleAffordanceSessionState> {
+  try {
+    await bootstrapIdleAffordanceSession();
+    const raw = await AsyncStorage.getItem(KEYS.idleAffordanceShownThisSession);
+    if (!raw) return { shownThisSession: false };
+    return { shownThisSession: JSON.parse(raw) === true };
+  } catch {
+    return { shownThisSession: false };
+  }
+}
+
+export async function setIdleAffordanceShownThisSession(v: boolean): Promise<void> {
+  try {
+    await bootstrapIdleAffordanceSession();
+    await AsyncStorage.setItem(KEYS.idleAffordanceShownThisSession, JSON.stringify(v));
+  } catch {
+    // No-op on persistence failure.
+  }
+}
+
 /**
  * Check if user has seen the idle affordance. Default false.
  */
 export async function getHasSeenAffordance(): Promise<boolean> {
-  try {
-    const val = await AsyncStorage.getItem(KEYS.hasSeenAffordance);
-    return val === 'true';
-  } catch {
-    return false;
-  }
+  const { shownThisSession } = await getIdleAffordanceSessionState();
+  return shownThisSession;
 }
 
 /**
@@ -181,11 +214,7 @@ export async function getHasSeenAffordance(): Promise<boolean> {
  * Once set, the affordance never fires again.
  */
 export async function setHasSeenAffordance(): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.hasSeenAffordance, 'true');
-  } catch {
-    // Silent — non-critical
-  }
+  await setIdleAffordanceShownThisSession(true);
 }
 
 /**

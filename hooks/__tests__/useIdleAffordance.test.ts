@@ -6,6 +6,7 @@ jest.mock('react-native-reanimated', () => {
   const React = require('react');
   const withTiming = (toValue: number, _config?: unknown, _cb?: unknown) => toValue;
   const withSequence = (...values: number[]) => values[values.length - 1];
+  const cancelAnimation = jest.fn();
   const useSharedValue = (init: number) => {
     const ref = React.useRef({ value: init });
     return ref.current;
@@ -17,6 +18,7 @@ jest.mock('react-native-reanimated', () => {
     useAnimatedStyle: (fn: () => unknown) => fn,
     withTiming,
     withSequence,
+    cancelAnimation,
     Easing: { ease: 'ease', inOut: () => 'inOut', out: () => 'out', bezier: () => 'bezier' },
   };
 });
@@ -47,8 +49,8 @@ describe('useIdleAffordance (staged, one-shot)', () => {
   afterEach(() => jest.useRealTimers());
 
   it('exports correct step timing constants', () => {
-    expect(STEP1_DELAY_MS).toBe(4000);
-    expect(STEP2_DELAY_MS).toBe(1500);
+    expect(STEP1_DELAY_MS).toBe(2000);
+    expect(STEP2_DELAY_MS).toBe(1000);
     expect(NUDGE_PX).toBe(12);
     expect(LIFT_PX).toBe(40);
   });
@@ -120,5 +122,51 @@ describe('useIdleAffordance (staged, one-shot)', () => {
     expect(() => {
       jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 1000);
     }).not.toThrow();
+  });
+
+  it('calls onLiftStart exactly once when Step 1 begins', () => {
+    const onLiftStart = jest.fn();
+    renderHook(() => useIdleAffordance({ onLiftStart }));
+
+    TestRenderer.act(() => { jest.advanceTimersByTime(STEP1_DELAY_MS + 50); });
+    expect(onLiftStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onSequenceComplete once after nudge returns to rest', () => {
+    const onSequenceComplete = jest.fn();
+    renderHook(() => useIdleAffordance({ onSequenceComplete }));
+
+    TestRenderer.act(() => {
+      jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 1_300);
+    });
+    expect(onSequenceComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('restartIdle re-arms sequence before first fire', () => {
+    const { result } = renderHook(() => useIdleAffordance());
+
+    TestRenderer.act(() => {
+      jest.advanceTimersByTime(STEP1_DELAY_MS - 500);
+      result.current.resetIdle();
+      result.current.restartIdle();
+    });
+
+    TestRenderer.act(() => {
+      jest.advanceTimersByTime(STEP1_DELAY_MS + 50);
+    });
+    expect(result.current.overlayLiftY.value).toBe(LIFT_PX);
+  });
+
+  it('restartIdle does not re-arm once one-shot has fired', () => {
+    const { result } = renderHook(() => useIdleAffordance());
+
+    TestRenderer.act(() => {
+      jest.advanceTimersByTime(STEP1_DELAY_MS + 50);
+      result.current.resetIdle();
+      result.current.restartIdle();
+      jest.advanceTimersByTime(STEP1_DELAY_MS + STEP2_DELAY_MS + 500);
+    });
+
+    expect(result.current.overlayLiftY.value).toBe(0);
   });
 });
