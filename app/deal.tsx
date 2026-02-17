@@ -37,7 +37,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, RefreshCw, X, Check } from 'lucide-react-native';
+import { RefreshCw, X, Check } from 'lucide-react-native';
 
 import { colors, spacing, radii, typography, MIN_TOUCH_TARGET } from '../lib/ui/theme';
 import {
@@ -79,9 +79,10 @@ import type { RecipeSeed, DrmSeed, AllergenTag } from '../lib/seeds/types';
 
 import { DecisionCard, PassDirection } from '../components/DecisionCard';
 import type { OverlayLevel } from '../components/GlassOverlay';
+import GlassBackButton from '../components/GlassBackButton';
 
 import { useIdleAffordance } from '../hooks/useIdleAffordance';
-import { getImageSource } from '../lib/seeds/images';
+import { assertImageKeyConsistency, getImageSource } from '../lib/seeds/images';
 
 import {
   consumePendingHeroTransition,
@@ -263,7 +264,7 @@ export default function DealScreen() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     if (!currentDeal) return;
@@ -308,6 +309,12 @@ export default function DealScreen() {
 
   const prefetchDealImage = useCallback((deal: Exclude<CurrentDeal, null>) => {
     try {
+      assertImageKeyConsistency(deal.data.id, deal.data.imageKey, {
+        mode,
+        screen: 'deal',
+        phase: 'prefetch',
+        isRescue: deal.type === 'drm',
+      });
       const source = getImageSource(deal.data.imageKey);
       const resolved = RNImage.resolveAssetSource(source);
       const uri = resolved?.uri;
@@ -438,6 +445,7 @@ export default function DealScreen() {
       sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
       imageSource: getImageSource(currentDeal.data.imageKey),
       destKey,
+      transitionKind: 'deal_to_checklist',
     });
 
     router.push({
@@ -473,6 +481,24 @@ export default function DealScreen() {
 
     setTimeout(() => dealNextCard(), 100);
   }, [dealNextCard]);
+
+  const handleBackToTonight = useCallback(() => {
+    const selectedMode = getSelectedMode();
+    const targetMode = selectedMode && ALL_MODES.includes(selectedMode) ? selectedMode : null;
+    const imageSource = currentDeal
+      ? getImageSource(currentDeal.data.imageKey)
+      : getImageSource(undefined);
+
+    setPendingHeroTransition({
+      sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
+      imageSource,
+      destKey: 'tonight',
+      targetKey: targetMode ? `tonight:${targetMode}` : undefined,
+      transitionKind: 'deal_to_tonight',
+    });
+
+    router.replace('/tonight');
+  }, [currentDeal, dealScreenH, dealScreenW]);
 
   // ---------------------------------------------------------------------------
   // Allergy modal handlers
@@ -614,16 +640,7 @@ export default function DealScreen() {
 
       {/* Back button (only at overlay level 0) */}
       {overlayLevel === 0 && (
-        <TouchableOpacity
-          style={[styles.backButton, { top: insets.top + spacing.sm }]}
-          onPress={() => router.replace('/tonight')}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <ChevronLeft size={20} color={colors.glassText} />
-        </TouchableOpacity>
+        <GlassBackButton onPress={handleBackToTonight} topInset={insets.top} />
       )}
 
       {overlayLevel === 0 && (
@@ -700,17 +717,6 @@ const styles = StyleSheet.create({
   },
   cardWrapper: {
     flex: 1,
-  },
-  backButton: {
-    position: 'absolute',
-    left: spacing.md,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(25, 25, 25, 0.35)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 50,
   },
   momentumPill: {
     position: 'absolute',

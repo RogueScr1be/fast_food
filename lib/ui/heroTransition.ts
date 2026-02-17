@@ -28,6 +28,8 @@ export interface PendingHeroTransition {
   timestamp: number;
   nonce: number;
   destKey: string;
+  targetKey?: string;
+  transitionKind?: 'deal_to_checklist' | 'checklist_to_deal' | 'deal_to_tonight';
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +63,8 @@ export function setPendingHeroTransition(data: {
   sourceRect: TransitionRect;
   imageSource: ImageSourcePropType;
   destKey: string;
+  targetKey?: string;
+  transitionKind?: 'deal_to_checklist' | 'checklist_to_deal' | 'deal_to_tonight';
 }): void {
   // Clear any existing expiry timer
   if (expiryTimer) clearTimeout(expiryTimer);

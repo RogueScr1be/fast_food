@@ -241,6 +241,7 @@ export default function ChecklistScreen() {
       sourceRect: { x: src.x, y: src.y, width: src.width, height: src.height },
       imageSource: getImageSource(meal.imageKey),
       destKey: `deal:${meal.id}`,
+      transitionKind: 'checklist_to_deal',
     });
 
     router.replace({ pathname: '/deal', params: { resume: meal.id } });

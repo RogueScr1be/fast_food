@@ -42,6 +42,10 @@ import {
   getPerceivedResponseDuration,
 } from '../lib/ui/motion';
 import { hapticSelection } from '../lib/ui/haptics';
+import GlassButton from '../components/GlassButton';
+import {
+  consumePendingHeroTransition,
+} from '../lib/ui/heroTransition';
 import {
   setSelectedMode,
   getSelectedMode,
@@ -95,24 +99,18 @@ interface ModeButtonProps {
 
 function ModeButton({ mode, selected, onPress, onRef }: ModeButtonProps) {
   return (
-    // Outer shadow layer (larger, softer)
-    <View style={styles.modeButtonOuter}>
-      {/* Inner shadow layer (tighter) */}
-      <TouchableOpacity
-        ref={(r) => onRef(r as unknown as View | null)}
-        style={[styles.modeButton, selected && styles.modeButtonSelected]}
+    <View
+      ref={(r) => onRef(r)}
+      style={styles.modeButtonSlot}
+      collapsable={false}
+    >
+      <GlassButton
+        label={MODE_LABELS[mode]}
         onPress={onPress}
-        activeOpacity={0.7}
-        accessibilityRole="button"
+        size="tile"
+        selected={selected}
         accessibilityLabel={`${MODE_LABELS[mode]} mode`}
-        accessibilityState={{ selected }}
-      >
-        {/* Top inner highlight bevel */}
-        <View style={styles.modeHighlight} />
-        <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>
-          {MODE_LABELS[mode].toUpperCase()}
-        </Text>
-      </TouchableOpacity>
+      />
     </View>
   );
 }
@@ -181,6 +179,8 @@ export default function TonightScreen() {
   const isTransitioning = useRef(false);
   const mountedRef = useRef(true);
   const hasNavigated = useRef(false);
+  const reverseRafRef = useRef<number | null>(null);
+  const reverseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cloneX = useSharedValue(0);
   const cloneY = useSharedValue(0);
@@ -223,6 +223,14 @@ export default function TonightScreen() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (reverseRafRef.current !== null) {
+        cancelAnimationFrame(reverseRafRef.current);
+        reverseRafRef.current = null;
+      }
+      if (reverseTimeoutRef.current) {
+        clearTimeout(reverseTimeoutRef.current);
+        reverseTimeoutRef.current = null;
+      }
       // Cancel any in-flight animations (prevents ghost clone on return)
       cancelAnimation(cloneX);
       cancelAnimation(cloneY);
@@ -258,6 +266,86 @@ export default function TonightScreen() {
     isTransitioning.current = false;
     hasNavigated.current = false;
   }, [cloneOpacity, scrimOpacity, cloneX, cloneY, cloneW, cloneH, cloneRadius]);
+
+  useEffect(() => {
+    const pending = consumePendingHeroTransition('tonight');
+    if (!pending || pending.transitionKind !== 'deal_to_tonight') return;
+
+    const key = pending.targetKey;
+    const targetMode = key?.startsWith('tonight:') ? (key.split(':')[1] as Mode) : null;
+    if (!targetMode || !ALL_MODES.includes(targetMode)) return;
+
+    const startRect = pending.sourceRect;
+    cloneX.value = Number.isFinite(startRect.x) ? startRect.x : 0;
+    cloneY.value = Number.isFinite(startRect.y) ? startRect.y : 0;
+    cloneW.value = startRect.width > 0 ? startRect.width : SCREEN_WIDTH;
+    cloneH.value = startRect.height > 0 ? startRect.height : SCREEN_HEIGHT;
+    cloneRadius.value = 0;
+    cloneOpacity.value = 1;
+    scrimOpacity.value = 0.16;
+    isTransitioning.current = true;
+    setTransitionMode(targetMode);
+
+    const startedAt = Date.now();
+    const hardStopMs = 500;
+    const duration = getReducedMotionDuration(320, reduceMotion);
+
+    const finishWithFade = () => {
+      cloneOpacity.value = withTiming(0, { ...whisper, duration: 120 }, (finished) => {
+        if (finished) runOnJS(cleanup)();
+      });
+      scrimOpacity.value = withTiming(0, { ...whisper, duration: 120 });
+    };
+
+    const measureTarget = () => {
+      const tile = tileRefs.current[targetMode];
+      if (!tile) {
+        if (Date.now() - startedAt >= hardStopMs) {
+          finishWithFade();
+          return;
+        }
+        reverseRafRef.current = requestAnimationFrame(measureTarget);
+        return;
+      }
+
+      (tile as any).measureInWindow((x: number, y: number, width: number, height: number) => {
+        if (!mountedRef.current || width <= 0 || height <= 0) {
+          finishWithFade();
+          return;
+        }
+        if (reverseTimeoutRef.current) {
+          clearTimeout(reverseTimeoutRef.current);
+          reverseTimeoutRef.current = null;
+        }
+
+        cloneX.value = withTiming(x, { duration, easing: Easing.bezier(0.2, 0.0, 0.2, 1) });
+        cloneY.value = withTiming(y, { duration, easing: Easing.bezier(0.2, 0.0, 0.2, 1) });
+        cloneW.value = withTiming(width, { duration, easing: Easing.bezier(0.2, 0.0, 0.2, 1) });
+        cloneH.value = withTiming(height, { duration, easing: Easing.bezier(0.2, 0.0, 0.2, 1) }, (finished) => {
+          if (finished) runOnJS(cleanup)();
+        });
+        cloneRadius.value = withTiming(radii.xl, { duration, easing: Easing.bezier(0.2, 0.0, 0.2, 1) });
+        scrimOpacity.value = withTiming(0, { ...whisper, duration: Math.min(duration, 220) });
+      });
+    };
+
+    reverseTimeoutRef.current = setTimeout(() => {
+      finishWithFade();
+    }, hardStopMs);
+
+    reverseRafRef.current = requestAnimationFrame(measureTarget);
+
+    return () => {
+      if (reverseRafRef.current !== null) {
+        cancelAnimationFrame(reverseRafRef.current);
+        reverseRafRef.current = null;
+      }
+      if (reverseTimeoutRef.current) {
+        clearTimeout(reverseTimeoutRef.current);
+        reverseTimeoutRef.current = null;
+      }
+    };
+  }, [cleanup, cloneH, cloneOpacity, cloneRadius, cloneW, cloneX, cloneY, reduceMotion, scrimOpacity]);
 
   /** Navigate to /deal then fade clone out. Called from animation callback. */
   const doNavigate = useCallback(() => {
@@ -511,17 +599,13 @@ export default function TonightScreen() {
         pointerEvents="none"
       />
       <View style={[styles.ctaSection, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-        <View style={styles.ctaOuter}>
-          <Pressable
-            style={({ pressed }) => [styles.ctaButton, pressed && styles.ctaButtonPressed]}
-            onPress={handleChoose}
-            accessibilityRole="button"
-            accessibilityLabel="Choose for me"
-          >
-            <View style={styles.modeHighlight} />
-            <Text style={styles.ctaLabel}>CHOOSE FOR ME</Text>
-          </Pressable>
-        </View>
+        <GlassButton
+          label="Choose for me"
+          size="cta"
+          onPress={handleChoose}
+          accessibilityLabel="Choose for me"
+          style={styles.ctaGlass}
+        />
       </View>
 
       </Animated.View>
@@ -674,63 +758,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Vertical mode buttons — layered shadow system
+  // Vertical mode buttons
   modeContainer: {
     flex: 1,
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
     justifyContent: 'center',
   },
-  // Outer shadow layer (larger, softer)
-  modeButtonOuter: {
+  modeButtonSlot: {
     borderRadius: radii.xl,
-    // Outer shadow: large, soft
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    elevation: 4,
-  },
-  // Inner card with tighter shadow + border
-  modeButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radii.xl,
-    minHeight: 92,
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.lg,
-    borderWidth: 2,
-    borderColor: colors.accentBlue,
-    overflow: 'hidden',
-    // Inner shadow: tight, slightly darker
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-  },
-  modeButtonSelected: {
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
-    borderColor: colors.accentBlue,
-  },
-  // Top inner highlight bevel (1px white line at top)
-  modeHighlight: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  modeLabel: {
-    fontSize: typography['4xl'],
-    fontWeight: typography.bold,
-    color: colors.accentBlue,
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  modeLabelSelected: {
-    color: colors.accentBlueDark,
   },
 
   // Feedback prompt
@@ -802,46 +838,16 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     zIndex: 1,
   },
-  // CTA — same shadow system as mode buttons
-  ctaOuter: {
-    borderRadius: radii.lg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    elevation: 4,
-  },
-  ctaButton: {
+  ctaGlass: {
     height: MIN_TOUCH_TARGET + 8,
-    borderRadius: radii.lg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    borderColor: colors.accentBlue,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-  },
-  ctaButtonPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.95,
-  },
-  ctaLabel: {
-    fontSize: typography['2xl'],
-    fontWeight: typography.bold,
-    color: colors.accentBlue,
-    letterSpacing: 1,
-    textAlign: 'center',
+    borderRadius: radii.full,
   },
 
-  // Transition clone — matches white card + blue text
+  // Transition clone
   cloneBase: {
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    borderColor: colors.accentBlue,
+    backgroundColor: colors.glassButtonSurfaceFallback,
+    borderWidth: 1,
+    borderColor: colors.glassButtonOuterStroke,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
@@ -851,10 +857,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cloneLabel: {
-    fontSize: typography['4xl'],
-    fontWeight: typography.bold,
-    color: colors.accentBlue,
-    letterSpacing: 1,
+    fontSize: typography['3xl'],
+    fontWeight: typography.semibold,
+    color: colors.glassButtonText,
+    letterSpacing: 0.8,
     textAlign: 'center',
   },
 

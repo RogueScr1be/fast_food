@@ -10,7 +10,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { RECIPES, DRM_MEALS } from '../recipes';
-import { RECIPE_IMAGES, getImageSource, hasRealImage } from '../images';
+import {
+  RECIPE_IMAGES,
+  assertImageKeyConsistency,
+  getImageSource,
+  getImageSourceSafe,
+  hasRealImage,
+  recordImagePairingEvent,
+} from '../images';
 
 // Path to assets directory from project root
 const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
@@ -46,6 +53,12 @@ describe('Image Registry', () => {
         expect(meal.imageKey).toBeDefined();
         expect(typeof meal.imageKey).toBe('string');
         expect(meal.imageKey!.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('every seed has explicit heroSafeFrame metadata', () => {
+      [...RECIPES, ...DRM_MEALS].forEach(seed => {
+        expect(typeof seed.heroSafeFrame).toBe('boolean');
       });
     });
 
@@ -181,5 +194,43 @@ describe('Image Registry Constants', () => {
     
     const uniqueKeys = new Set(allKeys);
     expect(uniqueKeys.size).toBe(allKeys.length);
+  });
+});
+
+describe('Image Pairing Guardrails', () => {
+  it('returns fallback safely and warns on missing imageKey', () => {
+    const spy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const source = getImageSourceSafe({
+      recipeId: 'test-recipe',
+      imageKey: undefined,
+      mode: 'fancy',
+      screen: 'deal',
+      phase: 'render',
+    });
+
+    expect(source).toBeDefined();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('assertImageKeyConsistency returns false for invalid key', () => {
+    expect(assertImageKeyConsistency('test-recipe', 'not-real-key', {
+      mode: 'easy',
+      screen: 'deal',
+      phase: 'prefetch',
+    })).toBe(false);
+  });
+
+  it('recordImagePairingEvent does not throw', () => {
+    expect(() => {
+      recordImagePairingEvent({
+        recipeId: 'test-recipe',
+        imageKey: 'missing',
+        mode: 'cheap',
+        screen: 'deal',
+        phase: 'resolve',
+        reason: 'unknown_key',
+      });
+    }).not.toThrow();
   });
 });
