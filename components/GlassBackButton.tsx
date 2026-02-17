@@ -34,14 +34,10 @@ export function GlassBackButton({
           <View style={styles.fallbackSurface} />
         )}
       </View>
-      <LinearGradient
-        pointerEvents="none"
-        colors={['rgba(255, 255, 255, 0.58)', 'rgba(255, 255, 255, 0.12)']}
-        style={styles.highlight}
-      />
+      <LinearGradient pointerEvents="none" colors={['rgba(255, 255, 255, 0.45)', 'rgba(255, 255, 255, 0.08)']} style={styles.highlight} />
       <View pointerEvents="none" style={styles.innerStroke} />
       <View pointerEvents="none" style={styles.outerStroke} />
-      <ChevronLeft size={20} color={colors.glassButtonText} />
+      <ChevronLeft size={20} color={colors.glassButtonTextBlueSelected} />
     </Pressable>
   );
 }
@@ -58,8 +54,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
-    backgroundColor: colors.glassBackSurfaceIOS,
-    shadowColor: colors.glassButtonShadowDark,
+    backgroundColor: colors.glassButtonSurfaceTintIOS,
+    shadowColor: colors.glassButtonShadowSoftDark,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 1,
     shadowRadius: 18,
@@ -75,13 +71,13 @@ const styles = StyleSheet.create({
   },
   iosSurface: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.glassBackSurfaceIOS,
-    opacity: 0.8,
+    backgroundColor: colors.glassButtonSurfaceTintIOS,
+    opacity: 0.86,
   },
   fallbackSurface: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.glassBackSurfaceFallback,
-    opacity: 0.95,
+    backgroundColor: colors.glassButtonSurfaceTintFallback,
+    opacity: 0.9,
   },
   highlight: {
     ...StyleSheet.absoluteFillObject,
@@ -90,12 +86,12 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     borderWidth: 1,
     borderRadius: 20,
-    borderColor: colors.glassButtonInnerStroke,
+    borderColor: colors.glassButtonInnerHighlight,
   },
   outerStroke: {
     ...StyleSheet.absoluteFillObject,
     borderWidth: 1,
     borderRadius: 20,
-    borderColor: colors.glassButtonOuterStroke,
+    borderColor: colors.glassButtonStrokeBlue,
   },
 });

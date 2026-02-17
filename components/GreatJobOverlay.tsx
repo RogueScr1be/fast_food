@@ -149,14 +149,37 @@ export function GreatJobOverlay({ visible, onDismiss }: GreatJobOverlayProps) {
         <View style={styles.androidTint} pointerEvents="none" />
       )}
       <Pressable style={styles.pressable} onPress={handleTap}>
-        {/* Clip container: reveals text left to right */}
-        <Animated.View style={[styles.clipContainer, clipStyle]}>
-          <Text style={styles.text} numberOfLines={1}>
-            Great Job!
-          </Text>
-        </Animated.View>
+        <View style={styles.glassPlate}>
+          {Platform.OS === 'ios' ? (
+            <>
+              <BlurView intensity={34} tint="light" style={StyleSheet.absoluteFill} />
+              <View style={styles.plateTintIOS} pointerEvents="none" />
+            </>
+          ) : (
+            <View style={styles.plateTintFallback} pointerEvents="none" />
+          )}
+          <LinearAccent />
+          <View style={styles.plateInnerStroke} pointerEvents="none" />
+          <View style={styles.plateOuterStroke} pointerEvents="none" />
+
+          {/* Clip container: reveals text left to right */}
+          <Animated.View style={[styles.clipContainer, clipStyle]}>
+            <Text style={styles.text} numberOfLines={1}>
+              Great Job!
+            </Text>
+          </Animated.View>
+        </View>
       </Pressable>
     </Animated.View>
+  );
+}
+
+function LinearAccent() {
+  return (
+    <View
+      pointerEvents="none"
+      style={styles.linearAccent}
+    />
   );
 }
 
@@ -173,16 +196,56 @@ const styles = StyleSheet.create({
   },
   iosTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(248, 249, 252, 0.62)',
+    backgroundColor: colors.greatJobGlassTintIOS,
   },
   androidTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(245, 247, 251, 0.92)',
+    backgroundColor: colors.greatJobGlassTintFallback,
   },
   pressable: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  glassPlate: {
+    width: 304,
+    minHeight: 110,
+    borderRadius: 24,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.glassButtonSurfaceTintIOS,
+    shadowColor: colors.glassButtonShadowSoftDark,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    elevation: 6,
+  },
+  plateTintIOS: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.glassButtonSurfaceTintIOS,
+    opacity: 0.86,
+  },
+  plateTintFallback: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.glassButtonSurfaceTintFallback,
+    opacity: 0.92,
+  },
+  linearAccent: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  plateInnerStroke: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.glassButtonInnerHighlight,
+  },
+  plateOuterStroke: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.glassButtonStrokeBlue,
   },
   clipContainer: {
     overflow: 'hidden',
@@ -191,7 +254,7 @@ const styles = StyleSheet.create({
   text: {
     fontSize: typography['4xl'],
     fontWeight: typography.bold,
-    color: colors.textPrimary,
+    color: colors.glassButtonTextBlueSelected,
     letterSpacing: 0.5,
     // Prevent text from wrapping during clip reveal
     width: 300,
