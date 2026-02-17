@@ -56,6 +56,12 @@ describe('Image Registry', () => {
       });
     });
 
+    it('every seed has explicit heroSafeFrame metadata', () => {
+      [...RECIPES, ...DRM_MEALS].forEach(seed => {
+        expect(typeof seed.heroSafeFrame).toBe('boolean');
+      });
+    });
+
     it('all imageKeys are registered in RECIPE_IMAGES', () => {
       allImageKeys.forEach(key => {
         expect(RECIPE_IMAGES).toHaveProperty(key);
