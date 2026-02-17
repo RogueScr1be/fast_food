@@ -56,6 +56,16 @@ export const colors = {
   glassHandle: 'rgba(255, 255, 255, 0.35)',
   glassText: 'rgba(255, 255, 255, 0.92)',
   glassTextMuted: 'rgba(255, 255, 255, 0.55)',
+  // Glass button system (shared lighting/compositing)
+  glassButtonSurfaceIOS: 'rgba(255, 255, 255, 0.46)',
+  glassButtonSurfaceFallback: 'rgba(255, 255, 255, 0.9)',
+  glassButtonInnerStroke: 'rgba(255, 255, 255, 0.68)',
+  glassButtonOuterStroke: 'rgba(148, 163, 184, 0.28)',
+  glassButtonShadowDark: 'rgba(15, 23, 42, 0.14)',
+  glassButtonShadowLight: 'rgba(255, 255, 255, 0.58)',
+  glassButtonText: '#E5E7EB',
+  glassBackSurfaceIOS: 'rgba(255, 255, 255, 0.32)',
+  glassBackSurfaceFallback: 'rgba(255, 255, 255, 0.86)',
   // Tonight hybrid-glass accents (iOS-first with fallback tints)
   tonightHeroGlassTintIOS: 'rgba(248, 250, 252, 0.56)',
   tonightHeroGlassTintFallback: 'rgba(248, 250, 252, 0.92)',

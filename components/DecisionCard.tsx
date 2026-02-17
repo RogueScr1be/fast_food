@@ -243,6 +243,8 @@ export function DecisionCard({
     recipeId: recipe.id,
     mode: modeLabel,
     isRescue: variant === 'rescue',
+    screen: 'deal',
+    phase: 'render',
   });
   const isRescue = variant === 'rescue';
   const useSafeFrame = recipe.heroSafeFrame === true;

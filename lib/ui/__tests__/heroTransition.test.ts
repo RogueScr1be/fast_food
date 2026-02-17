@@ -110,4 +110,19 @@ describe('heroTransition singleton', () => {
     const second = consumePendingHeroTransition('rescue:drm-3');
     expect(second).not.toBeNull();
   });
+
+  it('preserves optional targetKey and transitionKind fields', () => {
+    setPendingHeroTransition({
+      sourceRect: MOCK_SOURCE,
+      imageSource: MOCK_IMAGE,
+      destKey: 'tonight',
+      targetKey: 'tonight:fancy',
+      transitionKind: 'deal_to_tonight',
+    });
+
+    const result = consumePendingHeroTransition('tonight');
+    expect(result).not.toBeNull();
+    expect(result!.targetKey).toBe('tonight:fancy');
+    expect(result!.transitionKind).toBe('deal_to_tonight');
+  });
 });

@@ -51,6 +51,29 @@ export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
 // ---------------------------------------------------------------------------
 
 const warnedKeys = new Set<string>();
+const imagePairingCounters = new Map<string, number>();
+
+type ImagePairingPhase = 'resolve' | 'prefetch' | 'render';
+
+interface ImagePairingEvent {
+  recipeId: string;
+  imageKey?: string;
+  mode?: string;
+  screen?: string;
+  phase?: ImagePairingPhase;
+  isRescue?: boolean;
+  reason: 'missing_key' | 'unknown_key' | 'dev_assert';
+}
+
+function getEventCounterKey(event: ImagePairingEvent): string {
+  return [
+    event.reason,
+    event.recipeId,
+    event.imageKey ?? '__empty__',
+    event.screen ?? 'unknown',
+    event.phase ?? 'resolve',
+  ].join(':');
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -79,29 +102,34 @@ export function getImageSourceSafe(opts: {
   recipeId: string;
   mode?: string;
   isRescue?: boolean;
+  screen?: string;
+  phase?: ImagePairingPhase;
 }): ImageSourcePropType {
-  const { imageKey, recipeId, mode, isRescue } = opts;
+  const { imageKey, recipeId, mode, isRescue, screen, phase } = opts;
 
   if (!imageKey) {
-    const warnKey = `${recipeId}:__empty__`;
-    if (!warnedKeys.has(warnKey)) {
-      warnedKeys.add(warnKey);
-      console.warn('[IMAGE_MISSING] No imageKey defined', { recipeId, mode, isRescue });
-    }
+    recordImagePairingEvent({
+      recipeId,
+      imageKey,
+      mode,
+      isRescue,
+      screen,
+      phase,
+      reason: 'missing_key',
+    });
     return FALLBACK_IMAGE;
   }
 
   if (!(imageKey in RECIPE_IMAGES)) {
-    const warnKey = `${recipeId}:${imageKey}`;
-    if (!warnedKeys.has(warnKey)) {
-      warnedKeys.add(warnKey);
-      console.warn('[IMAGE_MISSING] imageKey not found in registry', {
-        recipeId,
-        imageKey,
-        mode,
-        isRescue,
-      });
-    }
+    recordImagePairingEvent({
+      recipeId,
+      imageKey,
+      mode,
+      isRescue,
+      screen,
+      phase,
+      reason: 'unknown_key',
+    });
     return FALLBACK_IMAGE;
   }
 
@@ -114,4 +142,44 @@ export function hasRealImage(imageKey?: string): boolean {
   return imageKey in RECIPE_IMAGES;
 }
 
-export default { getImageSource, getImageSourceSafe, hasImageKey, hasRealImage, RECIPE_IMAGES };
+export function recordImagePairingEvent(event: ImagePairingEvent): void {
+  const countKey = getEventCounterKey(event);
+  const nextCount = (imagePairingCounters.get(countKey) ?? 0) + 1;
+  imagePairingCounters.set(countKey, nextCount);
+
+  const warnKey = `${countKey}:${event.mode ?? 'none'}:${event.isRescue ? 'rescue' : 'default'}`;
+  if (!warnedKeys.has(warnKey)) {
+    warnedKeys.add(warnKey);
+    console.warn('[IMAGE_PAIRING_WARNING]', { ...event, count: nextCount });
+  }
+}
+
+export function assertImageKeyConsistency(
+  recipeId: string,
+  imageKey?: string,
+  context?: Omit<ImagePairingEvent, 'recipeId' | 'imageKey' | 'reason'>,
+): boolean {
+  if (imageKey && imageKey in RECIPE_IMAGES) return true;
+  if (__DEV__) {
+    recordImagePairingEvent({
+      recipeId,
+      imageKey,
+      mode: context?.mode,
+      screen: context?.screen ?? 'unknown',
+      phase: context?.phase ?? 'resolve',
+      isRescue: context?.isRescue,
+      reason: 'dev_assert',
+    });
+  }
+  return false;
+}
+
+export default {
+  getImageSource,
+  getImageSourceSafe,
+  hasImageKey,
+  hasRealImage,
+  RECIPE_IMAGES,
+  assertImageKeyConsistency,
+  recordImagePairingEvent,
+};
