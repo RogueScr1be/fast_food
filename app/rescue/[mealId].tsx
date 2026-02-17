@@ -159,6 +159,9 @@ export default function RescueChecklistScreen() {
   const completedCount = completedIndices.size;
   const progress = totalSteps > 0 ? completedCount / totalSteps : 0;
   const allComplete = completedCount === totalSteps && totalSteps > 0;
+  const progressCertaintyText = allComplete
+    ? 'Ready to wrap rescue'
+    : `${Math.max(totalSteps - completedCount, 0)} quick steps left`;
 
   // Done button bloom
   const doneBloom = useSharedValue(1);
@@ -275,6 +278,7 @@ export default function RescueChecklistScreen() {
         value={progress}
         accessibilityLabel={`Progress: ${completedCount} of ${totalSteps} steps`}
       />
+      <Text style={styles.progressCertaintyText}>{progressCertaintyText}</Text>
 
       {/* Steps List */}
       <ScrollView 
@@ -375,6 +379,13 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   // Steps
+  progressCertaintyText: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
+  },
   stepsContainer: {
     flex: 1,
   },

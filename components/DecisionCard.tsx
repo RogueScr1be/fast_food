@@ -322,6 +322,15 @@ export function DecisionCard({
             />
           </Animated.View>
 
+          {/* First-frame readiness layer (prevents black pop before image/overlays settle) */}
+          {!imageReady && (
+            <LinearGradient
+              colors={['#111827', '#1f2937']}
+              locations={[0, 1]}
+              style={StyleSheet.absoluteFill}
+            />
+          )}
+
           {/* ── Overlays: gated on imageReady ──────────────────────── */}
           {imageReady && (
             <>

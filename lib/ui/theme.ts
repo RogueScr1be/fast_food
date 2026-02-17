@@ -56,6 +56,11 @@ export const colors = {
   glassHandle: 'rgba(255, 255, 255, 0.35)',
   glassText: 'rgba(255, 255, 255, 0.92)',
   glassTextMuted: 'rgba(255, 255, 255, 0.55)',
+  // Tonight hybrid-glass accents (iOS-first with fallback tints)
+  tonightHeroGlassTintIOS: 'rgba(248, 250, 252, 0.56)',
+  tonightHeroGlassTintFallback: 'rgba(248, 250, 252, 0.92)',
+  tonightCtaGlassTintIOS: 'rgba(243, 246, 252, 0.52)',
+  tonightCtaGlassTintFallback: 'rgba(243, 246, 252, 0.90)',
 } as const;
 
 export const spacing = {

@@ -276,6 +276,9 @@ export default function ChecklistScreen() {
 
   const estimatedCost = 'estimatedCost' in (meal as any) ? ((meal as any).estimatedCost as string) : null;
   const progressValue = progress / 100;
+  const progressCertaintyText = allComplete
+    ? 'Ready to finish'
+    : `${Math.max(totalSteps - completedCount, 0)} steps to done`;
 
   return (
     <View style={styles.container}>
@@ -296,6 +299,7 @@ export default function ChecklistScreen() {
           value={progressValue}
           accessibilityLabel={`Cooking progress: ${completedCount} of ${totalSteps} steps`}
         />
+        <Text style={styles.progressCertaintyText}>{progressCertaintyText}</Text>
 
         {/* Steps List */}
         <ScrollView style={styles.stepsList} contentContainerStyle={styles.stepsContent}>
@@ -359,6 +363,13 @@ const styles = StyleSheet.create({
   },
   stepsList: {
     flex: 1,
+  },
+  progressCertaintyText: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
   },
   stepsContent: {
     paddingHorizontal: spacing.md,

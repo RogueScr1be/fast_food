@@ -358,6 +358,7 @@ describe('ffSession Reset Semantics', () => {
       STORAGE_KEYS.selectedMode,
       STORAGE_KEYS.constraints,
       STORAGE_KEYS.excludeAllergens,
+      STORAGE_KEYS.hapticsEnabled,
     ]);
   });
 });
