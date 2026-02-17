@@ -840,14 +840,14 @@ const styles = StyleSheet.create({
   },
   ctaGlass: {
     height: MIN_TOUCH_TARGET + 8,
-    borderRadius: radii.full,
+    borderRadius: radii.xl,
   },
 
   // Transition clone
   cloneBase: {
-    backgroundColor: colors.glassButtonSurfaceFallback,
+    backgroundColor: colors.glassButtonSurfaceTintFallback,
     borderWidth: 1,
-    borderColor: colors.glassButtonOuterStroke,
+    borderColor: colors.glassButtonStrokeBlue,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
@@ -858,8 +858,8 @@ const styles = StyleSheet.create({
   },
   cloneLabel: {
     fontSize: typography['3xl'],
-    fontWeight: typography.semibold,
-    color: colors.glassButtonText,
+    fontWeight: typography.bold,
+    color: colors.glassButtonTextBlueSelected,
     letterSpacing: 0.8,
     textAlign: 'center',
   },
