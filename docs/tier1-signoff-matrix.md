@@ -32,5 +32,6 @@ Use this matrix to approve Tier 1 promotion.
 - Notes:
   - Strict signoff command executed: `TIER1_SIGNOFF_REQUIRE_STAGING=true npm run signoff:tier1`
   - Output summary: `docs/reports/tier1-release-readiness/evidence-2026-02-25.md`
-  - Signoff artifact: `docs/reports/tier1-signoff/2026-02-25T15-50-35-667Z.md`
-  - Blocking staging gates were skipped/failed because `STAGING_URL` and `STAGING_AUTH_TOKEN` were not set in this shell environment.
+  - Signoff artifact (latest): `docs/reports/tier1-signoff/2026-02-25T16-30-19-921Z.md`
+  - Main CI run (blocking lane): `https://github.com/RogueScr1be/fast_food/actions/runs/22405926450`
+  - Blocking staging gates were skipped/failed because `STAGING_URL` and `STAGING_AUTH_TOKEN` were not set in CI/runner environment.
