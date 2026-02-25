@@ -499,6 +499,24 @@ describe('Migration Logic', () => {
       REQUIRED_COLUMN_TYPES 
     } = require('../../../db/migrate');
 
+    function buildColumnTypesFixture(options?: {
+      overrides?: Record<string, string>;
+      remove?: string[];
+    }): Record<string, string> {
+      const fixture = Object.fromEntries(
+        Array.from((REQUIRED_COLUMN_TYPES as Map<string, string>).entries()),
+      ) as Record<string, string>;
+
+      for (const key of options?.remove ?? []) {
+        delete fixture[key];
+      }
+
+      return {
+        ...fixture,
+        ...(options?.overrides ?? {}),
+      };
+    }
+
     class TypeVerifyMockClient implements DbClient {
       private columnTypes: Record<string, string>;
 
@@ -522,23 +540,7 @@ describe('Migration Logic', () => {
     }
 
     it('passes when all required column types match', async () => {
-      const columnTypes: Record<string, string> = {
-        // Runtime infrastructure
-        'runtime_flags.enabled': 'boolean',
-        'runtime_flags.key': 'text',
-        'runtime_metrics_daily.count': 'bigint',
-        'runtime_deployments_log.env': 'text',
-        'runtime_deployments_log.deployment_url': 'text',
-        'runtime_deployments_log.git_sha': 'text',
-        'runtime_deployments_log.run_id': 'text',
-        // Tenant tables - household_key MUST be TEXT
-        'decision_events.user_action': 'text',
-        'decision_events.household_key': 'text',
-        'taste_signals.household_key': 'text',
-        'taste_meal_scores.household_key': 'text',
-        'inventory_items.household_key': 'text',
-        'receipt_imports.household_key': 'text',
-      };
+      const columnTypes = buildColumnTypesFixture();
       const client = new TypeVerifyMockClient(columnTypes);
 
       const result = await verifyRequiredColumnTypes(client);
@@ -549,23 +551,11 @@ describe('Migration Logic', () => {
     });
 
     it('fails when a column type mismatches', async () => {
-      const columnTypes: Record<string, string> = {
-        // Runtime infrastructure
-        'runtime_flags.enabled': 'text', // Should be boolean
-        'runtime_flags.key': 'text',
-        'runtime_metrics_daily.count': 'bigint',
-        'runtime_deployments_log.env': 'text',
-        'runtime_deployments_log.deployment_url': 'text',
-        'runtime_deployments_log.git_sha': 'text',
-        'runtime_deployments_log.run_id': 'text',
-        // Tenant tables
-        'decision_events.user_action': 'text',
-        'decision_events.household_key': 'text',
-        'taste_signals.household_key': 'text',
-        'taste_meal_scores.household_key': 'text',
-        'inventory_items.household_key': 'text',
-        'receipt_imports.household_key': 'text',
-      };
+      const columnTypes = buildColumnTypesFixture({
+        overrides: {
+          'runtime_flags.enabled': 'text', // Should be boolean
+        },
+      });
       const client = new TypeVerifyMockClient(columnTypes);
 
       const result = await verifyRequiredColumnTypes(client);
@@ -579,13 +569,9 @@ describe('Migration Logic', () => {
     });
 
     it('fails when a column is not found', async () => {
-      // Missing runtime_metrics_daily.count
-      const columnTypes: Record<string, string> = {
-        'runtime_flags.enabled': 'boolean',
-        'runtime_flags.key': 'text',
-        'decision_events.user_action': 'text',
-        'decision_events.household_key': 'text',
-      };
+      const columnTypes = buildColumnTypesFixture({
+        remove: ['runtime_metrics_daily.count'],
+      });
       const client = new TypeVerifyMockClient(columnTypes);
 
       const result = await verifyRequiredColumnTypes(client);
@@ -634,6 +620,25 @@ describe('Migration Logic', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { verifyNotNull, NOT_NULL_COLUMNS } = require('../../../db/migrate');
 
+    function buildNotNullFixture(options?: {
+      overrides?: Record<string, boolean>;
+      remove?: string[];
+    }): Record<string, boolean> {
+      const fixture: Record<string, boolean> = {};
+      for (const column of NOT_NULL_COLUMNS as string[]) {
+        fixture[column] = false;
+      }
+
+      for (const key of options?.remove ?? []) {
+        delete fixture[key];
+      }
+
+      return {
+        ...fixture,
+        ...(options?.overrides ?? {}),
+      };
+    }
+
     class NotNullVerifyMockClient implements DbClient {
       private columnNullable: Record<string, boolean>;
 
@@ -661,26 +666,7 @@ describe('Migration Logic', () => {
     }
 
     it('passes when all NOT NULL columns are correctly NOT NULL', async () => {
-      const columnNullable: Record<string, boolean> = {
-        // decision_events
-        'decision_events.user_action': false,
-        'decision_events.household_key': false,
-        // taste_signals
-        'taste_signals.household_key': false,
-        // taste_meal_scores
-        'taste_meal_scores.household_key': false,
-        // inventory_items
-        'inventory_items.household_key': false,
-        // receipt_imports
-        'receipt_imports.household_key': false,
-        // runtime_flags
-        'runtime_flags.enabled': false,
-        // runtime_deployments_log
-        'runtime_deployments_log.env': false,
-        'runtime_deployments_log.deployment_url': false,
-        'runtime_deployments_log.git_sha': false,
-        'runtime_deployments_log.run_id': false,
-      };
+      const columnNullable = buildNotNullFixture();
       const client = new NotNullVerifyMockClient(columnNullable);
 
       const result = await verifyNotNull(client);
@@ -691,26 +677,11 @@ describe('Migration Logic', () => {
     });
 
     it('fails when a column is nullable but should be NOT NULL', async () => {
-      const columnNullable: Record<string, boolean> = {
-        // decision_events
-        'decision_events.user_action': true, // Should NOT be nullable
-        'decision_events.household_key': false,
-        // taste_signals
-        'taste_signals.household_key': false,
-        // taste_meal_scores
-        'taste_meal_scores.household_key': false,
-        // inventory_items
-        'inventory_items.household_key': false,
-        // receipt_imports
-        'receipt_imports.household_key': false,
-        // runtime_flags
-        'runtime_flags.enabled': false,
-        // runtime_deployments_log
-        'runtime_deployments_log.env': false,
-        'runtime_deployments_log.deployment_url': false,
-        'runtime_deployments_log.git_sha': false,
-        'runtime_deployments_log.run_id': false,
-      };
+      const columnNullable = buildNotNullFixture({
+        overrides: {
+          'decision_events.user_action': true, // Should NOT be nullable
+        },
+      });
       const client = new NotNullVerifyMockClient(columnNullable);
 
       const result = await verifyNotNull(client);
@@ -725,11 +696,9 @@ describe('Migration Logic', () => {
     });
 
     it('fails when a column is not found', async () => {
-      // Missing decision_events.household_key
-      const columnNullable: Record<string, boolean> = {
-        'decision_events.user_action': false,
-        'runtime_flags.enabled': false,
-      };
+      const columnNullable = buildNotNullFixture({
+        remove: ['decision_events.household_key'],
+      });
       const client = new NotNullVerifyMockClient(columnNullable);
 
       const result = await verifyNotNull(client);
@@ -792,28 +761,23 @@ describe('Migration Logic', () => {
       async end(): Promise<void> {}
     }
 
+    function buildConstraintFixture(
+      remove: Array<{ table: string; constraint: string }> = [],
+    ): Map<string, Set<string>> {
+      const fixture = new Map<string, Set<string>>();
+      for (const [table, constraints] of REQUIRED_CONSTRAINTS.entries()) {
+        fixture.set(table, new Set(constraints));
+      }
+
+      for (const item of remove) {
+        fixture.get(item.table)?.delete(item.constraint);
+      }
+
+      return fixture;
+    }
+
     it('passes when all required constraints exist', async () => {
-      // Include all required constraints from all tables
-      const constraints = new Map<string, Set<string>>([
-        ['decision_events', new Set([
-          'decision_events_user_action_check',
-          'decision_events_household_key_check',
-          'decision_events_decision_type_check',
-          'decision_events_timestamps_check',
-        ])],
-        ['taste_signals', new Set([
-          'taste_signals_household_key_nonempty',
-        ])],
-        ['taste_meal_scores', new Set([
-          'taste_meal_scores_household_key_nonempty',
-        ])],
-        ['inventory_items', new Set([
-          'inventory_items_household_key_nonempty',
-        ])],
-        ['receipt_imports', new Set([
-          'receipt_imports_household_key_nonempty',
-        ])],
-      ]);
+      const constraints = buildConstraintFixture();
       const client = new ConstraintVerifyMockClient(constraints);
 
       const result = await verifyRequiredConstraints(client);
@@ -824,25 +788,8 @@ describe('Migration Logic', () => {
     });
 
     it('fails when a constraint is missing', async () => {
-      const constraints = new Map<string, Set<string>>([
-        ['decision_events', new Set([
-          'decision_events_user_action_check',
-          // Missing: decision_events_household_key_check
-          'decision_events_decision_type_check',
-          'decision_events_timestamps_check',
-        ])],
-        ['taste_signals', new Set([
-          'taste_signals_household_key_nonempty',
-        ])],
-        ['taste_meal_scores', new Set([
-          'taste_meal_scores_household_key_nonempty',
-        ])],
-        ['inventory_items', new Set([
-          'inventory_items_household_key_nonempty',
-        ])],
-        ['receipt_imports', new Set([
-          'receipt_imports_household_key_nonempty',
-        ])],
+      const constraints = buildConstraintFixture([
+        { table: 'decision_events', constraint: 'decision_events_household_key_check' },
       ]);
       const client = new ConstraintVerifyMockClient(constraints);
 
@@ -857,31 +804,15 @@ describe('Migration Logic', () => {
     });
 
     it('reports multiple missing constraints', async () => {
-      const constraints = new Map<string, Set<string>>([
-        ['decision_events', new Set([
-          // Missing all except one
-          'decision_events_user_action_check',
-        ])],
-        // Other tables have all constraints
-        ['taste_signals', new Set([
-          'taste_signals_household_key_nonempty',
-        ])],
-        ['taste_meal_scores', new Set([
-          'taste_meal_scores_household_key_nonempty',
-        ])],
-        ['inventory_items', new Set([
-          'inventory_items_household_key_nonempty',
-        ])],
-        ['receipt_imports', new Set([
-          'receipt_imports_household_key_nonempty',
-        ])],
-      ]);
+      const constraints = buildConstraintFixture();
+      constraints.set('decision_events', new Set(['decision_events_user_action_check']));
       const client = new ConstraintVerifyMockClient(constraints);
 
       const result = await verifyRequiredConstraints(client);
+      const expectedMissing = (REQUIRED_CONSTRAINTS.get('decision_events')?.length ?? 0) - 1;
 
       expect(result.valid).toBe(false);
-      expect(result.missing.length).toBe(3); // 3 missing from decision_events
+      expect(result.missing.length).toBe(expectedMissing);
     });
 
     it('fails when table has no constraints at all', async () => {
@@ -889,10 +820,13 @@ describe('Migration Logic', () => {
       const client = new ConstraintVerifyMockClient(constraints);
 
       const result = await verifyRequiredConstraints(client);
+      const expectedMissing = Array.from(REQUIRED_CONSTRAINTS.values()).reduce(
+        (sum, constraints) => sum + constraints.length,
+        0,
+      );
 
       expect(result.valid).toBe(false);
-      // 4 decision_events + 1 each for taste_signals, taste_meal_scores, inventory_items, receipt_imports = 8 total
-      expect(result.missing.length).toBe(8);
+      expect(result.missing.length).toBe(expectedMissing);
     });
 
     it('works with custom constraints map', async () => {
@@ -922,6 +856,8 @@ describe('Migration Logic', () => {
       expect(decisionEventsConstraints).toContain('decision_events_household_key_check');
       expect(decisionEventsConstraints).toContain('decision_events_decision_type_check');
       expect(decisionEventsConstraints).toContain('decision_events_timestamps_check');
+      expect(decisionEventsConstraints).toContain('decision_events_explanation_line_check');
+      expect(decisionEventsConstraints).toContain('decision_events_local_latency_ms_check');
     });
   });
 });

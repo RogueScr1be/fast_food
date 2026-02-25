@@ -1329,7 +1329,9 @@ class PostgresAdapter implements DbAdapter {
           connectionTimeoutMillis: 10000,
         });
       }
-      const result = await (this.pool as pg.Pool).query(sql, params);
+      const result = await (this.pool as {
+        query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
+      }).query(sql, params);
       return result.rows as T[];
     } catch (error) {
       // Re-throw readonly_mode error as-is

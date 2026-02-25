@@ -16,8 +16,6 @@ module.exports = [
       'dist/**',
       '.expo/**',
       'coverage/**',
-      'scripts/**',
-      'db/**',
       '*.config.js',
       'babel.config.js',
       'jest.setup.js',
