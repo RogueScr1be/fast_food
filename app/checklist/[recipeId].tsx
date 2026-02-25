@@ -32,7 +32,8 @@ import { ChecklistHero, type HeroRect } from '@/components/ChecklistHero';
 import { ChecklistStep } from '@/components/ChecklistStep';
 import { GreatJobOverlay } from '@/components/GreatJobOverlay';
 
-import { getRecipeById } from '@/lib/seeds';
+import { getAnyMealById } from '@/lib/seeds';
+import type { RecipeSeed } from '@/lib/seeds/types';
 import { getImageSourceSafe } from '@/lib/seeds/images';
 import {
   consumePendingHeroTransition,
@@ -42,14 +43,34 @@ import {
 
 type Params = { recipeId?: string };
 
+function isRecipeMeal(meal: ReturnType<typeof getAnyMealById>): meal is RecipeSeed {
+  if (!meal) return false;
+  return 'title' in meal && 'time' in meal && 'cost' in meal;
+}
+
 export default function ChecklistScreen() {
   const { recipeId } = useLocalSearchParams<Params>();
   const id = typeof recipeId === 'string' ? recipeId : '';
 
   const { width: _winW, height: _winH } = useWindowDimensions();
 
-  const recipe = useMemo(() => (id ? getRecipeById(id) : null), [id]);
-  const imageSource = useMemo(() => (recipe ? getImageSourceSafe(recipe) : null), [recipe]);
+  const recipe = useMemo(() => {
+    if (!id) return null;
+    const meal = getAnyMealById(id);
+    return isRecipeMeal(meal) ? meal : null;
+  }, [id]);
+  const imageSource = useMemo(
+    () =>
+      recipe
+        ? getImageSourceSafe({
+            imageKey: recipe.imageKey,
+            recipeId: recipe.id,
+            mode: recipe.mode,
+            isRescue: false,
+          })
+        : null,
+    [recipe],
+  );
 
   // Steps state
   const steps = recipe?.steps ?? [];
@@ -163,7 +184,6 @@ export default function ChecklistScreen() {
       contentOpacity.value = 1;
       cloneOpacity.value = 0;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // ---------------------------------------------------------------------------
@@ -208,8 +228,8 @@ export default function ChecklistScreen() {
   const meta = useMemo(() => {
     if (!recipe) return '';
     const parts: string[] = [];
-    if (recipe.time) parts.push(recipe.time);
-    if (recipe.cost) parts.push(recipe.cost);
+    if (recipe.estimatedTime) parts.push(recipe.estimatedTime);
+    if (recipe.estimatedCost) parts.push(recipe.estimatedCost);
     return parts.join(' • ');
   }, [recipe]);
 
@@ -230,7 +250,7 @@ export default function ChecklistScreen() {
       <Animated.View style={[styles.contentWrap, contentFadeStyle]}>
         <ChecklistHero
           imageSource={imageSource}
-          title={recipe.title}
+          title={recipe.name}
           progressText={progressText}
           meta={meta}
           onHeroReady={handleHeroReady}

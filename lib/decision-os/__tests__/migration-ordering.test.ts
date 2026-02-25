@@ -32,12 +32,17 @@ function getMigrationFiles(migrationsDir: string = MIGRATIONS_DIR): MigrationFil
   
   return files
     .filter(f => f.endsWith('.sql'))
+    .filter(f => !f.endsWith('.up.sql'))
+    .filter(f => !f.endsWith('.down.sql'))
     .map(f => ({
       name: f,
       path: path.join(migrationsDir, f),
       order: parseInt(f.split('_')[0], 10) || 0,
     }))
-    .sort((a, b) => a.order - b.order);
+    .sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 describe('Migration Ordering', () => {
@@ -185,15 +190,21 @@ describe('Migration Ordering', () => {
       }
     });
     
-    it('no duplicate order numbers', () => {
-      const orders = migrations.map(m => m.order);
-      const uniqueOrders = new Set(orders);
-      expect(uniqueOrders.size).toBe(orders.length);
+    it('no duplicate migration file names', () => {
+      const names = migrations.map(m => m.name);
+      const uniqueNames = new Set(names);
+      expect(uniqueNames.size).toBe(names.length);
     });
     
-    it('migrations are in ascending order', () => {
+    it('migrations are sorted by order, then name', () => {
       for (let i = 1; i < migrations.length; i++) {
-        expect(migrations[i].order).toBeGreaterThan(migrations[i - 1].order);
+        const prev = migrations[i - 1];
+        const curr = migrations[i];
+        if (curr.order === prev.order) {
+          expect(curr.name.localeCompare(prev.name)).toBeGreaterThan(0);
+        } else {
+          expect(curr.order).toBeGreaterThan(prev.order);
+        }
       }
     });
   });

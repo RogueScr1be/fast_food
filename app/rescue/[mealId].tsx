@@ -112,17 +112,16 @@ export default function RescueChecklistScreen() {
   }, []);
 
   const handleBackToDeal = useCallback(() => {
-  const src = heroRectRef.current;
-
-  if (src) {
-    setPendingHeroTransition({
-      destKey: `deal:${mealId}`,
-      sourceRect: src,
-    });
-  }
-
-  router.replace({ pathname: '/deal', params: { resume: mealId } });
-}, [mealId]);
+    const src = heroRectRef.current;
+    if (src && meal && mealId) {
+      setPendingHeroTransition({
+        destKey: `deal:${mealId}`,
+        sourceRect: src,
+        imageSource: getImageSource(meal.imageKey),
+      });
+    }
+    router.replace({ pathname: '/deal', params: { resume: mealId } });
+  }, [meal, mealId]);
 
   const fadeOutClone = useCallback(() => {
     // 120ms fade (tighter than standard whisper 180ms for snappy finish)

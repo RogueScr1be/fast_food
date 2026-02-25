@@ -1,5 +1,6 @@
 // lib/state/persist.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { AllergenTag, ConstraintTag, Mode } from '../seeds/types';
 
 const KEY_PREFIX = 'ff:v1:';
 
@@ -29,6 +30,76 @@ async function setJson(k: string, value: unknown): Promise<void> {
 // Idle affordance (silent onboarding)
 // -----------------------------------------------------------------------------
 const HAS_SEEN_AFFORDANCE = 'hasSeenAffordance';
+
+const SELECTED_MODE = 'selectedMode';
+const CONSTRAINTS = 'constraints';
+const EXCLUDE_ALLERGENS = 'excludeAllergens';
+
+export interface Prefs {
+  selectedMode: Mode | null;
+  constraints: ConstraintTag[];
+  excludeAllergens: AllergenTag[];
+}
+
+const VALID_MODES: Mode[] = ['fancy', 'easy', 'cheap'];
+const VALID_ALLERGENS: AllergenTag[] = ['dairy', 'nuts', 'gluten', 'eggs', 'soy', 'shellfish'];
+const VALID_CONSTRAINTS: ConstraintTag[] = ['no_oven', 'kid_safe', '15_min', 'vegetarian', 'no_dairy'];
+
+function validateMode(value: unknown): Mode | null {
+  if (typeof value === 'string' && VALID_MODES.includes(value as Mode)) {
+    return value as Mode;
+  }
+  return null;
+}
+
+function validateAllergens(value: unknown): AllergenTag[] {
+  return safeArray(value).filter(
+    (v): v is AllergenTag => typeof v === 'string' && VALID_ALLERGENS.includes(v as AllergenTag),
+  );
+}
+
+function validateConstraints(value: unknown): ConstraintTag[] {
+  return safeArray(value).filter(
+    (v): v is ConstraintTag =>
+      typeof v === 'string' && VALID_CONSTRAINTS.includes(v as ConstraintTag),
+  );
+}
+
+export async function loadPrefs(): Promise<Prefs> {
+  const [selectedMode, constraints, excludeAllergens] = await Promise.all([
+    getJson<unknown>(SELECTED_MODE, null),
+    getJson<unknown>(CONSTRAINTS, []),
+    getJson<unknown>(EXCLUDE_ALLERGENS, []),
+  ]);
+
+  return {
+    selectedMode: validateMode(selectedMode),
+    constraints: validateConstraints(constraints),
+    excludeAllergens: validateAllergens(excludeAllergens),
+  };
+}
+
+export async function savePrefs(prefs: Partial<Prefs>): Promise<void> {
+  const writes: Promise<void>[] = [];
+  if (Object.prototype.hasOwnProperty.call(prefs, 'selectedMode')) {
+    writes.push(setJson(SELECTED_MODE, prefs.selectedMode ?? null));
+  }
+  if (Object.prototype.hasOwnProperty.call(prefs, 'constraints')) {
+    writes.push(setJson(CONSTRAINTS, prefs.constraints ?? []));
+  }
+  if (Object.prototype.hasOwnProperty.call(prefs, 'excludeAllergens')) {
+    writes.push(setJson(EXCLUDE_ALLERGENS, prefs.excludeAllergens ?? []));
+  }
+  await Promise.all(writes);
+}
+
+export async function clearPrefs(): Promise<void> {
+  await Promise.all([
+    AsyncStorage.removeItem(key(SELECTED_MODE)),
+    AsyncStorage.removeItem(key(CONSTRAINTS)),
+    AsyncStorage.removeItem(key(EXCLUDE_ALLERGENS)),
+  ]);
+}
 
 export async function getHasSeenAffordance(): Promise<boolean> {
   return getJson<boolean>(HAS_SEEN_AFFORDANCE, false);

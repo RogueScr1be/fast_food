@@ -10,6 +10,7 @@
  * - Back chevron → /tonight (replace)
  */
 
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -362,7 +363,12 @@ export default function DealScreen() {
     // Deal hero is full-screen, so source rect is the full window.
     setPendingHeroTransition({
       sourceRect: { x: 0, y: 0, width: windowW, height: windowH },
-      imageSource: getImageSourceSafe(currentDeal.data),
+      imageSource: getImageSourceSafe({
+        imageKey: currentDeal.data.imageKey,
+        recipeId: currentDeal.data.id,
+        mode: 'mode' in currentDeal.data ? currentDeal.data.mode : undefined,
+        isRescue: currentDeal.type === 'drm',
+      }),
       destKey: `checklist:${currentDeal.data.id}`,
     });
 
