@@ -9,9 +9,14 @@
  *   npm run release:preflight
  * 
  * Checks (in order):
- *   1. npm test - All tests must pass
- *   2. npm run build:sanity - EAS config must be valid
- *   3. npm run staging:healthcheck - Staging must be healthy
+ *   1. npm run test:tier1 - Tier 1 loop tests must pass
+ *   2. npm run lint:tier1 - Tier 1 lint gate
+ *   3. npm run typecheck:tier1 - Tier 1 type safety
+ *   4. npm run build:sanity - build sanity
+ *   5. npm run staging:healthcheck - staging health
+ *   6. npm run auth:sanity:require401 - auth fail-closed
+ *   7. npm run auth:sanity:require200 - auth success path
+ *   8. npm run smoke:tier1:staging - Tier 1 staging smoke
  * 
  * Environment variables (required for step 3):
  *   STAGING_URL - Staging deployment URL
@@ -33,9 +38,19 @@ interface PreflightStep {
 
 const STEPS: PreflightStep[] = [
   {
-    name: 'test',
-    command: 'npm test',
-    description: 'Run all unit tests',
+    name: 'tier1_test',
+    command: 'npm run test:tier1',
+    description: 'Run Tier 1 local-first learning loop tests',
+  },
+  {
+    name: 'tier1_lint',
+    command: 'npm run lint:tier1',
+    description: 'Lint Tier 1 surfaces',
+  },
+  {
+    name: 'tier1_typecheck',
+    command: 'npm run typecheck:tier1',
+    description: 'Typecheck Tier 1 surfaces',
   },
   {
     name: 'build_sanity',
@@ -46,6 +61,24 @@ const STEPS: PreflightStep[] = [
     name: 'staging_healthcheck',
     command: 'npm run staging:healthcheck',
     description: 'Verify staging deployment health',
+    required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+  },
+  {
+    name: 'auth_require_401',
+    command: 'npm run auth:sanity:require401',
+    description: 'Verify protected endpoints reject unauthenticated calls',
+    required_env: ['STAGING_URL'],
+  },
+  {
+    name: 'auth_require_200',
+    command: 'npm run auth:sanity:require200',
+    description: 'Verify protected endpoints accept authenticated calls',
+    required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+  },
+  {
+    name: 'tier1_smoke_staging',
+    command: 'npm run smoke:tier1:staging',
+    description: 'Run Tier 1 staging smoke for actor/sync/weights/priors',
     required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
   },
 ];

@@ -15,8 +15,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import dns from 'node:dns/promises';
-import { parse as parsePgConnection } from 'pg-connection-string';
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 
@@ -39,6 +37,9 @@ export const REQUIRED_TABLES = [
   'runtime_metrics_daily',
   'runtime_deployments_log',
   'sessions',
+  'feedback_events',
+  'user_weights',
+  'global_priors',
 ] as const;
 
 /**
@@ -54,6 +55,8 @@ export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
   ['sessions', ['id', 'household_key', 'started_at', 'context', 'outcome', 'rejection_count']],
   ['decision_events', [
     'id',
+    'event_version',
+    'session_id',
     'user_profile_id',
     'household_key',
     'user_action',
@@ -64,6 +67,49 @@ export const REQUIRED_COLUMNS: Map<string, string[]> = new Map([
     'decision_type',
     'meal_id',
     'context_hash',
+    'context_signature',
+    'explanation_line',
+    'engine_version',
+    'local_latency_ms',
+    'idempotency_key',
+  ]],
+  ['feedback_events', [
+    'id',
+    'decision_event_id',
+    'household_key',
+    'user_profile_id',
+    'feedback_type',
+    'rating',
+    'metadata',
+    'source',
+    'idempotency_key',
+    'created_at',
+  ]],
+  ['user_weights', [
+    'household_key',
+    'user_profile_id',
+    'weights',
+    'model_version',
+    'version',
+    'updated_at',
+  ]],
+  ['global_priors', [
+    'bucket_key',
+    'weekday',
+    'hour_block',
+    'season',
+    'temp_bucket',
+    'geo_bucket',
+    'meal_key',
+    'meal_id',
+    'prior_score',
+    'sample_count',
+    'sample_size',
+    'positive_count',
+    'negative_count',
+    'household_count',
+    'approval_rate',
+    'computed_at',
   ]],
   ['inventory_items', ['id', 'household_key', 'item_name', 'remaining_qty', 'confidence', 'last_seen_at']],
   ['receipt_imports', ['id', 'household_key', 'status', 'created_at']],
@@ -112,12 +158,17 @@ export function getMigrationFiles(migrationsDir: string = MIGRATIONS_DIR): Migra
   
   return files
     .filter(f => f.endsWith('.sql'))
+    .filter(f => !f.endsWith('.up.sql'))
+    .filter(f => !f.endsWith('.down.sql'))
     .map(f => ({
       name: f,
       path: path.join(migrationsDir, f),
       order: parseInt(f.split('_')[0], 10) || 0,
     }))
-    .sort((a, b) => a.order - b.order);
+    .sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 /**
@@ -311,6 +362,13 @@ export const REQUIRED_COLUMN_TYPES: Map<string, string> = new Map([
   ['taste_meal_scores.household_key', 'text'],
   ['inventory_items.household_key', 'text'],
   ['receipt_imports.household_key', 'text'],
+  ['feedback_events.household_key', 'text'],
+  ['feedback_events.feedback_type', 'text'],
+  ['feedback_events.source', 'text'],
+  ['user_weights.household_key', 'text'],
+  ['global_priors.bucket_key', 'text'],
+  ['global_priors.geo_bucket', 'text'],
+  ['global_priors.meal_key', 'text'],
 ]);
 
 /**
@@ -329,6 +387,19 @@ export const NOT_NULL_COLUMNS: string[] = [
   'inventory_items.household_key',
   // receipt_imports
   'receipt_imports.household_key',
+  // feedback_events
+  'feedback_events.household_key',
+  'feedback_events.feedback_type',
+  'feedback_events.source',
+  'feedback_events.idempotency_key',
+  // user_weights
+  'user_weights.household_key',
+  'user_weights.user_profile_id',
+  'user_weights.weights',
+  // global_priors
+  'global_priors.bucket_key',
+  'global_priors.geo_bucket',
+  'global_priors.meal_key',
   // runtime_flags
   'runtime_flags.enabled',
   // runtime_deployments_log
@@ -348,6 +419,8 @@ export const REQUIRED_CONSTRAINTS: Map<string, string[]> = new Map([
     'decision_events_household_key_check',
     'decision_events_decision_type_check',
     'decision_events_timestamps_check',
+    'decision_events_explanation_line_check',
+    'decision_events_local_latency_ms_check',
   ]],
   ['taste_signals', [
     'taste_signals_household_key_nonempty',

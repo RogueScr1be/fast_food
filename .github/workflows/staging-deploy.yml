@@ -182,6 +182,43 @@ jobs:
           npm run staging:healthcheck
           echo "PASS staging_healthcheck"
 
+      - name: Auth fail-closed proof (401)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+        run: |
+          echo "=== Verifying auth fail-closed ==="
+          npm run auth:sanity:require401
+          echo "PASS auth_401_proof"
+
+      - name: Auth success proof (200)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: |
+          echo "=== Verifying authenticated success path ==="
+          npm run auth:sanity:require200
+          echo "PASS auth_200_proof"
+
+      - name: Tier 1 staging smoke (blocking)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+          GLOBAL_PRIORS_MIN_HOUSEHOLDS: '30'
+          GLOBAL_PRIORS_MIN_EVENTS: '200'
+        run: |
+          echo "=== Running Tier 1 Staging Smoke ==="
+          npm run smoke:tier1:staging
+          echo "PASS tier1_staging_smoke"
+
+      - name: Legacy smoke (non-blocking)
+        continue-on-error: true
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
+        run: |
+          echo "=== Running Legacy Smoke (non-blocking) ==="
+          npm run smoke:staging
+
       - name: Record deployment (last green)
         env:
           # EDIT: deploy:record:lastgreen expects DATABASE_URL (not DATABASE_URL_STAGING)

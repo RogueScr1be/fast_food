@@ -896,6 +896,35 @@ Auth: Token provided (production mode)
 ✓ STAGING SMOKE PASSED
 ```
 
+### Tier 1 Blocking Smoke (Required)
+
+Tier 1 release gating must pass these checks in staging:
+
+```bash
+export STAGING_URL="https://your-app.vercel.app"
+export STAGING_AUTH_TOKEN="eyJ..."
+export GLOBAL_PRIORS_MIN_HOUSEHOLDS=30
+export GLOBAL_PRIORS_MIN_EVENTS=200
+
+# 1) Health + auth fail-closed
+npm run staging:healthcheck
+npm run auth:sanity:require401
+npm run auth:sanity:require200
+
+# 2) Tier 1 loop proof (actor -> sync/events -> user-weights -> global-priors)
+npm run smoke:tier1:staging
+```
+
+Tier 1 acceptance SLOs:
+- Decision path remains local-first and deterministic in mobile runtime.
+- Staging auth proofs pass (401 without token, 200 with token).
+- Tier 1 smoke passes with idempotent sync behavior.
+- `global_priors` responses honor k-anon floors (`>=30 households`, `>=200 events`).
+- Local decision latency budget remains `p95 < 100ms`.
+
+Legacy note:
+- `npm run smoke:staging` remains a compatibility lane and is non-blocking for Tier 1 promotion.
+
 ---
 
 ## Quick Reference
@@ -1014,6 +1043,24 @@ On the TestFlight build, verify:
 - [ ] Reject twice → DRM rescue
 - [ ] Receipt scan → "Receipt added" and subsequent decisions prefer matching inventory
 
+### Tier 1 Rollout Flags and Rollback
+
+Rollout order:
+1. Internal dogfood with all Tier 1 flags enabled.
+2. Staged cohort rollout (partial audience).
+3. Full rollout after Tier 1 smoke + auth proof stay green.
+
+Tier 1 client flags:
+- `EXPO_PUBLIC_LOCAL_DECIDER_V1`
+- `EXPO_PUBLIC_LEARNING_SYNC_V1`
+- `EXPO_PUBLIC_WEIGHT_UPDATES_V1`
+
+Rollback rule (preserve local decision UX):
+1. Keep `EXPO_PUBLIC_LOCAL_DECIDER_V1=true`.
+2. Set `EXPO_PUBLIC_LEARNING_SYNC_V1=false`.
+3. Set `EXPO_PUBLIC_WEIGHT_UPDATES_V1=false`.
+4. Re-run `npm run staging:healthcheck` and `npm run auth:sanity:require401`.
+
 ### Single Command: Release Preflight
 
 ```bash
@@ -1021,9 +1068,14 @@ npm run release:preflight
 ```
 
 Executes in order:
-1. `npm test` — All tests must pass
-2. `npm run build:sanity` — EAS config must be valid
-3. `npm run staging:healthcheck` — Staging must be healthy
+1. `npm run test:tier1` — Tier 1 loop tests
+2. `npm run lint:tier1` — Tier 1 lint gate
+3. `npm run typecheck:tier1` — Tier 1 type gate
+4. `npm run build:sanity` — Build sanity
+5. `npm run staging:healthcheck` — Staging health
+6. `npm run auth:sanity:require401` — Auth fail-closed proof
+7. `npm run auth:sanity:require200` — Auth success proof
+8. `npm run smoke:tier1:staging` — Tier 1 staging smoke
 
 **Fails fast on any error.** No "I'll just try anyway."
 
