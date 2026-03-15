@@ -10,10 +10,17 @@
  * - global_priors k-anon floor enforcement
  *
  * Usage:
+ *   STAGING_WEB_URL=https://... STAGING_API_URL=https://... STAGING_AUTH_TOKEN=... npm run smoke:tier1:staging
  *   STAGING_URL=https://... STAGING_AUTH_TOKEN=... npm run smoke:tier1:staging
  */
 
-const STAGING_URL = (process.env.STAGING_URL ?? '').replace(/\/+$/, '');
+const STAGING_WEB_URL = (
+  process.env.STAGING_WEB_URL ??
+  process.env.STAGING_URL ??
+  process.env.STAGING_API_URL ??
+  ''
+).replace(/\/+$/, '');
+const STAGING_API_URL = (process.env.STAGING_API_URL ?? process.env.STAGING_URL ?? '').replace(/\/+$/, '');
 const STAGING_AUTH_TOKEN = process.env.STAGING_AUTH_TOKEN ?? '';
 const MIN_HOUSEHOLDS = Number.parseInt(process.env.GLOBAL_PRIORS_MIN_HOUSEHOLDS ?? '30', 10);
 const MIN_EVENTS = Number.parseInt(process.env.GLOBAL_PRIORS_MIN_EVENTS ?? '200', 10);
@@ -41,7 +48,8 @@ function authHeaders(withAuth: boolean): Record<string, string> {
 
 async function readJson<T>(path: string, withAuth: boolean): Promise<{ status: number; data: T | null }> {
   try {
-    const response = await fetch(`${STAGING_URL}${path}`, {
+    const baseUrl = path === '/healthz.json' ? STAGING_WEB_URL : STAGING_API_URL;
+    const response = await fetch(`${baseUrl}${path}`, {
       method: 'GET',
       headers: authHeaders(withAuth),
     });
@@ -58,7 +66,7 @@ async function postJson<T>(
   withAuth: boolean,
 ): Promise<{ status: number; data: T | null }> {
   try {
-    const response = await fetch(`${STAGING_URL}${path}`, {
+    const response = await fetch(`${STAGING_API_URL}${path}`, {
       method: 'POST',
       headers: authHeaders(withAuth),
       body: JSON.stringify(body),
@@ -83,8 +91,12 @@ function makeIds(): { sessionId: string; decisionId: string; feedbackId: string 
 }
 
 async function main(): Promise<void> {
-  if (!STAGING_URL) {
-    console.error('FAIL setup (missing STAGING_URL)');
+  if (!STAGING_WEB_URL) {
+    console.error('FAIL setup (missing STAGING_WEB_URL or STAGING_URL)');
+    process.exit(1);
+  }
+  if (!STAGING_API_URL) {
+    console.error('FAIL setup (missing STAGING_API_URL or STAGING_URL)');
     process.exit(1);
   }
   if (!STAGING_AUTH_TOKEN) {
@@ -101,7 +113,8 @@ async function main(): Promise<void> {
   }
 
   console.log('--- Tier 1 Staging Smoke ---');
-  console.log(`target=${STAGING_URL}`);
+  console.log(`web_target=${STAGING_WEB_URL}`);
+  console.log(`api_target=${STAGING_API_URL}`);
   console.log(`k_anon_floor_households=${MIN_HOUSEHOLDS} k_anon_floor_events=${MIN_EVENTS}`);
 
   const health = await readJson<{ ok?: boolean }>('/healthz.json', false);

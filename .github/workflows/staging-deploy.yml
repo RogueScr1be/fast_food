@@ -167,16 +167,19 @@ jobs:
 
       - name: Static deploy health gate (/healthz.json)
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
         run: |
           set -euo pipefail
-          curl -fsS "${STAGING_URL}/healthz.json" | tee /tmp/healthz.json
+          WEB_URL="${STAGING_WEB_URL:-${STAGING_URL:-}}"
+          [ -n "$WEB_URL" ] || (echo "MISSING: STAGING_WEB_URL or STAGING_URL" && exit 1)
+          curl -fsS "${WEB_URL}/healthz.json" | tee /tmp/healthz.json
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/tmp/healthz.json','utf8'));if(p.ok!==true){process.exit(1)}"
 
       - name: Run staging healthcheck
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
-          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
         run: |
           echo "=== Running Staging Healthcheck ==="
           npm run staging:healthcheck
@@ -184,6 +187,7 @@ jobs:
 
       - name: Auth fail-closed proof (401)
         env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
         run: |
           echo "=== Verifying auth fail-closed ==="
@@ -192,6 +196,8 @@ jobs:
 
       - name: Auth success proof (200)
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
           STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
         run: |
@@ -201,6 +207,8 @@ jobs:
 
       - name: Tier 1 staging smoke (blocking)
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
           STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
           GLOBAL_PRIORS_MIN_HOUSEHOLDS: '30'

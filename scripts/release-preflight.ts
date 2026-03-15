@@ -18,8 +18,9 @@
  *   7. npm run auth:sanity:require200 - auth success path
  *   8. npm run smoke:tier1:staging - Tier 1 staging smoke
  * 
- * Environment variables (required for step 3):
- *   STAGING_URL - Staging deployment URL
+ * Environment variables (required for staging steps):
+ *   STAGING_WEB_URL or STAGING_URL - Staging web deployment URL
+ *   STAGING_API_URL or STAGING_URL - Staging API base URL
  *   STAGING_AUTH_TOKEN - JWT for authenticated requests
  */
 
@@ -34,6 +35,7 @@ interface PreflightStep {
   command: string;
   description: string;
   required_env?: string[];
+  required_env_any?: string[][];
 }
 
 const STEPS: PreflightStep[] = [
@@ -61,25 +63,27 @@ const STEPS: PreflightStep[] = [
     name: 'staging_healthcheck',
     command: 'npm run staging:healthcheck',
     description: 'Verify staging deployment health',
-    required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    required_env_any: [['STAGING_WEB_URL'], ['STAGING_URL']],
   },
   {
     name: 'auth_require_401',
     command: 'npm run auth:sanity:require401',
     description: 'Verify protected endpoints reject unauthenticated calls',
-    required_env: ['STAGING_URL'],
+    required_env_any: [['STAGING_API_URL'], ['STAGING_URL']],
   },
   {
     name: 'auth_require_200',
     command: 'npm run auth:sanity:require200',
     description: 'Verify protected endpoints accept authenticated calls',
-    required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    required_env: ['STAGING_AUTH_TOKEN'],
+    required_env_any: [['STAGING_API_URL'], ['STAGING_URL']],
   },
   {
     name: 'tier1_smoke_staging',
     command: 'npm run smoke:tier1:staging',
     description: 'Run Tier 1 staging smoke for actor/sync/weights/priors',
-    required_env: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    required_env: ['STAGING_AUTH_TOKEN'],
+    required_env_any: [['STAGING_API_URL'], ['STAGING_URL']],
   },
 ];
 
@@ -108,6 +112,19 @@ function checkRequiredEnv(step: PreflightStep): boolean {
   return true;
 }
 
+function checkAnyRequiredEnv(step: PreflightStep): boolean {
+  if (!step.required_env_any || step.required_env_any.length === 0) return true;
+
+  const satisfied = step.required_env_any.some((group) => group.every((envVar) => Boolean(process.env[envVar])));
+  if (satisfied) return true;
+
+  console.log(`\n⚠️  Missing one-of environment variables for ${step.name}:`);
+  for (const group of step.required_env_any) {
+    console.log(`   - one of: ${group.join(', ')}`);
+  }
+  return false;
+}
+
 function runStep(step: PreflightStep): boolean {
   console.log(`\n${'='.repeat(60)}`);
   console.log(`STEP: ${step.name}`);
@@ -118,6 +135,12 @@ function runStep(step: PreflightStep): boolean {
   // Check required env vars
   if (!checkRequiredEnv(step)) {
     console.log(`\n❌ SKIP ${step.name} - missing required environment variables`);
+    console.log('   Set the variables and re-run release:preflight');
+    return false;
+  }
+
+  if (!checkAnyRequiredEnv(step)) {
+    console.log(`\n❌ SKIP ${step.name} - missing alternative environment variables`);
     console.log('   Set the variables and re-run release:preflight');
     return false;
   }

@@ -13,6 +13,7 @@
  * e) POST /api/decision-os/drm -> MUST be 401 { error:'unauthorized' }
  * 
  * Usage:
+ *   STAGING_API_URL=https://your-api-host npm run auth:sanity:require401
  *   STAGING_URL=https://your-app.vercel.app npm run auth:sanity:require401
  * 
  * Exit codes:
@@ -20,7 +21,8 @@
  *   1 = Any FAIL (got 200 when should have got 401, or other error)
  */
 
-const STAGING_URL = process.env.STAGING_URL;
+const STAGING_API_URL = process.env.STAGING_API_URL ?? process.env.STAGING_URL;
+const STAGING_WEB_URL = process.env.STAGING_WEB_URL ?? process.env.STAGING_URL ?? STAGING_API_URL;
 
 interface TestResult {
   name: string;
@@ -47,7 +49,7 @@ function getHeaders(): Record<string, string> {
  */
 async function testHealthz(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/healthz.json`);
+    const response = await fetch(`${STAGING_WEB_URL}/healthz.json`);
     if (response.status !== 200) return false;
     
     const data = await response.json();
@@ -65,7 +67,7 @@ async function testProtectedEndpoint(
   body: Record<string, unknown>
 ): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}${path}`, {
+    const response = await fetch(`${STAGING_API_URL}${path}`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(body),
@@ -84,9 +86,15 @@ async function testProtectedEndpoint(
 }
 
 async function main(): Promise<void> {
-  if (!STAGING_URL) {
+  if (!STAGING_API_URL) {
     console.log('FAIL setup');
-    console.error('STAGING_URL environment variable is required');
+    console.error('STAGING_API_URL or STAGING_URL environment variable is required');
+    process.exit(1);
+  }
+
+  if (!STAGING_WEB_URL) {
+    console.log('FAIL setup');
+    console.error('STAGING_WEB_URL, STAGING_API_URL, or STAGING_URL environment variable is required');
     process.exit(1);
   }
 

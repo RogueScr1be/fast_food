@@ -186,23 +186,28 @@ jobs:
 
       - name: Staging healthcheck
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
-          STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
         run: npm run staging:healthcheck
 
       - name: Auth fail-closed proof (401)
         env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
         run: npm run auth:sanity:require401
 
       - name: Auth success proof (200)
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
           STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
         run: npm run auth:sanity:require200
 
       - name: Tier 1 staging smoke (blocking)
         env:
+          STAGING_WEB_URL: ${{ secrets.STAGING_WEB_URL }}
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
           STAGING_AUTH_TOKEN: ${{ secrets.STAGING_AUTH_TOKEN }}
           GLOBAL_PRIORS_MIN_HOUSEHOLDS: '30'

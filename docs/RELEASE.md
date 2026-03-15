@@ -337,7 +337,9 @@ METRICS_RETENTION_DAYS=90 npm run metrics:prune
 | `VERCEL_TOKEN` | Yes | Vercel deployment token |
 | `VERCEL_ORG_ID` | Yes | Vercel organization ID |
 | `VERCEL_PROJECT_ID` | Yes | Vercel project ID |
-| `STAGING_URL` | Yes | Deployed staging URL (e.g., `https://your-app.vercel.app`) |
+| `STAGING_WEB_URL` | Preferred | Web deployment URL for `/healthz.json` |
+| `STAGING_API_URL` | Preferred | API base URL for `/api/decision-os/*` |
+| `STAGING_URL` | Fallback | Single host used when web and API share the same origin |
 | `STAGING_AUTH_TOKEN` | Yes | Supabase JWT for authenticated tests |
 
 ### How to Set Up Secrets
@@ -353,9 +355,11 @@ METRICS_RETENTION_DAYS=90 npm run metrics:prune
    vercel link
    ```
 
-3. **STAGING_URL**: Your Vercel deployment URL (e.g., `https://fast-food-staging.vercel.app`)
+3. **STAGING_WEB_URL**: Your web deployment URL (e.g., `https://fast-food-git-rollback-stable-scr1bes.vercel.app`)
 
-4. **STAGING_AUTH_TOKEN**: Supabase JWT for a test user (see below)
+4. **STAGING_API_URL**: Your API base URL that serves `/api/decision-os/*`
+
+5. **STAGING_AUTH_TOKEN**: Supabase JWT for a test user (see below)
 
 ### How to Rotate STAGING_AUTH_TOKEN
 
@@ -872,7 +876,7 @@ Before releasing, verify staging:
 
 ```bash
 # Set staging URL
-export STAGING_URL="https://your-app.vercel.app"
+export STAGING_WEB_URL="https://your-app.vercel.app"
 
 # Optional: Set auth token for full test coverage
 export STAGING_AUTH_TOKEN="eyJ..."
@@ -901,7 +905,8 @@ Auth: Token provided (production mode)
 Tier 1 release gating must pass these checks in staging:
 
 ```bash
-export STAGING_URL="https://your-app.vercel.app"
+export STAGING_WEB_URL="https://your-app.vercel.app"
+export STAGING_API_URL="https://your-api-host"
 export STAGING_AUTH_TOKEN="eyJ..."
 export GLOBAL_PRIORS_MIN_HOUSEHOLDS=30
 export GLOBAL_PRIORS_MIN_EVENTS=200

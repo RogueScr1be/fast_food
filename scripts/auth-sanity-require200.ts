@@ -15,6 +15,7 @@
  * e) POST /api/decision-os/drm -> MUST be 200 with { drmActivated: boolean }
  * 
  * Usage:
+ *   STAGING_API_URL=https://your-api-host STAGING_AUTH_TOKEN=eyJ... npm run auth:sanity:require200
  *   STAGING_URL=https://your-app.vercel.app STAGING_AUTH_TOKEN=eyJ... npm run auth:sanity:require200
  * 
  * Exit codes:
@@ -22,7 +23,8 @@
  *   1 = Any FAIL (got 401, wrong shape, or token expiring)
  */
 
-const STAGING_URL = process.env.STAGING_URL;
+const STAGING_API_URL = process.env.STAGING_API_URL ?? process.env.STAGING_URL;
+const STAGING_WEB_URL = process.env.STAGING_WEB_URL ?? process.env.STAGING_URL ?? STAGING_API_URL;
 const STAGING_AUTH_TOKEN = process.env.STAGING_AUTH_TOKEN;
 
 interface TestResult {
@@ -106,7 +108,7 @@ function getHeaders(): Record<string, string> {
  */
 async function testHealthz(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/healthz.json`);
+    const response = await fetch(`${STAGING_WEB_URL}/healthz.json`);
     if (response.status !== 200) return false;
     
     const data = await response.json();
@@ -122,7 +124,7 @@ async function testHealthz(): Promise<boolean> {
  */
 async function testDecision(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/decision-os/decision`, {
+    const response = await fetch(`${STAGING_API_URL}/api/decision-os/decision`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ context: { time: '17:30' } }),
@@ -143,7 +145,7 @@ async function testDecision(): Promise<boolean> {
  */
 async function testReceipt(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/decision-os/receipt/import`, {
+    const response = await fetch(`${STAGING_API_URL}/api/decision-os/receipt/import`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ imageBase64: 'test-image' }),
@@ -164,7 +166,7 @@ async function testReceipt(): Promise<boolean> {
  */
 async function testFeedback(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/decision-os/feedback`, {
+    const response = await fetch(`${STAGING_API_URL}/api/decision-os/feedback`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ eventId: 'sanity-test', userAction: 'approved' }),
@@ -185,7 +187,7 @@ async function testFeedback(): Promise<boolean> {
  */
 async function testDrm(): Promise<boolean> {
   try {
-    const response = await fetch(`${STAGING_URL}/api/decision-os/drm`, {
+    const response = await fetch(`${STAGING_API_URL}/api/decision-os/drm`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ reason: 'handle_it' }),
@@ -205,9 +207,15 @@ async function testDrm(): Promise<boolean> {
 // =============================================================================
 
 async function main(): Promise<void> {
-  if (!STAGING_URL) {
+  if (!STAGING_API_URL) {
     console.log('FAIL setup');
-    console.error('STAGING_URL environment variable is required');
+    console.error('STAGING_API_URL or STAGING_URL environment variable is required');
+    process.exit(1);
+  }
+
+  if (!STAGING_WEB_URL) {
+    console.log('FAIL setup');
+    console.error('STAGING_WEB_URL, STAGING_API_URL, or STAGING_URL environment variable is required');
     process.exit(1);
   }
 

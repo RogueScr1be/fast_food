@@ -6,6 +6,7 @@
  * the payload reports ok:true.
  *
  * Usage:
+ *   STAGING_WEB_URL=https://your-app.vercel.app npm run staging:healthcheck
  *   STAGING_URL=https://your-app.vercel.app npm run staging:healthcheck
  */
 
@@ -15,10 +16,10 @@ interface HealthzPayload {
 }
 
 async function main(): Promise<void> {
-  const baseUrl = process.env.STAGING_URL;
+  const baseUrl = process.env.STAGING_WEB_URL ?? process.env.STAGING_URL;
 
   if (!baseUrl) {
-    console.error('ERROR: STAGING_URL environment variable not set');
+    console.error('ERROR: STAGING_WEB_URL or STAGING_URL environment variable not set');
     process.exit(1);
   }
 

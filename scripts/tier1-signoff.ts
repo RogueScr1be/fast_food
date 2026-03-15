@@ -9,6 +9,7 @@ interface Gate {
   name: string;
   command: string;
   requiredEnv?: string[];
+  requiredEnvAny?: string[][];
   blocking: boolean;
 }
 
@@ -26,25 +27,27 @@ const gates: Gate[] = [
   {
     name: 'staging_healthcheck',
     command: 'npm run staging:healthcheck',
-    requiredEnv: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    requiredEnvAny: [['STAGING_WEB_URL'], ['STAGING_URL']],
     blocking: true,
   },
   {
     name: 'auth_require_401',
     command: 'npm run auth:sanity:require401',
-    requiredEnv: ['STAGING_URL'],
+    requiredEnvAny: [['STAGING_API_URL'], ['STAGING_URL']],
     blocking: true,
   },
   {
     name: 'auth_require_200',
     command: 'npm run auth:sanity:require200',
-    requiredEnv: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    requiredEnv: ['STAGING_AUTH_TOKEN'],
+    requiredEnvAny: [['STAGING_API_URL'], ['STAGING_URL']],
     blocking: true,
   },
   {
     name: 'tier1_smoke_staging',
     command: 'npm run smoke:tier1:staging',
-    requiredEnv: ['STAGING_URL', 'STAGING_AUTH_TOKEN'],
+    requiredEnv: ['STAGING_AUTH_TOKEN'],
+    requiredEnvAny: [['STAGING_API_URL'], ['STAGING_URL']],
     blocking: true,
   },
   {
@@ -61,6 +64,12 @@ function hasRequiredEnv(requiredEnv?: string[]): { ok: boolean; missing: string[
   return { ok: missing.length === 0, missing };
 }
 
+function hasAnyRequiredEnv(requiredEnvAny?: string[][]): { ok: boolean; missing: string[] } {
+  if (!requiredEnvAny || requiredEnvAny.length === 0) return { ok: true, missing: [] };
+  const ok = requiredEnvAny.some((group) => group.every((key) => Boolean(process.env[key])));
+  return { ok, missing: requiredEnvAny.flat() };
+}
+
 function runGate(gate: Gate): Result {
   const envCheck = hasRequiredEnv(gate.requiredEnv);
   if (!envCheck.ok) {
@@ -68,6 +77,15 @@ function runGate(gate: Gate): Result {
       gate,
       status: 'SKIP',
       detail: `missing_env=${envCheck.missing.join(',')}`,
+    };
+  }
+
+  const anyEnvCheck = hasAnyRequiredEnv(gate.requiredEnvAny);
+  if (!anyEnvCheck.ok) {
+    return {
+      gate,
+      status: 'SKIP',
+      detail: `missing_any_env=${anyEnvCheck.missing.join('|')}`,
     };
   }
 

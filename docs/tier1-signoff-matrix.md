@@ -27,11 +27,15 @@ Use this matrix to approve Tier 1 promotion.
 ## Signoff
 
 - Owner: Codex (implementation run)
-- Date: 2026-02-25
+- Date: 2026-03-14
 - Decision: `Block`
 - Notes:
   - Strict signoff command executed: `TIER1_SIGNOFF_REQUIRE_STAGING=true npm run signoff:tier1`
   - Output summary: `docs/reports/tier1-release-readiness/evidence-2026-02-25.md`
-  - Signoff artifact (latest): `docs/reports/tier1-signoff/2026-02-25T16-30-19-921Z.md`
+  - Signoff artifact (latest local): `docs/reports/tier1-signoff/2026-03-15T00-27-19-480Z.md`
   - Main CI run (blocking lane): `https://github.com/RogueScr1be/fast_food/actions/runs/22406085110`
-  - Blocking staging gates were skipped/failed because `STAGING_URL` and `STAGING_AUTH_TOKEN` were not set in CI/runner environment.
+  - Blocking staging gates now support split hosts:
+    - `STAGING_WEB_URL` for `/healthz.json`
+    - `STAGING_API_URL` for `/api/decision-os/*`
+    - `STAGING_URL` remains backward-compatible as single-host fallback
+  - Remaining blocker is secrets/runtime configuration, not local gate wiring.
