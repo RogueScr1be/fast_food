@@ -239,7 +239,7 @@ export default function ChecklistScreen() {
 
     setPendingHeroTransition({
       sourceRect: { x: src.x, y: src.y, width: src.width, height: src.height },
-      imageSource: getImageSource(meal.imageKey),
+      imageSource: getImageSource(meal.image),
       destKey: `deal:${meal.id}`,
       transitionKind: 'checklist_to_deal',
     });
@@ -275,7 +275,7 @@ export default function ChecklistScreen() {
     );
   }
 
-  const estimatedCost = 'estimatedCost' in (meal as any) ? ((meal as any).estimatedCost as string) : null;
+  const estimatedCost = meal.cost;
   const progressValue = progress / 100;
   const progressCertaintyText = allComplete
     ? 'Ready to finish'
@@ -285,10 +285,10 @@ export default function ChecklistScreen() {
     <View style={styles.container}>
       {/* Hero image header */}
       <ChecklistHero
-        imageSource={getImageSource(meal.imageKey)}
+        imageSource={getImageSource(meal.image)}
         title={meal.name}
         progressText={`${completedCount} of ${totalSteps} steps`}
-        meta={estimatedCost ? `${meal.estimatedTime} · ${estimatedCost}` : meal.estimatedTime}
+        meta={estimatedCost ? `${meal.time} · ${estimatedCost}` : meal.time}
         onBack={handleBackToDeal}
         onHeroReady={handleHeroReady}
       />
@@ -317,7 +317,7 @@ export default function ChecklistScreen() {
 
           {/* Meta info at bottom */}
           <View style={styles.metaSection}>
-            <Text style={styles.metaText}>{meal.estimatedTime}</Text>
+            <Text style={styles.metaText}>{meal.time}</Text>
             {estimatedCost && (
               <>
                 <View style={styles.metaDot} />

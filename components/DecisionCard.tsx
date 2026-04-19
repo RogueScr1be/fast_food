@@ -239,7 +239,7 @@ export function DecisionCard({
   const estimatedCost =
     'estimatedCost' in recipe ? (recipe as any).estimatedCost as string : null;
   const imageSource = getImageSourceSafe({
-    imageKey: recipe.imageKey,
+    imageKey: recipe.image,
     recipeId: recipe.id,
     mode: modeLabel,
     isRescue: variant === 'rescue',
@@ -251,10 +251,10 @@ export function DecisionCard({
 
   // Warn once per recipeId per session (module lifetime)
   if (!useSafeFrame) {
-    const warnKey = `${recipe.id}:${recipe.imageKey ?? 'none'}`;
+    const warnKey = `${recipe.id}:${recipe.image ?? 'none'}`;
     if (!warnedHeroFallback.has(warnKey)) {
       warnedHeroFallback.add(warnKey);
-      console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.imageKey });
+      console.warn('[HERO_FALLBACK_FRAME]', { recipeId: recipe.id, imageKey: recipe.image });
     }
   }
 
@@ -360,7 +360,7 @@ export function DecisionCard({
                 <Text style={styles.recipeName}>{recipe.name}</Text>
                 <WhyWhisper text={whyText} light />
                 <View style={styles.metaRow}>
-                  <Text style={styles.metaText}>{recipe.estimatedTime}</Text>
+                  <Text style={styles.metaText}>{recipe.time}</Text>
                   {estimatedCost && (
                     <>
                       <View style={styles.metaDot} />

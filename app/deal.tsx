@@ -309,13 +309,13 @@ export default function DealScreen() {
 
   const prefetchDealImage = useCallback((deal: Exclude<CurrentDeal, null>) => {
     try {
-      assertImageKeyConsistency(deal.data.id, deal.data.imageKey, {
+      assertImageKeyConsistency(deal.data.id, deal.data.image, {
         mode,
         screen: 'deal',
         phase: 'prefetch',
         isRescue: deal.type === 'drm',
       });
-      const source = getImageSource(deal.data.imageKey);
+      const source = getImageSource(deal.data.image);
       const resolved = RNImage.resolveAssetSource(source);
       const uri = resolved?.uri;
       if (!uri) return;
@@ -443,7 +443,7 @@ export default function DealScreen() {
 
     setPendingHeroTransition({
       sourceRect: { x: 0, y: 0, width: dealScreenW, height: dealScreenH },
-      imageSource: getImageSource(currentDeal.data.imageKey),
+      imageSource: getImageSource(currentDeal.data.image),
       destKey,
       transitionKind: 'deal_to_checklist',
     });
@@ -484,9 +484,9 @@ export default function DealScreen() {
 
   const handleBackToTonight = useCallback(() => {
     const selectedMode = getSelectedMode();
-    const targetMode = selectedMode && ALL_MODES.includes(selectedMode) ? selectedMode : null;
+    const targetMode = selectedMode && ALL_MODES.includes(selectedMode as any) ? (selectedMode as typeof ALL_MODES[number]) : null;
     const imageSource = currentDeal
-      ? getImageSource(currentDeal.data.imageKey)
+      ? getImageSource(currentDeal.data.image)
       : getImageSource(undefined);
 
     setPendingHeroTransition({

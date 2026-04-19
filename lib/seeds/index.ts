@@ -17,10 +17,10 @@ import type {
 export type { Mode, AllergenTag, ConstraintTag, RecipeSeed, DrmSeed, Ingredient } from './types';
 
 /**
- * Get all recipes for a specific mode
+ * Get all recipes for a specific category
  */
 export function getByMode(mode: Mode): RecipeSeed[] {
-  return RECIPES.filter(r => r.mode === mode);
+  return RECIPES.filter(r => r.category === mode);
 }
 
 /**

@@ -5,7 +5,10 @@
  * Used for offline-first card dealing before backend integration.
  */
 
-/** Meal mode categories */
+/** Recipe category (unified model) */
+export type RecipeCategory = 'fancy' | 'easy' | 'cheap' | 'sweet' | 'rescue';
+
+/** User-selectable mode (subset of categories) */
 export type Mode = 'fancy' | 'easy' | 'cheap';
 
 /** Common food allergens for filtering */
@@ -21,39 +24,26 @@ export interface Ingredient {
 }
 
 /**
- * Recipe seed for normal modes (fancy/easy/cheap)
+ * Unified recipe model (replaces separate RecipeSeed and DrmSeed)
+ * category='rescue' is used for DRM/panic meals
  */
-export interface RecipeSeed {
+export interface Recipe {
   id: string;
   name: string;
-  mode: Mode;
+  category: RecipeCategory;
   vegetarian: boolean;
   allergens: AllergenTag[];
   constraints: ConstraintTag[];
   ingredients: Ingredient[];
   steps: string[];
   whyReasons: string[]; // Rotate one at display time
-  estimatedTime: string; // e.g., "25 min"
-  estimatedCost: string; // e.g., "$15"
-  imageKey?: string; // Key for hero image lookup
+  time: string; // e.g., "25 min"
+  cost: string; // e.g., "$15" or "-" for rescue meals
+  image: string; // Hero image key
   /** When true, hero image uses contain+scale-up to avoid clipping bowls/plates */
   heroSafeFrame?: boolean;
 }
 
-/**
- * DRM (Dinner Rescue Mode) seed for panic meals
- */
-export interface DrmSeed {
-  id: string;
-  name: string;
-  vegetarian: boolean;
-  allergens: AllergenTag[];
-  constraints: ConstraintTag[];
-  ingredients: Ingredient[];
-  steps: string[];
-  whyReasons: string[];
-  estimatedTime: string;
-  imageKey?: string; // Key for hero image lookup
-  /** When true, hero image uses contain+scale-up to avoid clipping bowls/plates */
-  heroSafeFrame?: boolean;
-}
+/** Legacy types for backward compatibility */
+export type RecipeSeed = Recipe;
+export type DrmSeed = Recipe;

@@ -10,40 +10,46 @@ import { ImageSourcePropType } from 'react-native';
 const FALLBACK_IMAGE = require('../../assets/recipes/_fallback.png');
 
 export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
-  // Fancy recipes
+  // FANCY (8 recipes)
   'salmon': require('../../assets/recipes/salmon.jpg'),
   'risotto': require('../../assets/recipes/risotto.jpg'),
-  'steak': require('../../assets/recipes/steak.jpg'),
-  'scampi': require('../../assets/recipes/scampi.jpg'),
-  'chicken-marsala': require('../../assets/recipes/chicken-marsala.jpg'),
-  'ratatouille': require('../../assets/recipes/ratatouille.jpg'),
-  // Easy recipes
-  'stir-fry': require('../../assets/recipes/stir-fry.jpg'),
-  'pasta-marinara': require('../../assets/recipes/pasta-marinara.jpg'),
+  'chicken-herbs': require('../../assets/recipes/chicken-herbs.jpg'),
+  'shrimp-scampi': require('../../assets/recipes/shrimp-scampi.jpg'),
+  'beef-tenderloin': require('../../assets/recipes/beef-tenderloin.jpg'),
+  'caprese': require('../../assets/recipes/caprese.jpg'),
+  'scallops': require('../../assets/recipes/scallops.jpg'),
+  'filet-mignon': require('../../assets/recipes/filet-mignon.jpg'),
+
+  // EASY (8 recipes)
+  'cheeseburger': require('../../assets/recipes/cheeseburger.jpg'),
+  'pizza': require('../../assets/recipes/pizza.jpg'),
+  'blt': require('../../assets/recipes/blt.jpg'),
+  'mac-cheese': require('../../assets/recipes/mac-cheese.jpg'),
+  'mashed-potatoes': require('../../assets/recipes/mashed-potatoes.jpg'),
+  'tacos': require('../../assets/recipes/tacos.jpg'),
+  'chili': require('../../assets/recipes/chili.jpg'),
+  'french-fries': require('../../assets/recipes/french-fries.jpg'),
+
+  // SWEET (5 recipes)
+  'brownies': require('../../assets/recipes/brownies.jpg'),
+  'apple-pie': require('../../assets/recipes/apple-pie.jpg'),
+  'sundae': require('../../assets/recipes/sundae.jpg'),
+  'cereal-bowl': require('../../assets/recipes/cereal-bowl.jpg'),
+  'scrambled-eggs': require('../../assets/recipes/scrambled-eggs.jpg'),
+
+  // RESCUE (12 meals)
+  'rice-bowl': require('../../assets/recipes/rice-bowl.jpg'),
+  'pasta-sauce': require('../../assets/recipes/pasta-sauce.jpg'),
   'quesadillas': require('../../assets/recipes/quesadillas.jpg'),
-  'fried-rice': require('../../assets/recipes/fried-rice.jpg'),
-  'caprese-salad': require('../../assets/recipes/caprese-salad.jpg'),
-  'sheet-pan-chicken': require('../../assets/recipes/sheet-pan-chicken.jpg'),
-  // Cheap recipes
-  'beans-rice': require('../../assets/recipes/beans-rice.jpg'),
-  'ramen-upgrade': require('../../assets/recipes/ramen-upgrade.jpg'),
-  'potato-soup': require('../../assets/recipes/potato-soup.jpg'),
-  'egg-fried-rice': require('../../assets/recipes/egg-fried-rice.jpg'),
-  'veggie-curry': require('../../assets/recipes/veggie-curry.jpg'),
-  'pasta-aglio': require('../../assets/recipes/pasta-aglio.jpg'),
-  // DRM meals
-  'cereal': require('../../assets/recipes/cereal.jpg'),
-  'toast-pb': require('../../assets/recipes/toast-pb.jpg'),
   'grilled-cheese': require('../../assets/recipes/grilled-cheese.jpg'),
-  'instant-noodles': require('../../assets/recipes/instant-noodles.jpg'),
-  'crackers-cheese': require('../../assets/recipes/crackers-cheese.jpg'),
-  'yogurt-granola': require('../../assets/recipes/yogurt-granola.jpg'),
-  'banana-pb': require('../../assets/recipes/banana-pb.jpg'),
-  'chips-salsa': require('../../assets/recipes/chips-salsa.jpg'),
-  'soup-can': require('../../assets/recipes/soup-can.jpg'),
-  'sandwich': require('../../assets/recipes/sandwich.jpg'),
   'frozen-pizza': require('../../assets/recipes/frozen-pizza.jpg'),
-  'oatmeal': require('../../assets/recipes/oatmeal.jpg'),
+  'breakfast': require('../../assets/recipes/breakfast.jpg'),
+  'chili-quick': require('../../assets/recipes/chili-quick.jpg'),
+  'chicken-soup': require('../../assets/recipes/chicken-soup.jpg'),
+  'leftover-soup': require('../../assets/recipes/leftover-soup.jpg'),
+  'nachos': require('../../assets/recipes/nachos.jpg'),
+  'ramen': require('../../assets/recipes/ramen.jpg'),
+  'cereal-toast': require('../../assets/recipes/cereal-toast.jpg'),
 };
 
 // ---------------------------------------------------------------------------

@@ -263,10 +263,10 @@ export default function RescueChecklistScreen() {
     <View style={styles.container}>
       {/* Hero image header */}
       <ChecklistHero
-        imageSource={getImageSource(meal.imageKey)}
+        imageSource={getImageSource(meal.image)}
         title={meal.name}
         progressText={`${completedCount} of ${totalSteps} steps`}
-        meta={`${meal.estimatedTime} · ${meal.ingredients.length} ingredients`}
+        meta={`${meal.time} · ${meal.ingredients.length} ingredients`}
         isRescue
         onBack={handleBack}
         onHeroReady={transition ? handleHeroReady : undefined}
