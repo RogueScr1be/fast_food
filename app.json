@@ -49,15 +49,6 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.READ_CALENDAR",
-        "android.permission.WRITE_CALENDAR",
-        "CAMERA",
-        "RECORD_AUDIO",
-        "ACCESS_FINE_LOCATION",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR"
       ]
     },
@@ -86,7 +77,10 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "26890a3f-bd10-4761-97fa-d545d6426817"
+        "projectId": "efea38ce-62f4-4f8c-9a1c-d50d0b388671"
+      },
+      "router": {
+        "origin": false
       }
     },
     "owner": "scr1bes",
@@ -94,7 +88,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/26890a3f-bd10-4761-97fa-d545d6426817"
+      "url": "https://u.expo.dev/efea38ce-62f4-4f8c-9a1c-d50d0b388671"
     }
   }
 }
