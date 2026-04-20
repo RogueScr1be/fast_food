@@ -17,15 +17,15 @@ export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
   'shrimp-scampi': require('../../assets/recipes/scampi.jpg'),
   'beef-tenderloin': require('../../assets/recipes/steak.jpg'),
   'caprese': require('../../assets/recipes/caprese-salad.jpg'),
-  'scallops': require('../../assets/recipes/steak.jpg'),
+  'scallops': require('../../assets/recipes/veggie-curry.jpg'),
   'filet-mignon': require('../../assets/recipes/ratatouille.jpg'),
 
   // EASY (8 recipes) - remapped to available assets
   'cheeseburger': require('../../assets/recipes/sandwich.jpg'),
   'pizza': require('../../assets/recipes/frozen-pizza.jpg'),
   'blt': require('../../assets/recipes/sandwich.jpg'),
-  'mac-cheese': require('../../assets/recipes/_fallback.png'),
-  'mashed-potatoes': require('../../assets/recipes/stir-fry.jpg'),
+  'mac-cheese': require('../../assets/recipes/pasta-aglio.jpg'),
+  'mashed-potatoes': require('../../assets/recipes/potato-soup.jpg'),
   'tacos': require('../../assets/recipes/quesadillas.jpg'),
   'chili': require('../../assets/recipes/soup-can.jpg'),
   'french-fries': require('../../assets/recipes/fried-rice.jpg'),
@@ -33,7 +33,7 @@ export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
   // CHEAP (5 recipes, budget meals) - remapped to available assets
   'brownies': require('../../assets/recipes/_fallback.png'),
   'apple-pie': require('../../assets/recipes/_fallback.png'),
-  'sundae': require('../../assets/recipes/_fallback.png'),
+  'sundae': require('../../assets/recipes/yogurt-granola.jpg'),
   'cereal-bowl': require('../../assets/recipes/cereal.jpg'),
   'scrambled-eggs': require('../../assets/recipes/egg-fried-rice.jpg'),
 
