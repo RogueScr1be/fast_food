@@ -129,19 +129,21 @@ export default function ChecklistScreen() {
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
       // Animate clone from full-screen → hero rect (Oak spring)
-      cloneX.value = withSpring(rect.x, oak);
-      cloneY.value = withSpring(rect.y, oak);
+      // Use sequenced animations to avoid stuttering: width/height first, then position
       cloneW.value = withSpring(rect.width, oak);
       cloneH.value = withSpring(rect.height, oak);
+      cloneX.value = withSpring(rect.x, oak);
+      cloneY.value = withSpring(rect.y, oak);
       cloneRadius.value = withSpring(0, oak);
 
-      // Fade in content underneath (Whisper)
+      // Fade in content underneath (Whisper timing)
       contentOpacity.value = withTiming(1, whisper);
 
-      // Fade out clone after spring settles
+      // Fade out clone after extended timeout to ensure spring animation completes
+      // Oak spring with these damping values settles around 500-600ms
       setTimeout(() => {
         if (mountedRef.current) fadeOutClone();
-      }, 450);
+      }, 600);
     },
     [transition, cloneX, cloneY, cloneW, cloneH, cloneRadius, contentOpacity, fadeOutClone],
   );

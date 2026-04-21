@@ -17,8 +17,8 @@ export const RECIPE_IMAGES: Record<string, ImageSourcePropType> = {
   'shrimp-scampi': require('../../assets/recipes/scampi.jpg'),
   'beef-tenderloin': require('../../assets/recipes/steak.jpg'),
   'caprese': require('../../assets/recipes/caprese-salad.jpg'),
-  'scallops': require('../../assets/recipes/veggie-curry.jpg'),
-  'filet-mignon': require('../../assets/recipes/ratatouille.jpg'),
+  'scallops': require('../../assets/recipes/steak.jpg'),
+  'filet-mignon': require('../../assets/recipes/chicken-marsala.jpg'),
 
   // EASY (8 recipes) - remapped to available assets
   'cheeseburger': require('../../assets/recipes/sandwich.jpg'),

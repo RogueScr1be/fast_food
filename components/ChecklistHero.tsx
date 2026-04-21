@@ -66,7 +66,7 @@ export function ChecklistHero({
   onBack,
   onHeroReady,
 }: ChecklistHeroProps) {
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const heroViewRef = useRef<View>(null);
 
@@ -74,16 +74,20 @@ export function ChecklistHero({
   const heroHeight = Math.max(200, Math.min(260, Math.round(windowHeight * 0.28)));
 
   // Measure hero rect after layout for reverse-box transition
+  // Use synchronous calculation instead of measureInWindow to avoid timing issues
   const handleLayout = useCallback(() => {
-    if (!onHeroReady || !heroViewRef.current) return;
-    (heroViewRef.current as any).measureInWindow(
-      (x: number, y: number, width: number, height: number) => {
-        if (width > 0 && height > 0) {
-          onHeroReady({ x, y, width, height });
-        }
-      },
-    );
-  }, [onHeroReady]);
+    if (!onHeroReady) return;
+    // Pre-calculate hero rect: full width, calculated height, positioned at top
+    // This is deterministic and doesn't depend on async measurement
+    const rect = {
+      x: 0,
+      y: 0,
+      width: windowWidth,
+      height: heroHeight,
+    };
+    // Call onHeroReady immediately with calculated rect
+    onHeroReady(rect);
+  }, [onHeroReady, heroHeight, windowWidth]);
 
   return (
     <View
