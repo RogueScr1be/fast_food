@@ -1,67 +1,35 @@
 {
   "expo": {
-    "name": "Fast Food",
-    "slug": "fast-food",
-    "version": "1.0.0",
+    "name": "Fast Food Lite",
+    "slug": "fast-food-lite",
+    "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "scheme": "fastfoodlite",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F7FCFE"
+      "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.fastfood.zeroui",
-      "requireFullScreen": true,
-      "infoPlist": {
-        "UIRequiresFullScreen": true,
-        "UIBackgroundModes": ["background-fetch", "remote-notification"],
-        "NSCameraUsageDescription": "This app uses the camera to scan grocery receipts for meal plan optimization.",
-        "NSMicrophoneUsageDescription": "This app uses the microphone for voice commands to create meal plans.",
-        "NSLocationWhenInUseUsageDescription": "This app uses location to find nearby grocery stores and restaurants."
-      }
+      "supportsTabletMode": true,
+      "bundleIdentifier": "com.fastfoodlite.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#F7FCFE"
+        "backgroundColor": "#ffffff"
       },
-      "package": "com.fastfood",
-      "permissions": [
-        "CAMERA",
-        "RECORD_AUDIO",
-        "ACCESS_FINE_LOCATION"
-      ]
+      "package": "com.fastfoodlite.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png",
-      "output": "static"
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router",
-      "expo-font",
-      "expo-camera",
-      "expo-location",
-      [
-        "expo-calendar",
-        {
-          "calendarPermission": "The app needs to access your calendar to add meal plan events."
-        }
-      ],
-      "expo-notifications"
-    ],
-    "scheme": "fast-food",
-    "platforms": ["ios", "android", "web"],
-    "extra": {
-      "eas": {
-        "projectId": "26890a3f-bd10-4761-97fa-d545d6426817"
-      }
-    },
-    "owner": "roguescr1be"
+      ["expo-av", {}],
+      ["expo-font", {}]
+    ]
   }
 }
